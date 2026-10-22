@@ -1,6 +1,8 @@
 //! Airlock — workspace-isolated Alt+Tab for the COSMIC desktop.
 
 mod cli;
+mod switcher;
+mod wayland;
 
 use cli::Command;
 
@@ -22,7 +24,15 @@ fn main() {
         Command::AltTab => stub("alt-tab"),
         Command::ShiftAltTab => stub("shift-alt-tab"),
         Command::Install { .. } => stub("install"),
-        Command::List => stub("list"),
+        Command::List => match wayland::list() {
+            Ok(text) => {
+                print!("{text}");
+            }
+            Err(error) => {
+                eprintln!("airlock list: {error}");
+                std::process::exit(1);
+            }
+        },
     }
 }
 

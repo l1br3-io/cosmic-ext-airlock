@@ -12,3 +12,4 @@ name = "airlock"
 path = "src/main.rs"
 
 [dependencies]
+cosmic-client-toolkit = "0.2.0"
