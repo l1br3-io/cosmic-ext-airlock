@@ -1,6 +1,7 @@
 //! Airlock — workspace-isolated Alt+Tab for the COSMIC desktop.
 
 mod cli;
+mod daemon;
 mod ipc;
 mod switcher;
 mod wayland;
