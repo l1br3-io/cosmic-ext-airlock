@@ -71,13 +71,6 @@ pub struct Snapshot {
 ///
 /// Returns handles in MRU order (most recently activated first); ties keep
 /// snapshot order.
-// The daemon becomes the consumer in chunk task T4; the expectation below
-// unfulfills itself the moment that wiring lands (tests aside — they are the
-// stand-in consumer until then).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into the daemon in task T4")
-)]
 pub fn eligible(toplevels: &[Toplevel], active: WorkspaceId) -> Vec<Handle> {
     let mut matches: Vec<&Toplevel> = toplevels
         .iter()
@@ -96,29 +89,30 @@ pub fn eligible(toplevels: &[Toplevel], active: WorkspaceId) -> Vec<Handle> {
 
 /// A selection ring over the MRU-ordered eligible list: `next`/`previous`
 /// move the selection with wrap-around, and an empty ring selects nothing.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into the daemon in task T4")
-)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ring {
     handles: Vec<Handle>,
     index: usize,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into the daemon in task T4")
-)]
 impl Ring {
     pub fn new(handles: Vec<Handle>) -> Self {
         Self { handles, index: 0 }
     }
 
+    /// Number of windows in the ring.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the overlay renders the ring length in task T5")
+    )]
     pub fn len(&self) -> usize {
         self.handles.len()
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the overlay renders the ring length in task T5")
+    )]
     pub fn is_empty(&self) -> bool {
         self.handles.is_empty()
     }

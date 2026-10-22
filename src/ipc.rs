@@ -20,13 +20,6 @@ pub const ACK: u8 = b'a';
 const RETRY_STEP: Duration = Duration::from_millis(25);
 
 /// Which way the stub asks the daemon to cycle.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "constructed by the daemon's command parsing in task T4"
-    )
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     /// Cycle to the next window in MRU order.
@@ -49,10 +42,6 @@ impl Direction {
 #[derive(Debug)]
 pub enum IpcError {
     /// `XDG_RUNTIME_DIR` is not set; there is nowhere to put the socket.
-    #[expect(
-        dead_code,
-        reason = "constructed by socket_path once the stubs wire up in task T4"
-    )]
     MissingRuntimeDir,
     /// Socket I/O failed.
     Io(io::Error),
@@ -91,10 +80,6 @@ impl From<io::Error> for IpcError {
 }
 
 /// Decodes a command byte. Junk is not a command.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the daemon parses commands in task T4")
-)]
 pub fn parse_command(byte: u8) -> Option<Direction> {
     match byte {
         b'n' => Some(Direction::Next),
@@ -113,7 +98,6 @@ pub fn socket_path_from(runtime_dir: Option<&str>) -> Option<PathBuf> {
 /// # Errors
 ///
 /// Returns [`IpcError::MissingRuntimeDir`] when the variable is unset.
-#[expect(dead_code, reason = "wired into the daemon and stubs in task T4")]
 pub fn socket_path() -> Result<PathBuf, IpcError> {
     socket_path_from(std::env::var("XDG_RUNTIME_DIR").ok().as_deref())
         .ok_or(IpcError::MissingRuntimeDir)
@@ -123,7 +107,6 @@ pub fn socket_path() -> Result<PathBuf, IpcError> {
 #[derive(Debug)]
 pub enum BindOutcome {
     /// No live daemon existed; this caller now owns the socket.
-    #[expect(dead_code, reason = "the daemon consumes the listener in task T4")]
     Bound(UnixListener),
     /// A live daemon answered the probe; the caller should exit quietly.
     AlreadyRunning,
@@ -143,10 +126,6 @@ pub fn probe_alive(path: &Path) -> bool {
 /// # Errors
 ///
 /// Propagates I/O errors from the bind attempts.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into the daemon and stubs in task T4")
-)]
 pub fn bind_exclusive(path: &Path) -> io::Result<BindOutcome> {
     match UnixListener::bind(path) {
         Ok(listener) => Ok(BindOutcome::Bound(listener)),
@@ -174,10 +153,6 @@ pub fn bind_exclusive(path: &Path) -> io::Result<BindOutcome> {
 /// # Errors
 ///
 /// Returns [`IpcError::TimedOut`] when `deadline` passes first.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into the daemon and stubs in task T4")
-)]
 pub fn send_with_deadline(
     path: &Path,
     direction: Direction,

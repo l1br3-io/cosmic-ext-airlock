@@ -1,15 +1,17 @@
-//! Daemon core: activation tracking and cycle selection.
+//! Daemon core: activation tracking, cycle selection, and the serve loop.
 //!
-//! The pieces here are pure — snapshot in, decision out — so the MRU
-//! bookkeeping and the selection ring composition are unit-tested without
-//! a compositor. The compositor wiring lives in [`crate::wayland`]; the
-//! serve loop that ties everything together lives in [`run`].
+//! The pure pieces are unit-tested without a compositor; [`run`] wires
+//! them to the live session and the IPC socket, which is only provable on
+//! real COSMIC hardware.
 
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::io::{self, Read, Write};
+use std::os::unix::net::UnixStream;
+use std::time::{Duration, Instant};
 
-use crate::ipc::Direction;
+use crate::ipc::{self, Direction, IpcError};
 use crate::switcher::{self, Handle, Snapshot, State, Toplevel};
+use crate::wayland;
 
 /// How long after the last activity the serve loop keeps polling fast.
 const ACTIVITY_WINDOW: Duration = Duration::from_millis(250);
@@ -27,10 +29,6 @@ const IDLE_POLL: Duration = Duration::from_millis(20);
 /// [`crate::switcher::eligible`] can order by them. Windows that disappear
 /// from the snapshot are forgotten, so a reused handle number never
 /// inherits stale history.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the serve loop drives it in task T4")
-)]
 #[derive(Debug, Default)]
 pub struct Mru {
     ticks: HashMap<Handle, u64>,
@@ -38,10 +36,6 @@ pub struct Mru {
     counter: u64,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the serve loop drives it in task T4")
-)]
 impl Mru {
     /// Records activation transitions from one snapshot.
     pub fn observe(&mut self, toplevels: &[Toplevel]) {
@@ -82,10 +76,6 @@ impl Mru {
 ///
 /// The ring starts on the MRU front — the currently focused window — and
 /// steps once in the requested direction, wrapping.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the serve loop applies it in task T4")
-)]
 pub fn select_target(snapshot: &Snapshot, direction: Direction) -> Option<Handle> {
     let active = snapshot.active?;
     let mut ring = switcher::Ring::new(switcher::eligible(&snapshot.toplevels, active));
@@ -96,16 +86,128 @@ pub fn select_target(snapshot: &Snapshot, direction: Direction) -> Option<Handle
 }
 
 /// How long the serve loop should sleep, given time since last activity.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the serve loop applies it in task T4")
-)]
 pub fn poll_interval(since_activity: Duration) -> Duration {
     if since_activity < ACTIVITY_WINDOW {
         FAST_POLL
     } else {
         IDLE_POLL
     }
+}
+
+/// Why the daemon stopped.
+#[derive(Debug)]
+pub enum RunError {
+    /// The compositor connection failed or died.
+    Session(wayland::SessionError),
+    /// The IPC environment is unusable.
+    Ipc(IpcError),
+    /// The IPC socket itself failed.
+    Io(io::Error),
+}
+
+impl std::fmt::Display for RunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunError::Session(err) => write!(f, "{err}"),
+            RunError::Ipc(err) => write!(f, "{err}"),
+            RunError::Io(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for RunError {}
+
+/// Runs the daemon in the foreground: settle the compositor state, own the
+/// socket, then alternate between the compositor and IPC polls forever.
+///
+/// The socket is bound only after settling, so a successful connect from a
+/// stub always implies a daemon with a complete snapshot behind it.
+///
+/// # Errors
+///
+/// Any error is fatal and exits loudly: a missing protocol at startup, a
+/// dead compositor mid-run, or an unusable IPC path.
+pub fn run() -> Result<(), RunError> {
+    let mut session = wayland::Session::connect().map_err(RunError::Session)?;
+    session
+        .wait_until_settled(wayland::SETTLE_TIMEOUT)
+        .map_err(RunError::Session)?;
+
+    let path = ipc::socket_path().map_err(RunError::Ipc)?;
+    let listener = match ipc::bind_exclusive(&path).map_err(RunError::Io)? {
+        ipc::BindOutcome::Bound(listener) => listener,
+        ipc::BindOutcome::AlreadyRunning => {
+            eprintln!("airlock daemon: another daemon is already running");
+            return Ok(());
+        }
+    };
+    listener.set_nonblocking(true).map_err(RunError::Io)?;
+
+    let mut mru = Mru::default();
+    let mut snapshot = fresh_snapshot(&mut session, &mut mru);
+    let mut pending: Vec<UnixStream> = Vec::new();
+    let mut last_activity = Instant::now();
+
+    loop {
+        let mut activity = session.poll().map_err(RunError::Session)?;
+        // Refresh first so a command in this iteration sees the state the
+        // poll just delivered.
+        if session.is_dirty() {
+            snapshot = fresh_snapshot(&mut session, &mut mru);
+            activity = true;
+        }
+
+        // Accept whatever is queued; read one byte off each connection.
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let _ = stream.set_nonblocking(true);
+                    pending.push(stream);
+                }
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => break,
+                Err(err) => return Err(RunError::Io(err)),
+            }
+        }
+        let mut unfinished = Vec::with_capacity(pending.len());
+        for mut stream in pending.drain(..) {
+            let mut byte = [0u8; 1];
+            match stream.read(&mut byte) {
+                // Stub closed without sending; drop the connection.
+                Ok(0) => {}
+                Ok(_) => {
+                    activity = true;
+                    if let Some(direction) = ipc::parse_command(byte[0]) {
+                        if let Some(handle) = select_target(&snapshot, direction) {
+                            session.activate(handle).map_err(RunError::Session)?;
+                            // The confirming Activated event lands on a
+                            // later poll; the dirty flag refreshes the
+                            // snapshot before the next command.
+                        }
+                        // One ack byte cannot realistically hit a full
+                        // send buffer; a dropped ack makes the stub retry.
+                        let _ = stream.write_all(&[ipc::ACK]);
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => unfinished.push(stream),
+                // Broken connection; drop it.
+                Err(_) => {}
+            }
+        }
+        pending = unfinished;
+
+        if activity {
+            last_activity = Instant::now();
+        }
+        std::thread::sleep(poll_interval(last_activity.elapsed()));
+    }
+}
+
+/// Rebuilds the snapshot with MRU ticks stamped in.
+fn fresh_snapshot(session: &mut wayland::Session, mru: &mut Mru) -> Snapshot {
+    let mut snapshot = session.snapshot();
+    mru.observe(&snapshot.toplevels);
+    mru.stamp(&mut snapshot.toplevels);
+    snapshot
 }
 
 #[cfg(test)]
