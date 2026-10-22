@@ -1,0 +1,14 @@
+[package]
+name = "cosmic-ext-airlock"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "GPL-3.0-only"
+description = "Workspace-isolated Alt+Tab switcher for the COSMIC desktop"
+publish = false
+
+[[bin]]
+name = "airlock"
+path = "src/main.rs"
+
+[dependencies]
