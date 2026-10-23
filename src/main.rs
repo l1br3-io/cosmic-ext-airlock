@@ -4,6 +4,7 @@ mod cli;
 mod daemon;
 mod ipc;
 mod switcher;
+mod ui;
 mod wayland;
 
 use std::process::Stdio;
