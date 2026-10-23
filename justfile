@@ -28,10 +28,21 @@ fmt-check:
 test:
     cargo test --all-targets --all-features
 
-# Run the daemon in the foreground for manual testing.
+# Dev loop: build and run the daemon from the dev tree (foreground). Only
+# one daemon can run at a time — if the installed daemon is serving, stop
+# it first with `just stop` or this exits "already running".
 run:
     cargo run -- daemon
 
-# Install the airlock binary into ~/.cargo/bin.
+# Stop the running daemon, whichever build it came from. The next key
+# press auto-spawns the daemon from the installed binary: use this to
+# hand control back after a dev session, or to activate a fresh
+# `just install` (a running daemon keeps the old code until stopped).
+stop:
+    -@pkill -x airlock
+
+# Install the release binary into ~/.cargo/bin. The installed copy is
+# self-contained — the spawn stub re-executes the daemon from its own
+# path, so daily use never touches the dev tree.
 install:
     cargo install --path .
