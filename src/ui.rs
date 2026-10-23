@@ -186,14 +186,6 @@ fn truncate_cols(title: String) -> String {
     }
 }
 
-/// 8x8 bitmap glyphs for printable ASCII U+0020..=U+007E, one `[u8; 8]` per
-/// glyph (a row per byte); bit `(1 << col)` is the pixel at column `col`, so
-/// the least-significant bit is the leftmost pixel.
-///
-/// Font data from the font8x8 project (Daniel Hepper,
-/// https://github.com/dhepper/font8x8), which dedicates the font tables to
-/// the public domain; table transcribed from the `font8x8` Rust crate
-/// v0.3.1 (MIT).
 /// Why creating an overlay failed. The daemon logs this and carries on
 /// without a switcher surface rather than dying mid-press.
 #[derive(Debug)]
@@ -334,6 +326,14 @@ impl Overlay {
     }
 }
 
+/// 8x8 bitmap glyphs for printable ASCII U+0020..=U+007E, one `[u8; 8]` per
+/// glyph (a row per byte); bit `(1 << col)` is the pixel at column `col`, so
+/// the least-significant bit is the leftmost pixel.
+///
+/// Font data from the font8x8 project (Daniel Hepper,
+/// https://github.com/dhepper/font8x8), which dedicates the font tables to
+/// the public domain; table transcribed from the `font8x8` Rust crate
+/// v0.3.1 (MIT).
 #[rustfmt::skip]
 const FONT: [[u8; 8]; 95] = [
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // (space)
