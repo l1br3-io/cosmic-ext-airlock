@@ -9,6 +9,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use cctk::sctk::compositor::CompositorState;
+use cctk::sctk::seat::keyboard::Keysym;
 use cctk::sctk::shell::WaylandSurface;
 use cctk::sctk::shell::wlr_layer::{
     Anchor, KeyboardInteractivity, Layer, LayerShell, LayerSurface,
@@ -16,9 +17,14 @@ use cctk::sctk::shell::wlr_layer::{
 use cctk::sctk::shm::Shm;
 use cctk::sctk::shm::slot::SlotPool;
 use cctk::wayland_client::QueueHandle;
-use cctk::wayland_client::protocol::{wl_output::WlOutput, wl_shm, wl_surface::WlSurface};
+use cctk::wayland_client::protocol::{
+    wl_output::WlOutput, wl_seat, wl_shm, wl_surface::WlSurface,
+};
+use cctk::wayland_protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1;
+use cctk::wayland_protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1;
 use cosmic_client_toolkit as cctk;
 
+use crate::ipc::Direction;
 use crate::switcher::{self, Handle, Snapshot};
 use crate::wayland::App;
 
@@ -42,6 +48,10 @@ pub const MAX_COLS: u32 = 48;
 
 /// How long the overlay stays up before closing itself when idle.
 pub const CLOSE_AFTER: Duration = Duration::from_secs(2);
+
+/// Longest a grabbed overlay may stay mapped, even mid-gesture: a lost
+/// Alt-release or a dead input path must never stick the keyboard grab.
+pub const HARD_CLOSE: Duration = Duration::from_secs(30);
 
 /// Overlay background (ARGB, little-endian byte order when written).
 pub const COLOR_BACKGROUND: u32 = 0xF0_1E_21_26;
@@ -186,6 +196,142 @@ fn truncate_cols(title: String) -> String {
     }
 }
 
+/// Keys the switcher gesture reacts to, normalized from keysyms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GestureKey {
+    Tab,
+    Escape,
+    Other,
+}
+
+/// One normalized input into the overlay gesture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GestureInput {
+    /// A stub invocation: the user pressed the keybind (`alt-tab` or
+    /// `shift-alt-tab`) outside the overlay.
+    Invoke(Direction),
+    /// A key press on the grabbed overlay keyboard; `shift` carries the
+    /// seat's last reported shift state (or an ISO_Left_Tab keysym).
+    Press { key: GestureKey, shift: bool },
+    /// The seat's modifier state changed; only Alt matters here.
+    Modifiers { alt: bool },
+    /// Keyboard focus left the overlay surface.
+    FocusLost,
+}
+
+/// What the daemon should do in response to a [`GestureInput`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GestureOutput {
+    /// Move the selection one window in this direction and refresh the
+    /// overlay.
+    Step(Direction),
+    /// Activate the selection and unmap the overlay.
+    Commit,
+    /// Unmap the overlay without switching.
+    Dismiss,
+    Nothing,
+}
+
+/// The hold-Alt gesture as a pure state machine.
+///
+/// The daemon feeds it normalized inputs and applies the outputs, so the
+/// full gesture — invoke, cycle, release-commit, quick-tap commit, escape,
+/// focus loss — is unit-testable without a compositor.
+///
+/// Release-capture rides on [`GestureInput::Modifiers`]: with the overlay's
+/// keyboard grabbed, the compositor reports modifier changes, so Alt going
+/// away is the commit signal. The first report without Alt commits too — a
+/// quick Alt+Tab tap releases before the overlay maps, and must still
+/// switch.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Gesture {
+    showing: bool,
+    alt: bool,
+}
+
+impl Gesture {
+    /// Applies one input, returning what the daemon should do.
+    pub fn feed(&mut self, input: GestureInput) -> GestureOutput {
+        match input {
+            GestureInput::Invoke(direction) => {
+                self.showing = true;
+                GestureOutput::Step(direction)
+            }
+            GestureInput::Press { key, shift } if self.showing => match key {
+                GestureKey::Tab => GestureOutput::Step(if shift {
+                    Direction::Previous
+                } else {
+                    Direction::Next
+                }),
+                GestureKey::Escape => {
+                    self.showing = false;
+                    GestureOutput::Dismiss
+                }
+                GestureKey::Other => GestureOutput::Nothing,
+            },
+            GestureInput::Modifiers { alt } => {
+                self.alt = alt;
+                if self.showing && !alt {
+                    self.showing = false;
+                    GestureOutput::Commit
+                } else {
+                    GestureOutput::Nothing
+                }
+            }
+            GestureInput::FocusLost => {
+                if self.showing {
+                    self.showing = false;
+                    GestureOutput::Dismiss
+                } else {
+                    GestureOutput::Nothing
+                }
+            }
+            // Key presses mean nothing between sessions: the overlay is
+            // unmapped, so none can arrive from our surface anyway.
+            GestureInput::Press { .. } => GestureOutput::Nothing,
+        }
+    }
+
+    /// Whether a gesture session is open (the overlay should be mapped).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the daemon mirrors the session with its ring; only tests assert visibility directly"
+        )
+    )]
+    pub fn showing(&self) -> bool {
+        self.showing
+    }
+
+    /// Whether the last modifier report had Alt held. While true, the idle
+    /// close deadline is suspended: the user is mid-gesture and quiet.
+    pub fn alt_held(&self) -> bool {
+        self.alt
+    }
+
+    /// Forces the session closed without further output, for daemon-side
+    /// closes the input stream cannot express (the idle and hard timeouts).
+    pub fn close(&mut self) {
+        self.showing = false;
+    }
+}
+
+/// Normalizes a grabbed key press into gesture input.
+///
+/// Shift+Tab arrives as ISO_Left_Tab on most layouts and as Tab plus the
+/// shift modifier on others: both step backwards. `shift_held` is the
+/// seat's last reported shift state.
+pub fn key_input(keysym: Keysym, shift_held: bool) -> GestureInput {
+    let (key, shift) = match keysym {
+        Keysym::ISO_Left_Tab => (GestureKey::Tab, true),
+        Keysym::Tab => (GestureKey::Tab, shift_held),
+        Keysym::Escape => (GestureKey::Escape, shift_held),
+        _ => (GestureKey::Other, shift_held),
+    };
+    GestureInput::Press { key, shift }
+}
+
 /// Why creating an overlay failed. The daemon logs this and carries on
 /// without a switcher surface rather than dying mid-press.
 #[derive(Debug)]
@@ -204,33 +350,51 @@ impl std::error::Error for OverlayError {}
 ///
 /// Creating the surface sends an initial empty commit; the compositor
 /// answers with a configure, and only then may buffers attach (attaching
-/// earlier is a protocol error). Dropping the `LayerSurface` unmaps the
-/// overlay.
+/// earlier is a protocol error). While mapped, a keyboard-shortcuts
+/// inhibitor keeps the compositor's own Alt+Tab from stealing the gesture;
+/// dropping the `LayerSurface` unmaps the overlay and dropping the
+/// inhibitor uninhibits.
 pub struct Overlay {
+    /// Declared before `layer` so the inhibit lifts before the unmap.
+    inhibitor: ZwpKeyboardShortcutsInhibitorV1,
     layer: LayerSurface,
     pool: SlotPool,
     model: OverlayModel,
     /// Size granted by the compositor; `None` until the first configure.
     size: Option<(u32, u32)>,
     close_at: Instant,
+    hard_close_at: Instant,
+}
+
+/// Everything a new overlay borrows from the live session.
+pub struct OverlayEnv<'a> {
+    pub compositor: &'a CompositorState,
+    pub layer_shell: &'a LayerShell,
+    pub shm: &'a Shm,
+    pub shortcuts: &'a ZwpKeyboardShortcutsInhibitManagerV1,
+    pub seat: &'a wl_seat::WlSeat,
+    pub qh: &'a QueueHandle<App>,
+    pub output: Option<&'a WlOutput>,
 }
 
 impl Overlay {
-    /// Creates the overlay surface for `model` on `output` (centered, overlay
-    /// layer, exclusive keyboard interactivity) and requests its first
-    /// configure.
+    /// Creates the overlay surface for `model` (centered on `env.output`,
+    /// overlay layer, exclusive keyboard interactivity) and requests its
+    /// first configure.
     ///
     /// # Errors
     ///
     /// Fails when the shared-memory pool cannot be created.
-    pub fn new(
-        model: OverlayModel,
-        compositor: &CompositorState,
-        layer_shell: &LayerShell,
-        shm: &Shm,
-        qh: &QueueHandle<App>,
-        output: Option<&WlOutput>,
-    ) -> Result<Self, OverlayError> {
+    pub fn new(model: OverlayModel, env: OverlayEnv<'_>) -> Result<Self, OverlayError> {
+        let OverlayEnv {
+            compositor,
+            layer_shell,
+            shm,
+            shortcuts,
+            seat,
+            qh,
+            output,
+        } = env;
         let surface = compositor.create_surface(qh);
         let layer =
             layer_shell.create_layer_surface(qh, surface, Layer::Overlay, Some("airlock"), output);
@@ -240,16 +404,24 @@ impl Overlay {
         layer.set_size(model.width, model.height);
         layer.commit();
 
+        // With shortcuts inhibited, the compositor forwards Alt (and every
+        // other key) to the grabbed surface instead of acting on its own
+        // bindings — the release that commits the gesture arrives as a
+        // modifiers event.
+        let inhibitor = shortcuts.inhibit_shortcuts(layer.wl_surface(), seat, qh, ());
+
         let len = model.width as usize * model.height as usize * 4;
         let pool = SlotPool::new(len, shm)
             .map_err(|err| OverlayError(format!("shared memory pool: {err}")))?;
 
         Ok(Self {
+            inhibitor,
             layer,
             pool,
             model,
             size: None,
             close_at: Instant::now() + CLOSE_AFTER,
+            hard_close_at: Instant::now() + HARD_CLOSE,
         })
     }
 
@@ -288,6 +460,17 @@ impl Overlay {
         now >= self.close_at
     }
 
+    /// Whether the hard close deadline has passed at `now`.
+    pub fn hard_expired(&self, now: Instant) -> bool {
+        now >= self.hard_close_at
+    }
+
+    /// Pushes the idle close deadline out again; called for every gesture
+    /// input so the timeout only bites when input has truly gone quiet.
+    pub fn touch(&mut self) {
+        self.close_at = Instant::now() + CLOSE_AFTER;
+    }
+
     /// The model currently shown.
     pub fn model(&self) -> &OverlayModel {
         &self.model
@@ -323,6 +506,16 @@ impl Overlay {
             return;
         }
         self.layer.commit();
+    }
+}
+
+impl Drop for Overlay {
+    /// Sends the inhibitor's destroy request: dropping the proxy alone does
+    /// not uninhibit, and a leaked inhibitor would keep the compositor
+    /// swallowing its own keyboard shortcuts after the overlay is gone.
+    /// The layer surface (and the unmap) follows in field drops.
+    fn drop(&mut self) {
+        self.inhibitor.destroy();
     }
 }
 
@@ -777,5 +970,230 @@ mod tests {
         assert_eq!(glyph('\n'), glyph('?'));
         assert_eq!(glyph('A'), FONT[('A' as usize) - 0x20]);
         assert_eq!(glyph(' '), FONT[0]);
+    }
+
+    #[test]
+    fn default_gesture_is_hidden_with_alt_released() {
+        let gesture = Gesture::default();
+        assert!(!gesture.showing());
+        assert!(!gesture.alt_held());
+    }
+
+    #[test]
+    fn invoke_while_hidden_steps_once_and_opens_the_session() {
+        let mut gesture = Gesture::default();
+        assert_eq!(
+            gesture.feed(GestureInput::Invoke(Direction::Next)),
+            GestureOutput::Step(Direction::Next)
+        );
+        assert!(gesture.showing());
+    }
+
+    #[test]
+    fn invoke_while_showing_continues_the_session() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Invoke(Direction::Previous)),
+            GestureOutput::Step(Direction::Previous)
+        );
+        assert!(gesture.showing());
+    }
+
+    #[test]
+    fn tab_press_steps_next_and_shift_tab_steps_previous() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: false
+            }),
+            GestureOutput::Step(Direction::Next)
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: true
+            }),
+            GestureOutput::Step(Direction::Previous)
+        );
+    }
+
+    #[test]
+    fn escape_dismisses_even_while_alt_is_held() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        gesture.feed(GestureInput::Modifiers { alt: true });
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Escape,
+                shift: false
+            }),
+            GestureOutput::Dismiss
+        );
+        assert!(!gesture.showing());
+    }
+
+    #[test]
+    fn other_keys_leave_the_session_alone() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Other,
+                shift: false
+            }),
+            GestureOutput::Nothing
+        );
+        assert!(gesture.showing());
+    }
+
+    #[test]
+    fn alt_report_held_keeps_the_session_and_tracks_state() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Modifiers { alt: true }),
+            GestureOutput::Nothing
+        );
+        assert!(gesture.showing());
+        assert!(gesture.alt_held());
+    }
+
+    #[test]
+    fn alt_release_commits_the_selection() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        gesture.feed(GestureInput::Modifiers { alt: true });
+        assert_eq!(
+            gesture.feed(GestureInput::Modifiers { alt: false }),
+            GestureOutput::Commit
+        );
+        assert!(!gesture.showing());
+    }
+
+    #[test]
+    fn first_modifiers_report_without_alt_commits_immediately() {
+        // Quick tap: Alt is already released when the overlay finally maps
+        // and receives keyboard focus, so the first modifier report says
+        // alt=false — that tap must still switch.
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Modifiers { alt: false }),
+            GestureOutput::Commit
+        );
+    }
+
+    #[test]
+    fn focus_lost_dismisses() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::FocusLost),
+            GestureOutput::Dismiss
+        );
+        assert!(!gesture.showing());
+    }
+
+    #[test]
+    fn inputs_after_the_session_closes_do_nothing() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        gesture.feed(GestureInput::Press {
+            key: GestureKey::Escape,
+            shift: false,
+        });
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: false
+            }),
+            GestureOutput::Nothing
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::Modifiers { alt: false }),
+            GestureOutput::Nothing
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::FocusLost),
+            GestureOutput::Nothing
+        );
+    }
+
+    #[test]
+    fn invoke_restarts_a_closed_session() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        gesture.feed(GestureInput::FocusLost);
+        assert_eq!(
+            gesture.feed(GestureInput::Invoke(Direction::Next)),
+            GestureOutput::Step(Direction::Next)
+        );
+        assert!(gesture.showing());
+    }
+
+    #[test]
+    fn close_forces_the_session_hidden_and_silences_late_inputs() {
+        // The daemon closes on timeouts, which the input stream cannot
+        // express; a stray late event must not resurrect the session.
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        gesture.feed(GestureInput::Modifiers { alt: true });
+        gesture.close();
+        assert!(!gesture.showing());
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: false
+            }),
+            GestureOutput::Nothing
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::Modifiers { alt: false }),
+            GestureOutput::Nothing
+        );
+    }
+
+    #[test]
+    fn key_input_maps_tab_escape_and_backtab() {
+        assert_eq!(
+            key_input(Keysym::Tab, false),
+            GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: false
+            }
+        );
+        // Shift held at the seat steers a plain Tab backwards.
+        assert_eq!(
+            key_input(Keysym::Tab, true),
+            GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: true
+            }
+        );
+        // ISO_Left_Tab is Shift+Tab by another name.
+        assert_eq!(
+            key_input(Keysym::ISO_Left_Tab, false),
+            GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: true
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Escape, false),
+            GestureInput::Press {
+                key: GestureKey::Escape,
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Return, false),
+            GestureInput::Press {
+                key: GestureKey::Other,
+                shift: false
+            }
+        );
     }
 }

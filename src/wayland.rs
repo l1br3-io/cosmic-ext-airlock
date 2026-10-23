@@ -32,10 +32,16 @@ use cctk::wayland_client::globals::registry_queue_init;
 use cctk::wayland_client::protocol::{wl_keyboard, wl_output, wl_seat, wl_surface};
 use cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1;
 use cctk::wayland_protocols::ext::workspace::v1::client::ext_workspace_handle_v1::{ExtWorkspaceHandleV1, State as ExtWorkspaceState};
+use cctk::wayland_protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_keyboard_shortcuts_inhibit_manager_v1::{
+    self as ksi_manager, ZwpKeyboardShortcutsInhibitManagerV1,
+};
+use cctk::wayland_protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_keyboard_shortcuts_inhibitor_v1::{
+    self as ksi_inhibitor, ZwpKeyboardShortcutsInhibitorV1,
+};
 use cctk::workspace::{WorkspaceHandler, WorkspaceState};
 
 use crate::switcher::{Handle, Snapshot, Toplevel, Workspace, WorkspaceId};
-use crate::ui::{self, OverlayModel};
+use crate::ui::{self, GestureInput, OverlayModel};
 
 /// A required protocol the compositor does not offer at a sufficient version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,13 +239,19 @@ pub(crate) struct App {
     compositor: CompositorState,
     layer_shell: LayerShell,
     shm: Shm,
+    shortcuts_inhibit: ZwpKeyboardShortcutsInhibitManagerV1,
     /// First seat seen; hands activation requests. Tracked by [`SeatHandler`]
     /// because the seat is also what binds the overlay keyboard.
     seat: Option<wl_seat::WlSeat>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
+    /// Last shift state the seat reported, for classifying Tab presses.
+    shift_held: bool,
     /// First output seen; hosts the overlay surface.
     first_output: Option<wl_output::WlOutput>,
     overlay: Option<ui::Overlay>,
+    /// Gesture inputs queued by keyboard handlers during dispatch; the
+    /// daemon's serve loop drains them after each poll.
+    gesture_inputs: Vec<GestureInput>,
     /// Identity maps so plain ids stay stable across snapshots for the
     /// daemon's lifetime; first-seen order assigns them.
     workspace_ids: HashMap<ExtWorkspaceHandleV1, WorkspaceId>,
@@ -389,6 +401,7 @@ impl SeatHandler for App {
 
     fn new_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
         if self.seat.is_none() {
+            eprintln!("airlock daemon: seat arrived");
             self.seat = Some(seat);
         }
     }
@@ -400,8 +413,18 @@ impl SeatHandler for App {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        if capability == Capability::Keyboard && self.keyboard.is_none() {
-            self.keyboard = self.seat_state.get_keyboard(qh, &seat, None).ok();
+        if capability == Capability::Keyboard {
+            // Pre-existing seats never trigger new_seat — the initial
+            // registry burst is consumed before handlers exist — so the
+            // seat is captured here, from its capability event.
+            if self.seat.is_none() {
+                eprintln!("airlock daemon: seat arrived (with keyboard)");
+                self.seat = Some(seat.clone());
+            }
+            if self.keyboard.is_none() {
+                eprintln!("airlock daemon: seat keyboard bound");
+                self.keyboard = self.seat_state.get_keyboard(qh, &seat, None).ok();
+            }
         }
     }
 
@@ -426,8 +449,10 @@ impl SeatHandler for App {
     }
 }
 
-// Until the hold-Alt gesture lands, any key press or focus loss simply
-// dismisses the overlay; the 2 s idle close backs these up.
+// The overlay gesture: key presses and modifier reports are normalized into
+// gesture inputs here; the daemon's serve loop drains them and applies the
+// outputs. Focus loss is queued the same way so every path that can close
+// the overlay flows through one state machine.
 impl KeyboardHandler for App {
     fn enter(
         &mut self,
@@ -454,7 +479,7 @@ impl KeyboardHandler for App {
             .as_ref()
             .is_some_and(|overlay| overlay.wl_surface() == surface);
         if losing_focus {
-            self.overlay_hide("focus lost");
+            self.gesture_inputs.push(GestureInput::FocusLost);
         }
     }
 
@@ -464,10 +489,11 @@ impl KeyboardHandler for App {
         _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
         _serial: u32,
-        _event: KeyEvent,
+        event: KeyEvent,
     ) {
         if self.overlay.is_some() {
-            self.overlay_hide("key press");
+            let input = ui::key_input(event.keysym, self.shift_held);
+            self.gesture_inputs.push(input);
         }
     }
 
@@ -497,10 +523,15 @@ impl KeyboardHandler for App {
         _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
         _serial: u32,
-        _modifiers: Modifiers,
+        modifiers: Modifiers,
         _raw_modifiers: RawModifiers,
         _layout: u32,
     ) {
+        self.shift_held = modifiers.shift;
+        if self.overlay.is_some() {
+            self.gesture_inputs
+                .push(GestureInput::Modifiers { alt: modifiers.alt });
+        }
     }
 }
 
@@ -582,6 +613,43 @@ impl LayerShellHandler for App {
 impl ShmHandler for App {
     fn shm_state(&mut self) -> &mut Shm {
         &mut self.shm
+    }
+}
+
+// The shortcuts-inhibit proxies carry no state Airlock tracks; the
+// inhibitor's active/inactive events are logged because they are the
+// hardware-visible proof the gesture grab engaged.
+impl cctk::wayland_client::Dispatch<ZwpKeyboardShortcutsInhibitManagerV1, ()> for App {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpKeyboardShortcutsInhibitManagerV1,
+        _event: ksi_manager::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // This interface has no events.
+    }
+}
+
+impl cctk::wayland_client::Dispatch<ZwpKeyboardShortcutsInhibitorV1, ()> for App {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpKeyboardShortcutsInhibitorV1,
+        event: ksi_inhibitor::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            ksi_inhibitor::Event::Active => {
+                eprintln!("airlock daemon: keyboard shortcuts inhibited");
+            }
+            ksi_inhibitor::Event::Inactive => {
+                eprintln!("airlock daemon: keyboard shortcuts uninhibited");
+            }
+            _ => {}
+        }
     }
 }
 
@@ -689,6 +757,14 @@ impl Session {
                 needed_for: "the switcher overlay",
             })
         })?;
+        let shortcuts_inhibit = globals
+            .bind::<ZwpKeyboardShortcutsInhibitManagerV1, App, ()>(&qh, 1..=1, ())
+            .map_err(|_| {
+                SessionError::MissingProtocol(MissingProtocol {
+                    interface: "zwp_keyboard_shortcuts_inhibit_manager_v1",
+                    needed_for: "receiving Alt+Tab on the switcher overlay",
+                })
+            })?;
         let seat_state = SeatState::new(&globals, &qh);
 
         let toplevel_manager_state =
@@ -703,10 +779,13 @@ impl Session {
             compositor,
             layer_shell,
             shm,
+            shortcuts_inhibit,
             seat: None,
             keyboard: None,
+            shift_held: false,
             first_output: None,
             overlay: None,
+            gesture_inputs: Vec::new(),
             registry_state,
             workspace_ids: HashMap::new(),
             next_workspace_id: 0,
@@ -921,14 +1000,24 @@ impl Session {
             let _ = self.conn.flush();
             return;
         }
+        // The inhibitor needs a seat; without one there is no gesture to
+        // protect either, so skip mapping entirely and keep cycling blind.
+        let Some(seat) = self.app.seat.clone() else {
+            eprintln!("airlock daemon: overlay skipped: no seat yet");
+            return;
+        };
         let qh = self.queue.handle();
         let overlay = ui::Overlay::new(
             model,
-            &self.app.compositor,
-            &self.app.layer_shell,
-            &self.app.shm,
-            &qh,
-            self.app.first_output.as_ref(),
+            ui::OverlayEnv {
+                compositor: &self.app.compositor,
+                layer_shell: &self.app.layer_shell,
+                shm: &self.app.shm,
+                shortcuts: &self.app.shortcuts_inhibit,
+                seat: &seat,
+                qh: &qh,
+                output: self.app.first_output.as_ref(),
+            },
         );
         match overlay {
             Ok(overlay) => {
@@ -951,16 +1040,28 @@ impl Session {
         self.app.overlay_hide(reason);
     }
 
-    /// Unmaps the overlay when its idle deadline has passed.
-    pub fn overlay_close_if_expired(&mut self) {
-        if self
-            .app
+    /// Idle and hard close deadlines of a mapped overlay, as
+    /// `(idle_expired, hard_expired)`; `None` when no overlay is up. The
+    /// daemon owns the closing policy because the Alt state it tracks
+    /// decides whether an idle expiry should bite.
+    pub fn overlay_deadlines(&self) -> Option<(bool, bool)> {
+        let now = Instant::now();
+        self.app
             .overlay
             .as_ref()
-            .is_some_and(|overlay| overlay.expired(Instant::now()))
-        {
-            self.app.overlay_hide("timeout");
+            .map(|overlay| (overlay.expired(now), overlay.hard_expired(now)))
+    }
+
+    /// Pushes the overlay's idle deadline out again.
+    pub fn overlay_touch(&mut self) {
+        if let Some(overlay) = self.app.overlay.as_mut() {
+            overlay.touch();
         }
+    }
+
+    /// Drains gesture inputs queued by keyboard handlers during dispatch.
+    pub fn take_gesture_inputs(&mut self) -> Vec<GestureInput> {
+        std::mem::take(&mut self.app.gesture_inputs)
     }
 }
 
