@@ -156,6 +156,7 @@ pub fn run() -> Result<(), RunError> {
             snapshot = fresh_snapshot(&mut session, &mut mru);
             activity = true;
         }
+        session.overlay_close_if_expired();
 
         // Accept whatever is queued; read one byte off each connection.
         loop {
@@ -177,11 +178,22 @@ pub fn run() -> Result<(), RunError> {
                 Ok(_) => {
                     activity = true;
                     if let Some(direction) = ipc::parse_command(byte[0]) {
-                        if let Some(handle) = select_target(&snapshot, direction) {
+                        // Until the gesture lands (T6), each press steps and
+                        // activates immediately; the overlay visualizes the
+                        // step and closes on any key or after its idle
+                        // timeout.
+                        let target = select_target(&snapshot, direction);
+                        if let Some(handle) = target {
                             session.activate(handle).map_err(RunError::Session)?;
                             // The confirming Activated event lands on a
                             // later poll; the dirty flag refreshes the
                             // snapshot before the next command.
+                        }
+                        let model =
+                            target.and_then(|handle| crate::ui::overlay_model(&snapshot, handle));
+                        match model {
+                            Some(model) => session.overlay_show(model),
+                            None => session.overlay_hide("nothing eligible"),
                         }
                         // One ack byte cannot realistically hit a full
                         // send buffer; a dropped ack makes the stub retry.

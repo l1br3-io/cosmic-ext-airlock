@@ -13,22 +13,29 @@ use std::time::{Duration, Instant};
 use cosmic_client_toolkit as cctk;
 use cctk::cosmic_protocols::toplevel_info::v1::client::zcosmic_toplevel_handle_v1::State as CosmicState;
 use cctk::cosmic_protocols::toplevel_info::v1::client::zcosmic_toplevel_handle_v1::ZcosmicToplevelHandleV1;
-use cctk::sctk::{
-    output::{OutputHandler, OutputState},
-    registry::{ProvidesRegistryState, RegistryState},
+use cctk::sctk::compositor::{CompositorHandler, CompositorState};
+use cctk::sctk::output::{OutputHandler, OutputState};
+use cctk::sctk::registry::{ProvidesRegistryState, RegistryState};
+use cctk::sctk::seat::{
+    keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
+    Capability, SeatHandler, SeatState,
 };
+use cctk::sctk::shell::wlr_layer::{
+    LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure,
+};
+use cctk::sctk::shm::{Shm, ShmHandler};
 use cctk::toplevel_info::{ToplevelInfoHandler, ToplevelInfoState};
 use cctk::toplevel_management::{ToplevelManagerHandler, ToplevelManagerState};
-use cctk::wayland_client::{Connection, Dispatch, DispatchError, Proxy, QueueHandle, WEnum};
+use cctk::wayland_client::{Connection, DispatchError, Proxy, QueueHandle, WEnum};
 use cctk::wayland_client::backend::WaylandError;
 use cctk::wayland_client::globals::registry_queue_init;
-use cctk::wayland_client::protocol::wl_output;
-use cctk::wayland_client::protocol::wl_seat;
+use cctk::wayland_client::protocol::{wl_keyboard, wl_output, wl_seat, wl_surface};
 use cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1;
 use cctk::wayland_protocols::ext::workspace::v1::client::ext_workspace_handle_v1::{ExtWorkspaceHandleV1, State as ExtWorkspaceState};
 use cctk::workspace::{WorkspaceHandler, WorkspaceState};
 
 use crate::switcher::{Handle, Snapshot, Toplevel, Workspace, WorkspaceId};
+use crate::ui::{self, OverlayModel};
 
 /// A required protocol the compositor does not offer at a sufficient version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,13 +223,23 @@ fn state_names(state: crate::switcher::State) -> Vec<&'static str> {
 
 /// Event-loop state for the compositor connection, shared by the one-shot
 /// `airlock list` flow and the daemon's serve loop.
-struct App {
+pub(crate) struct App {
     registry_state: RegistryState,
     output_state: OutputState,
     toplevel_info_state: ToplevelInfoState,
     toplevel_manager_state: ToplevelManagerState,
     workspace_state: WorkspaceState,
-    seat: wl_seat::WlSeat,
+    seat_state: SeatState,
+    compositor: CompositorState,
+    layer_shell: LayerShell,
+    shm: Shm,
+    /// First seat seen; hands activation requests. Tracked by [`SeatHandler`]
+    /// because the seat is also what binds the overlay keyboard.
+    seat: Option<wl_seat::WlSeat>,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
+    /// First output seen; hosts the overlay surface.
+    first_output: Option<wl_output::WlOutput>,
+    overlay: Option<ui::Overlay>,
     /// Identity maps so plain ids stay stable across snapshots for the
     /// daemon's lifetime; first-seen order assigns them.
     workspace_ids: HashMap<ExtWorkspaceHandleV1, WorkspaceId>,
@@ -260,7 +277,7 @@ impl ProvidesRegistryState for App {
         &mut self.registry_state
     }
 
-    cctk::sctk::registry_handlers!(OutputState);
+    cctk::sctk::registry_handlers!(OutputState, SeatState);
 }
 
 impl OutputHandler for App {
@@ -268,14 +285,16 @@ impl OutputHandler for App {
         &mut self.output_state
     }
 
-    // Outputs are bound so workspace groups and toplevels can reference them;
-    // `list` does not otherwise care about output events.
+    // The first output hosts the overlay; others are ignored.
     fn new_output(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
+        output: wl_output::WlOutput,
     ) {
+        if self.first_output.is_none() {
+            self.first_output = Some(output);
+        }
     }
 
     fn update_output(
@@ -290,8 +309,11 @@ impl OutputHandler for App {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
+        output: wl_output::WlOutput,
     ) {
+        if self.first_output.as_ref() == Some(&output) {
+            self.first_output = None;
+        }
     }
 }
 
@@ -360,22 +382,226 @@ impl ToplevelManagerHandler for App {
     }
 }
 
-// The seat exists only to be handed to `activate`; its capability events
-// carry nothing Airlock uses.
-impl Dispatch<wl_seat::WlSeat, cctk::GlobalData> for App {
-    fn event(
-        _state: &mut Self,
-        _proxy: &wl_seat::WlSeat,
-        _event: wl_seat::Event,
-        _data: &cctk::GlobalData,
+impl SeatHandler for App {
+    fn seat_state(&mut self) -> &mut SeatState {
+        &mut self.seat_state
+    }
+
+    fn new_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
+        if self.seat.is_none() {
+            self.seat = Some(seat);
+        }
+    }
+
+    fn new_capability(
+        &mut self,
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+        seat: wl_seat::WlSeat,
+        capability: Capability,
+    ) {
+        if capability == Capability::Keyboard && self.keyboard.is_none() {
+            self.keyboard = self.seat_state.get_keyboard(qh, &seat, None).ok();
+        }
+    }
+
+    fn remove_capability(
+        &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
+        _seat: wl_seat::WlSeat,
+        capability: Capability,
+    ) {
+        if capability == Capability::Keyboard
+            && let Some(keyboard) = self.keyboard.take()
+        {
+            keyboard.release();
+        }
+    }
+
+    fn remove_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
+        if self.seat.as_ref() == Some(&seat) {
+            self.seat = None;
+        }
+    }
+}
+
+// Until the hold-Alt gesture lands, any key press or focus loss simply
+// dismisses the overlay; the 2 s idle close backs these up.
+impl KeyboardHandler for App {
+    fn enter(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _surface: &wl_surface::WlSurface,
+        _serial: u32,
+        _raw: &[u32],
+        _keysyms: &[Keysym],
+    ) {
+    }
+
+    fn leave(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        surface: &wl_surface::WlSurface,
+        _serial: u32,
+    ) {
+        let losing_focus = self
+            .overlay
+            .as_ref()
+            .is_some_and(|overlay| overlay.wl_surface() == surface);
+        if losing_focus {
+            self.overlay_hide("focus lost");
+        }
+    }
+
+    fn press_key(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _serial: u32,
+        _event: KeyEvent,
+    ) {
+        if self.overlay.is_some() {
+            self.overlay_hide("key press");
+        }
+    }
+
+    fn release_key(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _serial: u32,
+        _event: KeyEvent,
+    ) {
+    }
+
+    fn repeat_key(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _serial: u32,
+        _event: KeyEvent,
+    ) {
+    }
+
+    fn update_modifiers(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _serial: u32,
+        _modifiers: Modifiers,
+        _raw_modifiers: RawModifiers,
+        _layout: u32,
     ) {
     }
 }
 
+impl CompositorHandler for App {
+    fn scale_factor_changed(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _surface: &wl_surface::WlSurface,
+        _new_factor: i32,
+    ) {
+    }
+
+    fn transform_changed(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _surface: &wl_surface::WlSurface,
+        _new_transform: wl_output::Transform,
+    ) {
+    }
+
+    // Airlock draws on state changes, never on frame callbacks.
+    fn frame(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _surface: &wl_surface::WlSurface,
+        _time: u32,
+    ) {
+    }
+
+    fn surface_enter(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _surface: &wl_surface::WlSurface,
+        _output: &wl_output::WlOutput,
+    ) {
+    }
+
+    fn surface_leave(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _surface: &wl_surface::WlSurface,
+        _output: &wl_output::WlOutput,
+    ) {
+    }
+}
+
+impl LayerShellHandler for App {
+    fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
+        self.overlay_hide("closed by compositor");
+    }
+
+    fn configure(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _layer: &LayerSurface,
+        configure: LayerSurfaceConfigure,
+        _serial: u32,
+    ) {
+        if let Some(overlay) = &mut self.overlay {
+            let (width, height) = configure.new_size;
+            overlay.on_configure(width, height);
+            let model = overlay.model();
+            eprintln!(
+                "airlock daemon: overlay configured {}x{} ({} rows)",
+                width,
+                height,
+                model.rows.len()
+            );
+        }
+    }
+}
+
+impl ShmHandler for App {
+    fn shm_state(&mut self) -> &mut Shm {
+        &mut self.shm
+    }
+}
+
+impl App {
+    /// Unmaps the overlay if one is up. Dropping the layer surface is the
+    /// unmap: its `Drop` destroys the role object.
+    pub(crate) fn overlay_hide(&mut self, reason: &str) {
+        if self.overlay.take().is_some() {
+            eprintln!("airlock daemon: overlay unmapped ({reason})");
+        }
+    }
+}
+
+cctk::sctk::delegate_compositor!(App);
+cctk::sctk::delegate_keyboard!(App);
+cctk::sctk::delegate_layer!(App);
 cctk::sctk::delegate_output!(App);
 cctk::sctk::delegate_registry!(App);
+cctk::sctk::delegate_seat!(App);
+cctk::sctk::delegate_shm!(App);
 cctk::delegate_toplevel_info!(App);
 cctk::delegate_workspace!(App);
 cctk::delegate_toplevel_manager!(App);
@@ -430,7 +656,6 @@ impl Session {
         };
         let toplevel_manager_state = ToplevelManagerState::try_new(&registry_state, &qh);
         let workspace_state = WorkspaceState::new(&registry_state, &qh);
-        let seat = registry_state.bind_one::<wl_seat::WlSeat, _, _>(&qh, 1..=9, cctk::GlobalData);
 
         let toplevel_info_version = toplevel_info_state
             .cosmic_toplevel_info
@@ -444,12 +669,28 @@ impl Session {
         )
         .map_err(SessionError::MissingProtocol)?;
 
-        let seat = seat.map_err(|_| {
+        // Overlay plumbing, bound after the COSMIC checks so a non-COSMIC
+        // compositor still gets the diagnostic that names the real gap.
+        let compositor = CompositorState::bind(&globals, &qh).map_err(|_| {
             SessionError::MissingProtocol(MissingProtocol {
-                interface: "wl_seat",
-                needed_for: "activating windows",
+                interface: "wl_compositor",
+                needed_for: "the switcher overlay",
             })
         })?;
+        let layer_shell = LayerShell::bind(&globals, &qh).map_err(|_| {
+            SessionError::MissingProtocol(MissingProtocol {
+                interface: "zwlr_layer_shell_v1",
+                needed_for: "the switcher overlay",
+            })
+        })?;
+        let shm = Shm::bind(&globals, &qh).map_err(|_| {
+            SessionError::MissingProtocol(MissingProtocol {
+                interface: "wl_shm",
+                needed_for: "the switcher overlay",
+            })
+        })?;
+        let seat_state = SeatState::new(&globals, &qh);
+
         let toplevel_manager_state =
             toplevel_manager_state.expect("check_protocols verified the manager global");
 
@@ -458,7 +699,14 @@ impl Session {
             toplevel_info_state,
             toplevel_manager_state,
             workspace_state,
-            seat,
+            seat_state,
+            compositor,
+            layer_shell,
+            shm,
+            seat: None,
+            keyboard: None,
+            first_output: None,
+            overlay: None,
             registry_state,
             workspace_ids: HashMap::new(),
             next_workspace_id: 0,
@@ -640,7 +888,8 @@ impl Session {
     /// Asks the compositor to focus `handle`.
     ///
     /// Returns `false` when `handle` is not in the current snapshot (a
-    /// window that closed between selection and activation).
+    /// window that closed between selection and activation) or no seat has
+    /// arrived yet.
     ///
     /// # Errors
     ///
@@ -650,12 +899,68 @@ impl Session {
         let Some(toplevel) = self.activatable.get(&handle) else {
             return Ok(false);
         };
+        let Some(seat) = self.app.seat.as_ref() else {
+            return Ok(false);
+        };
         self.app
             .toplevel_manager_state
             .manager
-            .activate(toplevel, &self.app.seat);
+            .activate(toplevel, seat);
         self.conn.flush().map_err(SessionError::Connection)?;
         Ok(true)
+    }
+
+    /// Maps the switcher overlay with `model`, or refreshes it if it is
+    /// already up. Creation failures are logged, not fatal: a press that
+    /// cannot draw still cycles focus.
+    pub fn overlay_show(&mut self, model: OverlayModel) {
+        if let Some(overlay) = self.app.overlay.as_mut() {
+            overlay.update(model);
+            let rows = overlay.model().rows.len();
+            eprintln!("airlock daemon: overlay updated ({rows} rows)");
+            let _ = self.conn.flush();
+            return;
+        }
+        let qh = self.queue.handle();
+        let overlay = ui::Overlay::new(
+            model,
+            &self.app.compositor,
+            &self.app.layer_shell,
+            &self.app.shm,
+            &qh,
+            self.app.first_output.as_ref(),
+        );
+        match overlay {
+            Ok(overlay) => {
+                let model = overlay.model();
+                eprintln!(
+                    "airlock daemon: overlay mapped {}x{} ({} rows)",
+                    model.width,
+                    model.height,
+                    model.rows.len()
+                );
+                self.app.overlay = Some(overlay);
+                let _ = self.conn.flush();
+            }
+            Err(err) => eprintln!("airlock daemon: overlay failed: {err}"),
+        }
+    }
+
+    /// Unmaps the overlay if one is up.
+    pub fn overlay_hide(&mut self, reason: &str) {
+        self.app.overlay_hide(reason);
+    }
+
+    /// Unmaps the overlay when its idle deadline has passed.
+    pub fn overlay_close_if_expired(&mut self) {
+        if self
+            .app
+            .overlay
+            .as_ref()
+            .is_some_and(|overlay| overlay.expired(Instant::now()))
+        {
+            self.app.overlay_hide("timeout");
+        }
     }
 }
 
