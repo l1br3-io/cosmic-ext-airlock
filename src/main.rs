@@ -2,6 +2,7 @@
 
 mod cli;
 mod daemon;
+mod install;
 mod ipc;
 mod switcher;
 mod ui;
@@ -38,7 +39,13 @@ fn main() {
         }
         Command::AltTab => cycle(Direction::Next),
         Command::ShiftAltTab => cycle(Direction::Previous),
-        Command::Install { .. } => stub("install"),
+        Command::Install { uninstall } => match install::run(uninstall) {
+            Ok(report) => println!("{report}"),
+            Err(error) => {
+                eprintln!("airlock install: {error}");
+                std::process::exit(1);
+            }
+        },
         Command::List => match wayland::list() {
             Ok(text) => {
                 print!("{text}");
@@ -87,11 +94,4 @@ fn spawn_daemon_detached() {
         .stdout(Stdio::null())
         .process_group(0)
         .spawn();
-}
-
-/// Every stubbed subcommand exits non-zero so callers never mistake a stub
-/// for success.
-fn stub(name: &str) -> ! {
-    eprintln!("airlock {name}: not implemented yet");
-    std::process::exit(1);
 }
