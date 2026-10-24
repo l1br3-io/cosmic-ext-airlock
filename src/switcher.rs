@@ -74,10 +74,7 @@ pub struct Snapshot {
 pub fn eligible(toplevels: &[Toplevel], active: WorkspaceId) -> Vec<Handle> {
     let mut matches: Vec<&Toplevel> = toplevels
         .iter()
-        .filter(|toplevel| !toplevel.state.contains(State::MINIMIZED))
-        .filter(|toplevel| {
-            toplevel.state.contains(State::STICKY) || toplevel.workspaces.contains(&active)
-        })
+        .filter(|toplevel| is_switchable(toplevel, active))
         .collect();
     // Stable sort: MRU ties keep snapshot order.
     matches.sort_by_key(|toplevel| std::cmp::Reverse(toplevel.last_activated));
@@ -85,6 +82,28 @@ pub fn eligible(toplevels: &[Toplevel], active: WorkspaceId) -> Vec<Handle> {
         .into_iter()
         .map(|toplevel| toplevel.handle)
         .collect()
+}
+
+/// Whether one toplevel can be switched to on `active`: not minimized, and
+/// visible there — directly or by being sticky. The per-window half of
+/// [`eligible`], reused by the daemon to re-validate a selection against
+/// live state mid-gesture.
+pub fn is_switchable(toplevel: &Toplevel, active: WorkspaceId) -> bool {
+    !toplevel.state.contains(State::MINIMIZED)
+        && (toplevel.state.contains(State::STICKY) || toplevel.workspaces.contains(&active))
+}
+
+/// Whether `handle` names a window that can be switched to right now:
+/// present in `snapshot` and [`is_switchable`] on the active workspace. A
+/// missing active workspace switches to nothing.
+pub fn switchable(snapshot: &Snapshot, handle: Handle) -> bool {
+    let Some(active) = snapshot.active else {
+        return false;
+    };
+    snapshot
+        .toplevels
+        .iter()
+        .any(|toplevel| toplevel.handle == handle && is_switchable(toplevel, active))
 }
 
 /// A selection ring over the MRU-ordered eligible list: `next`/`previous`
@@ -284,5 +303,54 @@ mod tests {
         assert_eq!(ring.selected(), None);
         assert_eq!(ring.next(), None);
         assert_eq!(ring.previous(), None);
+    }
+
+    #[test]
+    fn is_switchable_requires_presence_on_the_workspace() {
+        let on_workspace = toplevel(1, &[1], State::default(), 0);
+        assert!(is_switchable(&on_workspace, WorkspaceId(1)));
+        assert!(!is_switchable(&on_workspace, WorkspaceId(2)));
+    }
+
+    #[test]
+    fn is_switchable_accepts_sticky_windows_on_any_workspace() {
+        let sticky = toplevel(1, &[1], State::STICKY, 0);
+        assert!(is_switchable(&sticky, WorkspaceId(9)));
+    }
+
+    #[test]
+    fn is_switchable_rejects_minimized_windows() {
+        let minimized = toplevel(1, &[1], State::MINIMIZED, 0);
+        assert!(!is_switchable(&minimized, WorkspaceId(1)));
+    }
+
+    #[test]
+    fn switchable_names_eligible_windows_of_the_active_workspace() {
+        let snapshot = Snapshot {
+            toplevels: vec![
+                toplevel(1, &[1], State::default(), 0),
+                toplevel(2, &[2], State::default(), 0),
+                toplevel(3, &[1], State::MINIMIZED, 0),
+            ],
+            workspaces: Vec::new(),
+            active: Some(WorkspaceId(1)),
+        };
+        assert!(switchable(&snapshot, Handle(1)));
+        // Parked on another workspace.
+        assert!(!switchable(&snapshot, Handle(2)));
+        // Minimized on this one.
+        assert!(!switchable(&snapshot, Handle(3)));
+        // Closed since the session opened.
+        assert!(!switchable(&snapshot, Handle(99)));
+    }
+
+    #[test]
+    fn switchable_without_an_active_workspace_is_false() {
+        let snapshot = Snapshot {
+            toplevels: vec![toplevel(1, &[1], State::default(), 0)],
+            workspaces: Vec::new(),
+            active: None,
+        };
+        assert!(!switchable(&snapshot, Handle(1)));
     }
 }

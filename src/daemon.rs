@@ -10,7 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
 use crate::ipc::{self, Direction, IpcError};
-use crate::switcher::{self, Handle, Snapshot, State, Toplevel};
+use crate::switcher::{self, Handle, Snapshot, State, Toplevel, WorkspaceId};
 use crate::ui::{Gesture, GestureInput, GestureOutput};
 use crate::wayland;
 
@@ -73,6 +73,38 @@ impl Mru {
     }
 }
 
+/// One open gesture session: the selection ring plus the workspace it was
+/// built for. Recording the workspace lets a mid-gesture switch void the
+/// session — the simpler correct behavior chosen in T8: re-filtering would
+/// silently swap the list under the user's held Alt, so the session is
+/// dismissed and the next press starts fresh against real state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Switch {
+    ring: switcher::Ring,
+    workspace: WorkspaceId,
+}
+
+/// Whether an open session still matches reality: the workspace it was
+/// built for is still active, and its selection is still switchable there
+/// (not closed, moved, minimized, or unstickied away).
+pub fn session_holds(open: &Switch, snapshot: &Snapshot) -> bool {
+    snapshot.active == Some(open.workspace)
+        && open
+            .ring
+            .selected()
+            .is_some_and(|handle| switcher::switchable(snapshot, handle))
+}
+
+/// The handle a commit should activate: the session's selection, but only
+/// while it is still switchable in the current snapshot. A selection that
+/// left the workspace mid-gesture commits as a no-op instead of crossing
+/// workspaces.
+pub fn commit_target(open: &Switch, snapshot: &Snapshot) -> Option<Handle> {
+    open.ring
+        .selected()
+        .filter(|&handle| switcher::switchable(snapshot, handle))
+}
+
 /// Starts or advances the gesture session's selection ring by one step.
 ///
 /// A session's first press builds the ring from the MRU front — the focused
@@ -81,20 +113,20 @@ impl Mru {
 /// walking three windows takes three presses, unlike T4's per-press rebuild
 /// which toggled between the front two.
 pub fn ring_step(
-    ring: &mut Option<switcher::Ring>,
+    open: &mut Option<Switch>,
     snapshot: &Snapshot,
     direction: Direction,
 ) -> Option<Handle> {
-    if ring.is_none() {
+    if open.is_none() {
         let active = snapshot.active?;
-        *ring = Some(switcher::Ring::new(switcher::eligible(
-            &snapshot.toplevels,
-            active,
-        )));
+        *open = Some(Switch {
+            ring: switcher::Ring::new(switcher::eligible(&snapshot.toplevels, active)),
+            workspace: active,
+        });
     }
     match direction {
-        Direction::Next => ring.as_mut()?.next(),
-        Direction::Previous => ring.as_mut()?.previous(),
+        Direction::Next => open.as_mut()?.ring.next(),
+        Direction::Previous => open.as_mut()?.ring.previous(),
     }
 }
 
@@ -172,9 +204,9 @@ pub fn run() -> Result<(), RunError> {
     let mut last_activity = Instant::now();
 
     // One gesture session at a time: the machine decides what each input
-    // means, the ring is the session's selection over the eligible list.
+    // means, the session is the selection over the eligible list.
     let mut gesture = Gesture::default();
-    let mut ring: Option<switcher::Ring> = None;
+    let mut open: Option<Switch> = None;
 
     loop {
         let mut activity = session.poll().map_err(RunError::Session)?;
@@ -185,6 +217,19 @@ pub fn run() -> Result<(), RunError> {
             activity = true;
         }
 
+        // Live-state hardening: an open session is voided the moment its
+        // premise breaks — the workspace switched under it, or the
+        // selection closed, moved, was minimized, or lost its sticky flag.
+        // Dismiss, not re-filter: swapping the list under a held Alt would
+        // change what the user is about to commit to.
+        if let Some(current) = &open
+            && !session_holds(current, &snapshot)
+        {
+            session.overlay_hide("session stale");
+            gesture.close();
+            open = None;
+        }
+
         // Keyboard input on the grabbed overlay, queued during dispatch.
         // Drained before IPC so a release committing the previous session
         // lands before any new press opens the next one.
@@ -193,18 +238,25 @@ pub fn run() -> Result<(), RunError> {
             session.overlay_touch();
             match gesture.feed(input) {
                 GestureOutput::Step(direction) => {
-                    step_and_show(&mut session, &mut gesture, &mut ring, &snapshot, direction);
+                    step_and_show(&mut session, &mut gesture, &mut open, &snapshot, direction);
                 }
                 GestureOutput::Commit => {
-                    if let Some(handle) = ring.as_ref().and_then(|ring| ring.selected()) {
+                    // The ring was built when the session opened; the
+                    // window may have moved or closed since. Only a
+                    // still-eligible selection is activated — anything else
+                    // commits as a no-op rather than crossing workspaces.
+                    if let Some(handle) = open
+                        .as_ref()
+                        .and_then(|open| commit_target(open, &snapshot))
+                    {
                         session.activate(handle).map_err(RunError::Session)?;
                     }
                     session.overlay_hide("commit");
-                    ring = None;
+                    open = None;
                 }
                 GestureOutput::Dismiss => {
                     session.overlay_hide("dismissed");
-                    ring = None;
+                    open = None;
                 }
                 GestureOutput::Nothing => {}
             }
@@ -216,7 +268,7 @@ pub fn run() -> Result<(), RunError> {
             let reason = if hard { "hard timeout" } else { "timeout" };
             session.overlay_hide(reason);
             gesture.close();
-            ring = None;
+            open = None;
         }
 
         // Accept whatever is queued; read one byte off each connection.
@@ -249,7 +301,7 @@ pub fn run() -> Result<(), RunError> {
                             step_and_show(
                                 &mut session,
                                 &mut gesture,
-                                &mut ring,
+                                &mut open,
                                 &snapshot,
                                 direction,
                             );
@@ -281,18 +333,18 @@ pub fn run() -> Result<(), RunError> {
 fn step_and_show(
     session: &mut wayland::Session,
     gesture: &mut Gesture,
-    ring: &mut Option<switcher::Ring>,
+    open: &mut Option<Switch>,
     snapshot: &Snapshot,
     direction: Direction,
 ) {
-    let selected = ring_step(ring, snapshot, direction);
+    let selected = ring_step(open, snapshot, direction);
     let model = selected.and_then(|handle| crate::ui::overlay_model(snapshot, handle));
     match model {
         Some(model) => session.overlay_show(model),
         None => {
             session.overlay_hide("nothing eligible");
             gesture.close();
-            *ring = None;
+            *open = None;
         }
     }
 }
@@ -444,9 +496,9 @@ mod tests {
             ],
             Some(1),
         );
-        let mut ring = None;
+        let mut open = None;
         assert_eq!(
-            ring_step(&mut ring, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next),
             Some(Handle(2))
         );
     }
@@ -461,9 +513,9 @@ mod tests {
             ],
             Some(1),
         );
-        let mut ring = None;
+        let mut open = None;
         assert_eq!(
-            ring_step(&mut ring, &snap, Direction::Previous),
+            ring_step(&mut open, &snap, Direction::Previous),
             Some(Handle(3))
         );
     }
@@ -478,21 +530,21 @@ mod tests {
             ],
             Some(1),
         );
-        let mut ring = None;
+        let mut open = None;
         assert_eq!(
-            ring_step(&mut ring, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next),
             Some(Handle(2))
         );
         assert_eq!(
-            ring_step(&mut ring, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next),
             Some(Handle(3))
         );
         assert_eq!(
-            ring_step(&mut ring, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next),
             Some(Handle(1))
         );
         assert_eq!(
-            ring_step(&mut ring, &snap, Direction::Previous),
+            ring_step(&mut open, &snap, Direction::Previous),
             Some(Handle(3))
         );
     }
@@ -510,9 +562,9 @@ mod tests {
             ],
             Some(1),
         );
-        let mut ring = None;
+        let mut open = None;
         assert_eq!(
-            ring_step(&mut ring, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next),
             Some(Handle(4))
         );
     }
@@ -520,23 +572,188 @@ mod tests {
     #[test]
     fn ring_step_on_an_empty_workspace_selects_nothing() {
         let snap = snapshot(vec![toplevel(1, &[2], State::ACTIVATED, 30)], Some(1));
-        let mut ring = None;
-        assert_eq!(ring_step(&mut ring, &snap, Direction::Next), None);
-        assert_eq!(ring_step(&mut ring, &snap, Direction::Previous), None);
+        let mut open = None;
+        assert_eq!(ring_step(&mut open, &snap, Direction::Next), None);
+        assert_eq!(ring_step(&mut open, &snap, Direction::Previous), None);
     }
 
     #[test]
     fn ring_step_without_an_active_workspace_selects_nothing() {
         let snap = snapshot(vec![toplevel(1, &[1], State::ACTIVATED, 30)], None);
-        let mut ring = None;
-        assert_eq!(ring_step(&mut ring, &snap, Direction::Next), None);
+        let mut open = None;
+        assert_eq!(ring_step(&mut open, &snap, Direction::Next), None);
         // No ring was cached, so a later snapshot with an active workspace
         // can still open one.
         let snap = snapshot(vec![toplevel(1, &[1], State::ACTIVATED, 30)], Some(1));
         assert_eq!(
-            ring_step(&mut ring, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next),
             Some(Handle(1))
         );
+    }
+
+    #[test]
+    fn session_holds_while_workspace_and_selection_stay_valid() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next);
+        let open = open.expect("session opened");
+        assert!(session_holds(&open, &snap));
+    }
+
+    #[test]
+    fn session_ends_when_the_workspace_switches_mid_gesture() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::STICKY, 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next);
+        let open = open.expect("session opened");
+
+        // Even a sticky selection — still switchable everywhere — is voided
+        // by the switch: the list it came from is no longer the right one.
+        let switched = snapshot(
+            vec![
+                toplevel(1, &[1], State::default(), 30),
+                toplevel(2, &[1], State::STICKY, 20),
+            ],
+            Some(2),
+        );
+        assert!(!session_holds(&open, &switched));
+    }
+
+    #[test]
+    fn session_ends_when_the_selected_window_closes() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next);
+        let open = open.expect("session opened");
+
+        let closed = snapshot(vec![toplevel(1, &[1], State::default(), 30)], Some(1));
+        assert!(!session_holds(&open, &closed));
+    }
+
+    #[test]
+    fn session_ends_when_the_selected_window_moves_away() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next);
+        let open = open.expect("session opened");
+
+        let moved = snapshot(
+            vec![
+                toplevel(1, &[1], State::default(), 30),
+                toplevel(2, &[2], State::default(), 20),
+            ],
+            Some(1),
+        );
+        assert!(!session_holds(&open, &moved));
+    }
+
+    #[test]
+    fn session_ends_when_the_selected_window_is_minimized() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next);
+        let open = open.expect("session opened");
+
+        let minimized = snapshot(
+            vec![
+                toplevel(1, &[1], State::default(), 30),
+                toplevel(2, &[1], State::MINIMIZED, 20),
+            ],
+            Some(1),
+        );
+        assert!(!session_holds(&open, &minimized));
+    }
+
+    #[test]
+    fn session_ends_when_sticky_is_taken_off_the_selection() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                // Sticky, parked on workspace 2: eligible on 1 via sticky.
+                toplevel(2, &[2], State::STICKY, 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next);
+        let open = open.expect("session opened");
+
+        let unstickied = snapshot(
+            vec![
+                toplevel(1, &[1], State::default(), 30),
+                toplevel(2, &[2], State::default(), 20),
+            ],
+            Some(1),
+        );
+        assert!(!session_holds(&open, &unstickied));
+    }
+
+    #[test]
+    fn commit_targets_the_selection_while_it_stays_eligible() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next);
+        let open = open.expect("session opened");
+        assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
+    }
+
+    #[test]
+    fn commit_skips_a_selection_that_left_the_workspace() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next);
+        let open = open.expect("session opened");
+
+        let moved = snapshot(
+            vec![
+                toplevel(1, &[1], State::default(), 30),
+                toplevel(2, &[2], State::default(), 20),
+            ],
+            Some(1),
+        );
+        assert_eq!(commit_target(&open, &moved), None);
     }
 
     #[test]
