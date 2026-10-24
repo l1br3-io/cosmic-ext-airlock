@@ -7,3 +7,4 @@ Corrections or follow-ups get a new record and a new row.
 |------|--------|--------|
 | 2026-10-22 | [Alt+Tab workspace isolation](alt-tab-workspace-isolation.md) | Complete — conclusions adopted by the Airlock spec |
 | 2026-10-22 | [Naming and trademark clearance](naming-trademark-clearance.md) | Complete — Airlock / `cosmic-ext-airlock` locked in |
+| 2026-10-24 | [VM environment for COSMIC testing](cosmic-vm-environment.md) | Complete — virt-manager + KVM + virtio-gpu/virgl recipe for the CP4 rehearsal gate |
