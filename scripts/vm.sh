@@ -180,6 +180,15 @@ cmd_push() {
     guest_exec "test -x '$VM_BIN'" || die "staging verification failed — $VM_BIN is not executable in the guest"
     serve_down
     trap - EXIT
+    # A warm daemon keeps serving the old binary: stop it so the next
+    # keypress spawns this build. Both branches must read as success.
+    if guest_exec "pgrep -x airlock >/dev/null 2>&1"; then
+        guest_exec "pkill -x airlock 2>/dev/null || true"
+        note "stopped the running guest daemon (its in-memory MRU order resets)"
+    else
+        note "no guest daemon was running"
+    fi
+    note "next Alt+Tab inside the VM spawns this build"
     note "staged $VM_BIN (sha256 $host_sha)"
     note "first staging only: log out/in inside the VM so the session PATH picks up ~/.local/bin"
     note "next: just vm-snapshot pre-airlock && just vm-install"
@@ -313,6 +322,8 @@ Workflow, in order:
   just vm-restore pre-airlock         back to the snapshot
 
 Live values and preconditions: just vm-status
+After a code change: just vm-push is the whole loop — it restarts the
+guest daemon, so the next Alt+Tab spawns the new build.
 Full guide (setup, checklist, troubleshooting): docs/vm-development.md
 EOF
 }
