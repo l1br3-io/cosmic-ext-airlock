@@ -109,7 +109,7 @@ just --set vm-user alice vm-push    same, long form
 | Variable | Meaning | Default |
 |---|---|---|
 | `VM_NAME` | libvirt domain | `PopOs24.04` |
-| `VM_USER` | desktop user inside the guest | `jpt` |
+| `VM_USER` | desktop user inside the guest | `jpt-virt` |
 | `VM_HOME` | guest home directory | looked up in the guest's `/etc/passwd` |
 | `VM_BIN` | guest binary path | `$VM_HOME/.local/bin/airlock` |
 | `BRIDGE_IP` | host IP on the VM NAT bridge | `192.168.122.1` |

@@ -11,7 +11,7 @@
 set -euo pipefail
 
 VM_NAME="${VM_NAME:-PopOs24.04}"
-VM_USER="${VM_USER:-jpt}"
+VM_USER="${VM_USER:-jpt-virt}"
 BRIDGE_IP="${BRIDGE_IP:-192.168.122.1}"
 PORT="${PORT:-8000}"
 # Resolved per-run by resolve_guest() unless explicitly set above.
@@ -293,7 +293,7 @@ vm — CP4 rehearsal plumbing (scripts/vm.sh; guide: docs/vm-development.md)
 
 Variables (override per run — forms below):
   VM_NAME    libvirt domain                  default PopOs24.04
-  VM_USER    desktop user inside the guest   default jpt
+  VM_USER    desktop user inside the guest   default jpt-virt
   VM_HOME    guest home directory            default: looked up in the guest's /etc/passwd
   VM_BIN     guest binary path               default $VM_HOME/.local/bin/airlock
   BRIDGE_IP  host IP on the VM NAT bridge    default 192.168.122.1
