@@ -29,6 +29,7 @@ Daily use and development never collide:
 ## Documentation
 
 - [Research index](docs/research/README.md)
+- [Developing and testing in the COSMIC VM](docs/vm-development.md)
 
 ## License
 
