@@ -2,24 +2,12 @@
 # Host-side plumbing for the CP4 VM rehearsal (docs/vm-development.md has the
 # manual walkthrough this automates; just recipes below delegate here).
 #
-# Every setting is an environment variable (pass through just, e.g.
-# `BRIDGE_IP=... just vm-push`, or directly `VM_NAME=... scripts/vm.sh push`):
-#
-#   VM_NAME    libvirt domain                  default PopOs24.04
-#   VM_USER    desktop user inside the guest   default jpt
-#   VM_HOME    guest home directory            default: looked up in the
-#                                              guest's own /etc/passwd
-#   VM_BIN     guest binary path               default $VM_HOME/.local/bin/airlock
-#   BRIDGE_IP  host IP on the VM NAT bridge    default 192.168.122.1
-#   PORT       transfer port                   default 8000
-#
-# Guest-side actions run through the QEMU guest agent over libvirt, so the
-# guest needs `qemu-guest-agent` installed once (inside the VM:
-# sudo apt install qemu-guest-agent). File transfer rides the VM's NAT
-# bridge: this host serves target/release over HTTP for the duration of the
-# transfer, then stops (an already-running server on the port is reused, not
-# killed). `scripts/vm.sh status` runs every precondition check and reports
-# ok/missing instead of failing.
+# Every setting is an environment variable; guest-side actions run through
+# the QEMU guest agent (so the guest needs `qemu-guest-agent` installed
+# once); file transfer rides the VM's NAT bridge over a short-lived HTTP
+# server that stops when the transfer ends. Variables, commands, and the
+# workflow order: `scripts/vm.sh help`. `scripts/vm.sh status` checks every
+# precondition and reports ok/missing instead of failing.
 set -euo pipefail
 
 VM_NAME="${VM_NAME:-PopOs24.04}"
@@ -300,8 +288,33 @@ cmd_status() {
 }
 
 cmd_help() {
-    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
-    echo "commands: ip | push | install | uninstall | snapshot [name] | restore <name> | snapshots | status"
+    cat <<'EOF'
+vm — CP4 rehearsal plumbing (scripts/vm.sh; guide: docs/vm-development.md)
+
+Variables (override per run — forms below):
+  VM_NAME    libvirt domain                  default PopOs24.04
+  VM_USER    desktop user inside the guest   default jpt
+  VM_HOME    guest home directory            default: looked up in the guest's /etc/passwd
+  VM_BIN     guest binary path               default $VM_HOME/.local/bin/airlock
+  BRIDGE_IP  host IP on the VM NAT bridge    default 192.168.122.1
+  PORT       transfer port                   default 8000
+
+Override forms (VM_USER shown; same for every variable):
+  VM_USER=alice just vm-push          environment prefix
+  just vm-user=alice vm-push          assignment, before the recipe
+  just --set vm-user alice vm-push    same, long form
+
+Workflow, in order:
+  just vm-status                      preflight doctor — run this first
+  just vm-push                        build → transfer → sha256-verify → stage in guest
+  just vm-snapshot pre-airlock        clean point before the first install
+  just vm-install                     take over Alt+Tab inside the VM (then rehearse)
+  just vm-uninstall                   restore the stock switcher
+  just vm-restore pre-airlock         back to the snapshot
+
+Live values and preconditions: just vm-status
+Full guide (setup, checklist, troubleshooting): docs/vm-development.md
+EOF
 }
 
 case "${1:-help}" in

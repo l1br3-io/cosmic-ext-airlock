@@ -52,38 +52,49 @@ install:
 # with `sudo apt install qemu-guest-agent`. The keypress rehearsal itself
 # stays human — see docs/vm-development.md.
 
-# Rehearsal VM name and guest username. Override either way:
-#   VM_USER=alice just vm-push     (environment prefix)
-#   just vm-user=alice vm-push      (just variable assignment, before the recipe)
-#   just --set vm-user alice vm-push (same, long form)
+# Rehearsal VM name and guest username. Every VM variable (these two plus
+# VM_HOME, VM_BIN, BRIDGE_IP, PORT), the override forms, and the run order:
+# `just vm-help`.
 vm-name := env_var_or_default("VM_NAME", "PopOs24.04")
 vm-user := env_var_or_default("VM_USER", "jpt")
 
+# VM workflow reference: variables, override forms, workflow order.
+[group('vm')]
+vm-help:
+	scripts/vm.sh help
+
 # Guest IP on the VM's NAT bridge.
+[group('vm')]
 vm-ip:
 	VM_NAME={{vm-name}} scripts/vm.sh ip
 
 # Build the release binary, transfer it into the VM over the NAT bridge,
 # verify its sha256 on arrival, and stage it at the guest's ~/.local/bin.
+[group('vm')]
 vm-push:
 	VM_NAME={{vm-name}} VM_USER={{vm-user}} scripts/vm.sh push
 
 # Run `airlock install` inside the VM (as the guest desktop user).
+[group('vm')]
 vm-install:
 	VM_NAME={{vm-name}} VM_USER={{vm-user}} scripts/vm.sh install
 
 # Run `airlock install --uninstall` inside the VM.
+[group('vm')]
 vm-uninstall:
 	VM_NAME={{vm-name}} VM_USER={{vm-user}} scripts/vm.sh uninstall
 
 # Take a named libvirt snapshot of the running VM (default "checkpoint").
+[group('vm')]
 vm-snapshot name="checkpoint":
 	VM_NAME={{vm-name}} scripts/vm.sh snapshot {{name}}
 
 # Revert the VM to a named snapshot; it comes back running.
+[group('vm')]
 vm-restore name:
 	VM_NAME={{vm-name}} scripts/vm.sh restore {{name}}
 
 # VM state, guest IP, staged binary path, and snapshots at a glance.
+[group('vm')]
 vm-status:
 	VM_NAME={{vm-name}} VM_USER={{vm-user}} scripts/vm.sh status
