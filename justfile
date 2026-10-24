@@ -56,7 +56,7 @@ install:
 # VM_HOME, VM_BIN, BRIDGE_IP, PORT), the override forms, and the run order:
 # `just vm-help`.
 vm-name := env_var_or_default("VM_NAME", "PopOs24.04")
-vm-user := env_var_or_default("VM_USER", "jpt")
+vm-user := env_var_or_default("VM_USER", "jpt-virt")
 
 # VM workflow reference: variables, override forms, workflow order.
 [group('vm')]
