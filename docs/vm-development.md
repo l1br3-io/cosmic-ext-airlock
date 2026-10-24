@@ -96,6 +96,25 @@ curl -O http://192.168.122.1:8000/airlock && sha256sum airlock   # vs host: sha2
 mkdir -p ~/.local/bin && mv airlock ~/.local/bin/ && chmod +x ~/.local/bin/airlock
 ```
 
+### Iterating on code changes
+
+`just vm-push` is the whole loop. It builds the release binary, transfers
+and sha256-verifies it, stages it in the guest, and stops the guest's
+running daemon — a warm daemon keeps serving the old code, so this step is
+what makes the next test run the new build. Press Alt+Tab in the VM
+afterwards; the stub spawns the fresh binary.
+
+- Quality gates first on the host: `just check` and `just test`.
+- No re-install needed: the takeover points at the binary *path*
+  (`~/.local/bin/airlock`), not the binary. Re-run `just vm-install` only
+  after `just vm-restore pre-airlock` or `just vm-uninstall`.
+- Each push resets the daemon's in-memory MRU order — fresh state is what
+  you want when testing a change anyway.
+- Manual fallback, in a guest terminal: `pkill -x airlock`.
+
+`just vm-status` shows the guest daemon's state (running with pid, or not
+running — it auto-spawns on the next Alt+Tab).
+
 ## Variables
 
 Every setting is an environment variable. Override any of them per run:
