@@ -262,6 +262,12 @@ cmd_status() {
                         else
                             echo "  MISSING   guest user '$VM_USER' — VM_USER=<name> just vm-push"
                         fi
+                        local dpid; dpid="$(guest_exec "pgrep -x airlock | head -n1" 2>/dev/null || true)"
+                        if [[ -n "$dpid" ]]; then
+                            echo "  ok        guest daemon running (pid $dpid)"
+                        else
+                            echo "  ok        guest daemon not running (auto-spawns on next Alt+Tab)"
+                        fi
                     else
                         echo "  MISSING   guest agent — sudo apt install qemu-guest-agent (inside the VM)"
                     fi
