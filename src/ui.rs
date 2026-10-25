@@ -34,14 +34,21 @@ pub const GLYPH_W: u32 = 8;
 /// Glyph cell height in logical pixels.
 pub const GLYPH_H: u32 = 8;
 
+/// Icon-column width: every row carries the same generic window glyph
+/// (titles-only; no theme-icon dependency by decision, see the task notes).
+pub const ICON_W: u32 = 8;
+
+/// Gap between the window glyph and the title text.
+pub const ICON_GAP: u32 = 8;
+
 /// Horizontal padding inside the overlay.
-pub const PAD_X: u32 = 16;
+pub const PAD_X: u32 = 20;
 
 /// Vertical padding inside the overlay.
-pub const PAD_Y: u32 = 12;
+pub const PAD_Y: u32 = 16;
 
 /// Vertical gap between rows.
-pub const ROW_GAP: u32 = 10;
+pub const ROW_GAP: u32 = 12;
 
 /// Maximum title columns shown before truncation.
 pub const MAX_COLS: u32 = 48;
@@ -53,17 +60,29 @@ pub const CLOSE_AFTER: Duration = Duration::from_secs(2);
 /// Alt-release or a dead input path must never stick the keyboard grab.
 pub const HARD_CLOSE: Duration = Duration::from_secs(30);
 
-/// Overlay background (ARGB, little-endian byte order when written).
-pub const COLOR_BACKGROUND: u32 = 0xF0_1E_21_26;
+/// Overlay background (ARGB, little-endian byte order when written). Near
+/// opaque: the card must read identically on light and dark wallpapers.
+pub const COLOR_BACKGROUND: u32 = 0xFA_1E_21_26;
 
 /// Row background for the selected row.
-pub const COLOR_SELECTED_BG: u32 = 0xF0_1F_3A_5F;
+pub const COLOR_SELECTED_BG: u32 = 0xFA_1F_3A_5F;
 
 /// Text color.
 pub const COLOR_TEXT: u32 = 0xFF_F2_F4_F8;
 
+// Near-opaque card, enforced at compile time: the background bleed through
+// the overlay must stay imperceptible on light and dark wallpapers alike.
+const _: () = {
+    assert!(COLOR_BACKGROUND >> 24 >= 0xFA);
+    assert!(COLOR_SELECTED_BG >> 24 >= 0xFA);
+};
+
 /// Placeholder shown when a window has neither title nor app_id.
 const UNTITLED: &str = "(untitled)";
+
+/// Generic window glyph for the icon column: an 8×8 frame with a title-bar
+/// divider, drawn as a monochrome glyph in [`COLOR_TEXT`].
+const WINDOW_GLYPH: [u8; 8] = [0xFF, 0x81, 0x81, 0xFF, 0x81, 0x81, 0x81, 0xFF];
 
 /// One rendered row: a title and whether it is the selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,10 +126,11 @@ pub fn overlay_model(snapshot: &Snapshot, selected: Handle) -> Option<OverlayMod
         .map(|row| row.title.chars().count() as u32)
         .max()
         .unwrap_or(0);
-    let height = rows.len() as u32 * (GLYPH_H + ROW_GAP) + 2 * PAD_Y;
+    // The row gap lives between rows only; the bottom edge mirrors the top.
+    let height = 2 * PAD_Y + GLYPH_H + (rows.len() as u32 - 1) * (GLYPH_H + ROW_GAP);
     Some(OverlayModel {
         rows,
-        width: cols * GLYPH_W + 2 * PAD_X,
+        width: cols * GLYPH_W + ICON_W + ICON_GAP + 2 * PAD_X,
         height,
     })
 }
@@ -135,7 +155,8 @@ pub fn render(model: &OverlayModel, canvas: &mut [u8], width: u32, height: u32, 
                 }
             }
         }
-        let mut x = PAD_X;
+        draw_glyph(canvas, stride, WINDOW_GLYPH, PAD_X, top);
+        let mut x = PAD_X + ICON_W + ICON_GAP;
         for ch in row.title.chars() {
             if x + GLYPH_W > width.saturating_sub(PAD_X) {
                 break;
@@ -811,8 +832,8 @@ mod tests {
             Some(1),
         );
         let model = overlay_model(&short, Handle(1)).expect("eligible windows exist");
-        assert_eq!(model.width, GLYPH_W + 2 * PAD_X);
-        assert_eq!(model.height, (GLYPH_H + ROW_GAP) + 2 * PAD_Y);
+        assert_eq!(model.width, GLYPH_W + ICON_W + ICON_GAP + 2 * PAD_X);
+        assert_eq!(model.height, GLYPH_H + 2 * PAD_Y);
 
         let tall = snapshot(
             vec![
@@ -823,8 +844,8 @@ mod tests {
             Some(1),
         );
         let model = overlay_model(&tall, Handle(1)).expect("eligible windows exist");
-        assert_eq!(model.width, 7 * GLYPH_W + 2 * PAD_X);
-        assert_eq!(model.height, 3 * (GLYPH_H + ROW_GAP) + 2 * PAD_Y);
+        assert_eq!(model.width, 7 * GLYPH_W + ICON_W + ICON_GAP + 2 * PAD_X);
+        assert_eq!(model.height, GLYPH_H + 2 * PAD_Y + 2 * (GLYPH_H + ROW_GAP));
     }
 
     #[test]
@@ -842,7 +863,98 @@ mod tests {
             Some(1),
         );
         let model = overlay_model(&snap, Handle(1)).expect("eligible windows exist");
-        assert_eq!(model.width, MAX_COLS * GLYPH_W + 2 * PAD_X);
+        assert_eq!(
+            model.width,
+            MAX_COLS * GLYPH_W + ICON_W + ICON_GAP + 2 * PAD_X
+        );
+    }
+
+    #[test]
+    fn render_draws_a_window_glyph_left_of_the_title() {
+        // Two rows so the inspected row is not the selected one: the selected
+        // row's full-width highlight would defeat pixel probing.
+        let snap = snapshot(
+            vec![
+                toplevel(1, "A", "app.a", &[1], switcher::State::ACTIVATED, 2),
+                toplevel(2, "B", "app.b", &[1], switcher::State::default(), 1),
+            ],
+            Some(1),
+        );
+        let model = overlay_model(&snap, Handle(2)).expect("eligible windows exist");
+        let (w, h) = (model.width, model.height);
+        let stride = w * 4;
+        let mut canvas = vec![0; (stride * h) as usize];
+        render(&model, &mut canvas, w, h, stride);
+
+        let drawn = |x: u32, y: u32| {
+            let i = y as usize * stride as usize + x as usize * 4;
+            let px = u32::from_le_bytes(canvas[i..i + 4].try_into().expect("pixel is four bytes"));
+            px != COLOR_BACKGROUND
+        };
+        let top = PAD_Y;
+        let title_x = PAD_X + ICON_W + ICON_GAP;
+
+        // The icon owns the leftmost drawn pixels, flush with the padding.
+        let leftmost = (top..top + GLYPH_H)
+            .flat_map(|y| (0..w).filter(move |&x| drawn(x, y)))
+            .min();
+        assert_eq!(leftmost, Some(PAD_X));
+
+        // Nothing is drawn between the icon and the title.
+        for y in top..top + GLYPH_H {
+            for x in PAD_X + ICON_W..title_x {
+                assert!(!drawn(x, y), "gap pixel drawn at ({x}, {y})");
+            }
+        }
+
+        // The title's first glyph starts in the column after the gap.
+        let title_drawn =
+            (top..top + GLYPH_H).any(|y| (title_x..title_x + GLYPH_W).any(|x| drawn(x, y)));
+        assert!(title_drawn);
+    }
+
+    #[test]
+    fn render_ten_rows_completes_quickly() {
+        // Generous-bound guard for the "imperceptible render" requirement:
+        // catches pathological regressions, not millisecond drift.
+        let model = OverlayModel {
+            rows: (0..10)
+                .map(|i| RowModel {
+                    title: "W".repeat(MAX_COLS as usize),
+                    selected: i == 0,
+                })
+                .collect(),
+            width: MAX_COLS * GLYPH_W + ICON_W + ICON_GAP + 2 * PAD_X,
+            height: 2 * PAD_Y + GLYPH_H + 9 * (GLYPH_H + ROW_GAP),
+        };
+        let (w, h) = (model.width, model.height);
+        let stride = w * 4;
+        let mut canvas = vec![0; (stride * h) as usize];
+        let start = Instant::now();
+        for _ in 0..200 {
+            render(&model, &mut canvas, w, h, stride);
+        }
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "200 renders of a 10-row overlay took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn overlay_model_pads_top_and_bottom_equally() {
+        // The row gap belongs *between* rows: the last row's glyph block ends
+        // exactly one PAD_Y above the bottom edge, mirroring the top.
+        let snap = snapshot(
+            vec![
+                toplevel(1, "One", "app.a", &[1], switcher::State::ACTIVATED, 3),
+                toplevel(2, "Two", "app.b", &[1], switcher::State::default(), 2),
+                toplevel(3, "Three", "app.c", &[1], switcher::State::default(), 1),
+            ],
+            Some(1),
+        );
+        let model = overlay_model(&snap, Handle(1)).expect("eligible windows exist");
+        assert_eq!(model.height, 2 * PAD_Y + GLYPH_H + 2 * (GLYPH_H + ROW_GAP));
     }
 
     #[test]
@@ -871,9 +983,9 @@ mod tests {
     #[test]
     fn render_draws_glyph_pixels_at_the_text_origin() {
         // 'A' (0x0C first row, bits 2 and 3) is the first character: its
-        // set pixels prove both the text origin and the LSB-left bit order.
-        // The selection is on the other row so this row shows plain
-        // background around the glyphs.
+        // set pixels prove both the text origin — the column after the icon
+        // — and the LSB-left bit order. The selection is on the other row so
+        // this row shows plain background around the glyphs.
         let snap = snapshot(
             vec![
                 toplevel(1, "A", "app.a", &[1], switcher::State::ACTIVATED, 2),
@@ -895,10 +1007,11 @@ mod tests {
                     .expect("pixel-sized chunk"),
             )
         };
-        assert_eq!(pixel(PAD_X, PAD_Y), COLOR_BACKGROUND);
-        assert_eq!(pixel(PAD_X + 2, PAD_Y), COLOR_TEXT);
-        assert_eq!(pixel(PAD_X + 3, PAD_Y), COLOR_TEXT);
-        assert_eq!(pixel(PAD_X + 7, PAD_Y), COLOR_BACKGROUND);
+        let text_x = PAD_X + ICON_W + ICON_GAP;
+        assert_eq!(pixel(text_x, PAD_Y), COLOR_BACKGROUND);
+        assert_eq!(pixel(text_x + 2, PAD_Y), COLOR_TEXT);
+        assert_eq!(pixel(text_x + 3, PAD_Y), COLOR_TEXT);
+        assert_eq!(pixel(text_x + 7, PAD_Y), COLOR_BACKGROUND);
     }
 
     #[test]
