@@ -13,3 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 cosmic-client-toolkit = "0.2.0"
+# Settings parsing only: hand-walked `toml::Value`, no derive macros.
+# Verified-minimal features: Value itself is gated on `serde` (we still
+# never derive), FromStr needs `parse`, fs/env need `std`; only `display`
+# is trimmed from the default set.
+toml = { version = "0.9", default-features = false, features = ["parse", "serde", "std"] }
