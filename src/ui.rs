@@ -100,14 +100,16 @@ pub struct OverlayModel {
     pub height: u32,
 }
 
-/// Builds the overlay contents for `snapshot` with `selected` highlighted.
+/// Builds the overlay contents for `snapshot` with `selected` highlighted,
+/// listing windows under `scope`.
 ///
-/// Rows follow [`switcher::eligible`] order (most recently activated first).
-/// Returns `None` when there is nothing to show: no active workspace, no
-/// eligible windows, or a selection that is not in the eligible set.
-pub fn overlay_model(snapshot: &Snapshot, selected: Handle) -> Option<OverlayModel> {
+/// Rows follow [`switcher::eligible`] order (most recently activated
+/// first). Returns `None` when there is nothing to show: no active
+/// workspace, no eligible windows, or a selection that is not in the
+/// eligible set.
+pub fn overlay_model(snapshot: &Snapshot, selected: Handle, scope: Scope) -> Option<OverlayModel> {
     let active = snapshot.active?;
-    let handles = switcher::eligible(&snapshot.toplevels, active, Scope::CurrentWorkspace);
+    let handles = switcher::eligible(&snapshot.toplevels, active, scope);
     if handles.is_empty() || !handles.contains(&selected) {
         return None;
     }
@@ -711,7 +713,8 @@ mod tests {
             ],
             Some(1),
         );
-        let model = overlay_model(&snap, Handle(4)).expect("eligible windows exist");
+        let model = overlay_model(&snap, Handle(4), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         let titles: Vec<&str> = model.rows.iter().map(|row| row.title.as_str()).collect();
         assert_eq!(titles, vec!["Focused", "Middle", "Oldest", "Sticky"]);
     }
@@ -725,7 +728,8 @@ mod tests {
             ],
             Some(1),
         );
-        let model = overlay_model(&snap, Handle(2)).expect("eligible windows exist");
+        let model = overlay_model(&snap, Handle(2), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         assert!(!model.rows[0].selected);
         assert!(model.rows[1].selected);
     }
@@ -743,7 +747,10 @@ mod tests {
             )],
             Some(1),
         );
-        assert_eq!(overlay_model(&snap, Handle(1)), None);
+        assert_eq!(
+            overlay_model(&snap, Handle(1), Scope::CurrentWorkspace),
+            None
+        );
     }
 
     #[test]
@@ -764,7 +771,10 @@ mod tests {
         );
         // The selection must be one of the rows; a stale or foreign handle
         // means there is nothing coherent to highlight.
-        assert_eq!(overlay_model(&snap, Handle(2)), None);
+        assert_eq!(
+            overlay_model(&snap, Handle(2), Scope::CurrentWorkspace),
+            None
+        );
     }
 
     #[test]
@@ -780,7 +790,10 @@ mod tests {
             )],
             None,
         );
-        assert_eq!(overlay_model(&snap, Handle(1)), None);
+        assert_eq!(
+            overlay_model(&snap, Handle(1), Scope::CurrentWorkspace),
+            None
+        );
     }
 
     #[test]
@@ -792,7 +805,8 @@ mod tests {
             ],
             Some(1),
         );
-        let model = overlay_model(&snap, Handle(1)).expect("eligible windows exist");
+        let model = overlay_model(&snap, Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         assert_eq!(model.rows[0].title, "app.fallback");
         assert_eq!(model.rows[1].title, UNTITLED);
     }
@@ -811,7 +825,8 @@ mod tests {
             )],
             Some(1),
         );
-        let model = overlay_model(&snap, Handle(1)).expect("eligible windows exist");
+        let model = overlay_model(&snap, Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         let title = &model.rows[0].title;
         assert_eq!(title.chars().count(), MAX_COLS as usize);
         assert!(title.ends_with(".."));
@@ -831,7 +846,8 @@ mod tests {
             )],
             Some(1),
         );
-        let model = overlay_model(&short, Handle(1)).expect("eligible windows exist");
+        let model = overlay_model(&short, Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         assert_eq!(model.width, GLYPH_W + ICON_W + ICON_GAP + 2 * PAD_X);
         assert_eq!(model.height, GLYPH_H + 2 * PAD_Y);
 
@@ -843,7 +859,8 @@ mod tests {
             ],
             Some(1),
         );
-        let model = overlay_model(&tall, Handle(1)).expect("eligible windows exist");
+        let model = overlay_model(&tall, Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         assert_eq!(model.width, 7 * GLYPH_W + ICON_W + ICON_GAP + 2 * PAD_X);
         assert_eq!(model.height, GLYPH_H + 2 * PAD_Y + 2 * (GLYPH_H + ROW_GAP));
     }
@@ -862,7 +879,8 @@ mod tests {
             )],
             Some(1),
         );
-        let model = overlay_model(&snap, Handle(1)).expect("eligible windows exist");
+        let model = overlay_model(&snap, Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         assert_eq!(
             model.width,
             MAX_COLS * GLYPH_W + ICON_W + ICON_GAP + 2 * PAD_X
@@ -880,7 +898,8 @@ mod tests {
             ],
             Some(1),
         );
-        let model = overlay_model(&snap, Handle(2)).expect("eligible windows exist");
+        let model = overlay_model(&snap, Handle(2), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         let (w, h) = (model.width, model.height);
         let stride = w * 4;
         let mut canvas = vec![0; (stride * h) as usize];
@@ -953,7 +972,8 @@ mod tests {
             ],
             Some(1),
         );
-        let model = overlay_model(&snap, Handle(1)).expect("eligible windows exist");
+        let model = overlay_model(&snap, Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         assert_eq!(model.height, 2 * PAD_Y + GLYPH_H + 2 * (GLYPH_H + ROW_GAP));
     }
 
@@ -966,7 +986,8 @@ mod tests {
             ],
             Some(1),
         );
-        let model = overlay_model(&snap, Handle(2)).expect("eligible windows exist");
+        let model = overlay_model(&snap, Handle(2), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         let (w, h) = (model.width, model.height);
         let stride = w * 4;
         let mut canvas = vec![0xEE; (stride * h) as usize];
@@ -993,7 +1014,8 @@ mod tests {
             ],
             Some(1),
         );
-        let model = overlay_model(&snap, Handle(2)).expect("eligible windows exist");
+        let model = overlay_model(&snap, Handle(2), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         let (w, h) = (model.width, model.height);
         let stride = w * 4;
         let mut canvas = vec![0x00; (stride * h) as usize];
@@ -1023,7 +1045,8 @@ mod tests {
             ],
             Some(1),
         );
-        let model = overlay_model(&snap, Handle(2)).expect("eligible windows exist");
+        let model = overlay_model(&snap, Handle(2), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         let (w, h) = (model.width, model.height);
         let stride = w * 4;
         let mut canvas = vec![0x00; (stride * h) as usize];
@@ -1060,7 +1083,8 @@ mod tests {
             )],
             Some(1),
         );
-        let model = overlay_model(&snap, Handle(1)).expect("eligible windows exist");
+        let model = overlay_model(&snap, Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
         let (w, h) = (model.width, model.height);
         let stride = w * 4 + 64; // padding between rows, like a shared pool
         let mut canvas = vec![0x11; (stride * h) as usize];

@@ -4,10 +4,6 @@ mod cli;
 mod daemon;
 mod install;
 mod ipc;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the daemon wires settings in S3")
-)]
 mod settings;
 mod switcher;
 mod ui;

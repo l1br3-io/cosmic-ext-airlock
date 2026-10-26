@@ -307,13 +307,6 @@ impl SettingsSource {
     /// `$HOME/.config`, then `airlock/config.toml` — the same rule as the
     /// installer). `None` path when the environment names neither: every
     /// check reports [`Reload::NotPresent`] and defaults apply forever.
-    #[cfg_attr(
-        test,
-        expect(
-            dead_code,
-            reason = "tests build sources at explicit paths; the daemon constructs the default one in S3"
-        )
-    )]
     pub fn new() -> Self {
         let dir = config_dir(
             std::env::var_os("XDG_CONFIG_HOME")
@@ -329,7 +322,7 @@ impl SettingsSource {
 
     /// Source at an explicit path (tests).
     #[cfg(test)]
-    fn at(path: PathBuf) -> Self {
+    pub(crate) fn at(path: PathBuf) -> Self {
         Self {
             path: Some(path),
             last_mtime: None,

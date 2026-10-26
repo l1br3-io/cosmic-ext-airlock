@@ -73,10 +73,6 @@ pub enum Scope {
     #[default]
     CurrentWorkspace,
     /// Every non-minimized window across all workspaces, MRU order.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "settings resolution constructs All in S2–S3")
-    )]
     All,
 }
 
