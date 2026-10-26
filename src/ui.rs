@@ -25,7 +25,7 @@ use cctk::wayland_protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_ke
 use cosmic_client_toolkit as cctk;
 
 use crate::ipc::Direction;
-use crate::switcher::{self, Handle, Snapshot};
+use crate::switcher::{self, Handle, Scope, Snapshot};
 use crate::wayland::App;
 
 /// Glyph cell width in logical pixels.
@@ -107,7 +107,7 @@ pub struct OverlayModel {
 /// eligible windows, or a selection that is not in the eligible set.
 pub fn overlay_model(snapshot: &Snapshot, selected: Handle) -> Option<OverlayModel> {
     let active = snapshot.active?;
-    let handles = switcher::eligible(&snapshot.toplevels, active);
+    let handles = switcher::eligible(&snapshot.toplevels, active, Scope::CurrentWorkspace);
     if handles.is_empty() || !handles.contains(&selected) {
         return None;
     }

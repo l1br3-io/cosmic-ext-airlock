@@ -10,7 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
 use crate::ipc::{self, Direction, IpcError};
-use crate::switcher::{self, Handle, Snapshot, State, Toplevel, WorkspaceId};
+use crate::switcher::{self, Handle, Scope, Snapshot, State, Toplevel, WorkspaceId};
 use crate::ui::{Gesture, GestureInput, GestureOutput};
 use crate::wayland;
 
@@ -92,7 +92,7 @@ pub fn session_holds(open: &Switch, snapshot: &Snapshot) -> bool {
         && open
             .ring
             .selected()
-            .is_some_and(|handle| switcher::switchable(snapshot, handle))
+            .is_some_and(|handle| switcher::switchable(snapshot, handle, Scope::CurrentWorkspace))
 }
 
 /// The handle a commit should activate: the session's selection, but only
@@ -102,7 +102,7 @@ pub fn session_holds(open: &Switch, snapshot: &Snapshot) -> bool {
 pub fn commit_target(open: &Switch, snapshot: &Snapshot) -> Option<Handle> {
     open.ring
         .selected()
-        .filter(|&handle| switcher::switchable(snapshot, handle))
+        .filter(|&handle| switcher::switchable(snapshot, handle, Scope::CurrentWorkspace))
 }
 
 /// Starts or advances the gesture session's selection ring by one step.
@@ -120,7 +120,11 @@ pub fn ring_step(
     if open.is_none() {
         let active = snapshot.active?;
         *open = Some(Switch {
-            ring: switcher::Ring::new(switcher::eligible(&snapshot.toplevels, active)),
+            ring: switcher::Ring::new(switcher::eligible(
+                &snapshot.toplevels,
+                active,
+                Scope::CurrentWorkspace,
+            )),
             workspace: active,
         });
     }
@@ -424,7 +428,7 @@ mod tests {
         assert!(stamped[1].last_activated > stamped[0].last_activated);
 
         // And the MRU order follows: window 2 sorts first.
-        let handles = switcher::eligible(&stamped, WorkspaceId(1));
+        let handles = switcher::eligible(&stamped, WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(2), Handle(1)]);
     }
 

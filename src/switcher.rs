@@ -65,16 +65,32 @@ pub struct Snapshot {
     pub active: Option<WorkspaceId>,
 }
 
-/// Windows eligible for switching on `active`: visible on the active
-/// workspace. Sticky (all-workspace) toplevels count — they are visible on
-/// every workspace per zcosmic_toplevel_info_v1.
+/// Which windows the switcher lists when invoked on a workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Scope {
+    /// Only windows visible on the invoking workspace (sticky included) —
+    /// the v1 behavior and the default for workspaces without a setting.
+    #[default]
+    CurrentWorkspace,
+    /// Every non-minimized window across all workspaces, MRU order.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "settings resolution constructs All in S2–S3")
+    )]
+    All,
+}
+
+/// Windows eligible for switching on `active` under `scope`: visible there
+/// for [`Scope::CurrentWorkspace`] (sticky counts — it is visible on every
+/// workspace per zcosmic_toplevel_info_v1), or anywhere at all for
+/// [`Scope::All`].
 ///
 /// Returns handles in MRU order (most recently activated first); ties keep
 /// snapshot order.
-pub fn eligible(toplevels: &[Toplevel], active: WorkspaceId) -> Vec<Handle> {
+pub fn eligible(toplevels: &[Toplevel], active: WorkspaceId, scope: Scope) -> Vec<Handle> {
     let mut matches: Vec<&Toplevel> = toplevels
         .iter()
-        .filter(|toplevel| is_switchable(toplevel, active))
+        .filter(|toplevel| is_switchable(toplevel, active, scope))
         .collect();
     // Stable sort: MRU ties keep snapshot order.
     matches.sort_by_key(|toplevel| std::cmp::Reverse(toplevel.last_activated));
@@ -84,26 +100,33 @@ pub fn eligible(toplevels: &[Toplevel], active: WorkspaceId) -> Vec<Handle> {
         .collect()
 }
 
-/// Whether one toplevel can be switched to on `active`: not minimized, and
-/// visible there — directly or by being sticky. The per-window half of
-/// [`eligible`], reused by the daemon to re-validate a selection against
-/// live state mid-gesture.
-pub fn is_switchable(toplevel: &Toplevel, active: WorkspaceId) -> bool {
+/// Whether one toplevel can be switched to on `active` under `scope`: not
+/// minimized, and — for [`Scope::CurrentWorkspace`] — visible there,
+/// directly or by being sticky. The per-window half of [`eligible`],
+/// reused by the daemon to re-validate a selection against live state
+/// mid-gesture.
+pub fn is_switchable(toplevel: &Toplevel, active: WorkspaceId, scope: Scope) -> bool {
     !toplevel.state.contains(State::MINIMIZED)
-        && (toplevel.state.contains(State::STICKY) || toplevel.workspaces.contains(&active))
+        && match scope {
+            Scope::CurrentWorkspace => {
+                toplevel.state.contains(State::STICKY) || toplevel.workspaces.contains(&active)
+            }
+            Scope::All => true,
+        }
 }
 
 /// Whether `handle` names a window that can be switched to right now:
-/// present in `snapshot` and [`is_switchable`] on the active workspace. A
-/// missing active workspace switches to nothing.
-pub fn switchable(snapshot: &Snapshot, handle: Handle) -> bool {
+/// present in `snapshot` and [`is_switchable`] on the active workspace
+/// under `scope`. A missing active workspace switches to nothing under
+/// every scope.
+pub fn switchable(snapshot: &Snapshot, handle: Handle, scope: Scope) -> bool {
     let Some(active) = snapshot.active else {
         return false;
     };
     snapshot
         .toplevels
         .iter()
-        .any(|toplevel| toplevel.handle == handle && is_switchable(toplevel, active))
+        .any(|toplevel| toplevel.handle == handle && is_switchable(toplevel, active, scope))
 }
 
 /// A selection ring over the MRU-ordered eligible list: `next`/`previous`
@@ -204,7 +227,7 @@ mod tests {
             toplevel(2, &[2], State::default(), 0),
             toplevel(3, &[3], State::default(), 0),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(2));
+        let handles = eligible(&toplevels, WorkspaceId(2), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(2)]);
     }
 
@@ -214,7 +237,7 @@ mod tests {
             toplevel(1, &[1, 2, 3], State::default(), 0),
             toplevel(2, &[1], State::default(), 0),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(3));
+        let handles = eligible(&toplevels, WorkspaceId(3), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(1)]);
     }
 
@@ -223,7 +246,7 @@ mod tests {
         // Sticky windows are visible everywhere, even if the compositor does
         // not list every workspace in their workspace set.
         let toplevels = vec![toplevel(1, &[1], State::STICKY, 0)];
-        let handles = eligible(&toplevels, WorkspaceId(4));
+        let handles = eligible(&toplevels, WorkspaceId(4), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(1)]);
     }
 
@@ -233,7 +256,7 @@ mod tests {
             toplevel(1, &[1], State::MINIMIZED, 0),
             toplevel(2, &[1], State::default(), 0),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(1));
+        let handles = eligible(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(2)]);
     }
 
@@ -244,7 +267,7 @@ mod tests {
             toplevel(2, &[1], State::default(), 30),
             toplevel(3, &[1], State::default(), 20),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(1));
+        let handles = eligible(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(2), Handle(3), Handle(1)]);
     }
 
@@ -254,14 +277,38 @@ mod tests {
             toplevel(1, &[1], State::default(), 7),
             toplevel(2, &[1], State::default(), 7),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(1));
+        let handles = eligible(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(1), Handle(2)]);
     }
 
     #[test]
     fn eligible_on_no_matching_toplevels_is_empty() {
         let toplevels = vec![toplevel(1, &[2], State::default(), 0)];
-        assert!(eligible(&toplevels, WorkspaceId(1)).is_empty());
+        assert!(eligible(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace).is_empty());
+    }
+
+    #[test]
+    fn all_scope_lists_cross_workspace_toplevels_in_mru_order() {
+        let toplevels = vec![
+            toplevel(1, &[1], State::default(), 5),
+            // Sticky windows are visible everywhere, so All lists them like
+            // any other window.
+            toplevel(2, &[1], State::STICKY, 40),
+            toplevel(3, &[2], State::default(), 30),
+            toplevel(4, &[1], State::default(), 20),
+        ];
+        let handles = eligible(&toplevels, WorkspaceId(1), Scope::All);
+        assert_eq!(handles, vec![Handle(2), Handle(3), Handle(4), Handle(1)]);
+    }
+
+    #[test]
+    fn all_scope_excludes_minimized_toplevels() {
+        let toplevels = vec![
+            toplevel(1, &[2], State::MINIMIZED, 30),
+            toplevel(2, &[1], State::default(), 10),
+        ];
+        let handles = eligible(&toplevels, WorkspaceId(1), Scope::All);
+        assert_eq!(handles, vec![Handle(2)]);
     }
 
     #[test]
@@ -308,20 +355,36 @@ mod tests {
     #[test]
     fn is_switchable_requires_presence_on_the_workspace() {
         let on_workspace = toplevel(1, &[1], State::default(), 0);
-        assert!(is_switchable(&on_workspace, WorkspaceId(1)));
-        assert!(!is_switchable(&on_workspace, WorkspaceId(2)));
+        assert!(is_switchable(
+            &on_workspace,
+            WorkspaceId(1),
+            Scope::CurrentWorkspace
+        ));
+        assert!(!is_switchable(
+            &on_workspace,
+            WorkspaceId(2),
+            Scope::CurrentWorkspace
+        ));
     }
 
     #[test]
     fn is_switchable_accepts_sticky_windows_on_any_workspace() {
         let sticky = toplevel(1, &[1], State::STICKY, 0);
-        assert!(is_switchable(&sticky, WorkspaceId(9)));
+        assert!(is_switchable(
+            &sticky,
+            WorkspaceId(9),
+            Scope::CurrentWorkspace
+        ));
     }
 
     #[test]
     fn is_switchable_rejects_minimized_windows() {
         let minimized = toplevel(1, &[1], State::MINIMIZED, 0);
-        assert!(!is_switchable(&minimized, WorkspaceId(1)));
+        assert!(!is_switchable(
+            &minimized,
+            WorkspaceId(1),
+            Scope::CurrentWorkspace
+        ));
     }
 
     #[test]
@@ -335,13 +398,13 @@ mod tests {
             workspaces: Vec::new(),
             active: Some(WorkspaceId(1)),
         };
-        assert!(switchable(&snapshot, Handle(1)));
+        assert!(switchable(&snapshot, Handle(1), Scope::CurrentWorkspace));
         // Parked on another workspace.
-        assert!(!switchable(&snapshot, Handle(2)));
+        assert!(!switchable(&snapshot, Handle(2), Scope::CurrentWorkspace));
         // Minimized on this one.
-        assert!(!switchable(&snapshot, Handle(3)));
+        assert!(!switchable(&snapshot, Handle(3), Scope::CurrentWorkspace));
         // Closed since the session opened.
-        assert!(!switchable(&snapshot, Handle(99)));
+        assert!(!switchable(&snapshot, Handle(99), Scope::CurrentWorkspace));
     }
 
     #[test]
@@ -351,6 +414,28 @@ mod tests {
             workspaces: Vec::new(),
             active: None,
         };
-        assert!(!switchable(&snapshot, Handle(1)));
+        assert!(!switchable(&snapshot, Handle(1), Scope::CurrentWorkspace));
+    }
+
+    #[test]
+    fn switchable_accepts_cross_workspace_handles_only_under_all() {
+        let snapshot = Snapshot {
+            toplevels: vec![toplevel(1, &[2], State::default(), 0)],
+            workspaces: Vec::new(),
+            active: Some(WorkspaceId(1)),
+        };
+        assert!(switchable(&snapshot, Handle(1), Scope::All));
+        assert!(!switchable(&snapshot, Handle(1), Scope::CurrentWorkspace));
+    }
+
+    #[test]
+    fn switchable_without_an_active_workspace_selects_nothing_under_either_scope() {
+        let snapshot = Snapshot {
+            toplevels: vec![toplevel(1, &[1], State::default(), 0)],
+            workspaces: Vec::new(),
+            active: None,
+        };
+        assert!(!switchable(&snapshot, Handle(1), Scope::CurrentWorkspace));
+        assert!(!switchable(&snapshot, Handle(1), Scope::All));
     }
 }
