@@ -10,6 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
 use crate::ipc::{self, Direction, IpcError};
+use crate::settings::{self, ReadError, Reload, SettingsSource};
 use crate::switcher::{self, Handle, Scope, Snapshot, State, Toplevel, WorkspaceId};
 use crate::ui::{Gesture, GestureInput, GestureOutput};
 use crate::wayland;
@@ -73,36 +74,41 @@ impl Mru {
     }
 }
 
-/// One open gesture session: the selection ring plus the workspace it was
-/// built for. Recording the workspace lets a mid-gesture switch void the
-/// session — the simpler correct behavior chosen in T8: re-filtering would
-/// silently swap the list under the user's held Alt, so the session is
-/// dismissed and the next press starts fresh against real state.
+/// One open gesture session: the selection ring plus the workspace and
+/// scope it was built for. Recording both lets a mid-gesture switch void
+/// the session — the simpler correct behavior chosen in T8: re-filtering
+/// would silently swap the list under the user's held Alt, so the session
+/// is dismissed and the next press starts fresh against real state. The
+/// frozen scope extends the same philosophy to settings: an edit landing
+/// mid-gesture changes nothing until the next press.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Switch {
     ring: switcher::Ring,
     workspace: WorkspaceId,
+    scope: Scope,
 }
 
 /// Whether an open session still matches reality: the workspace it was
 /// built for is still active, and its selection is still switchable there
-/// (not closed, moved, minimized, or unstickied away).
+/// under the session's scope (not closed, minimized, or — for a
+/// CurrentWorkspace session — moved or unstickied away).
 pub fn session_holds(open: &Switch, snapshot: &Snapshot) -> bool {
     snapshot.active == Some(open.workspace)
         && open
             .ring
             .selected()
-            .is_some_and(|handle| switcher::switchable(snapshot, handle, Scope::CurrentWorkspace))
+            .is_some_and(|handle| switcher::switchable(snapshot, handle, open.scope))
 }
 
 /// The handle a commit should activate: the session's selection, but only
-/// while it is still switchable in the current snapshot. A selection that
-/// left the workspace mid-gesture commits as a no-op instead of crossing
-/// workspaces.
+/// while it is still switchable in the current snapshot under the
+/// session's scope. A CurrentWorkspace selection that left its workspace
+/// mid-gesture commits as a no-op instead of crossing workspaces; an All
+/// session may legitimately activate a window on another workspace.
 pub fn commit_target(open: &Switch, snapshot: &Snapshot) -> Option<Handle> {
     open.ring
         .selected()
-        .filter(|&handle| switcher::switchable(snapshot, handle, Scope::CurrentWorkspace))
+        .filter(|&handle| switcher::switchable(snapshot, handle, open.scope))
 }
 
 /// Starts or advances the gesture session's selection ring by one step.
@@ -111,27 +117,84 @@ pub fn commit_target(open: &Switch, snapshot: &Snapshot) -> Option<Handle> {
 /// window — so one step lands on the MRU-second (or wraps to the least
 /// recent). Later presses reuse the same ring instead of rebuilding it:
 /// walking three windows takes three presses, unlike T4's per-press rebuild
-/// which toggled between the front two.
+/// which toggled between the front two. `scope` is consumed only when the
+/// session opens; an already-open session keeps the scope it was built
+/// with.
 pub fn ring_step(
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
     direction: Direction,
+    scope: Scope,
 ) -> Option<Handle> {
     if open.is_none() {
         let active = snapshot.active?;
         *open = Some(Switch {
-            ring: switcher::Ring::new(switcher::eligible(
-                &snapshot.toplevels,
-                active,
-                Scope::CurrentWorkspace,
-            )),
+            ring: switcher::Ring::new(switcher::eligible(&snapshot.toplevels, active, scope)),
             workspace: active,
+            scope,
         });
     }
     match direction {
         Direction::Next => open.as_mut()?.ring.next(),
         Direction::Previous => open.as_mut()?.ring.previous(),
     }
+}
+
+/// Live settings state: the parsed rules plus the source that watches
+/// them. Refreshed only at session open — one stat per invocation, so
+/// nothing on the gesture path blocks on file reads.
+struct LiveSettings {
+    source: SettingsSource,
+    settings: settings::Settings,
+}
+
+impl LiveSettings {
+    /// Startup load: read once (missing file means defaults, silently;
+    /// anything else diagnostic-worthy degrades to defaults too), then
+    /// seed the mtime so the first gesture does not re-read for nothing.
+    fn load() -> Self {
+        let mut source = SettingsSource::new();
+        let settings = match source.read() {
+            Ok(settings) => settings,
+            Err(ReadError::Missing) => settings::Settings::default(),
+            Err(error) => {
+                eprintln!("airlock daemon: {error}");
+                settings::Settings::default()
+            }
+        };
+        let _ = source.check();
+        Self { source, settings }
+    }
+
+    /// One-stat reload check: adopt a changed file, fall back to defaults
+    /// when it is gone, and keep last-good settings on a malformed read —
+    /// settings can never break switching.
+    fn refresh(&mut self) {
+        match self.source.check() {
+            Reload::Unchanged => {}
+            Reload::NotPresent => self.settings = settings::Settings::default(),
+            Reload::Changed => match self.source.read() {
+                Ok(fresh) => self.settings = fresh,
+                Err(ReadError::Missing) => self.settings = settings::Settings::default(),
+                Err(error) => {
+                    eprintln!("airlock daemon: keeping last-good settings: {error}");
+                }
+            },
+        }
+    }
+}
+
+/// Scope for a session starting on this snapshot: the active workspace's
+/// name and coordinates-sorted position looked up in `settings`. Anything
+/// unresolvable — no active workspace, or one missing from the workspace
+/// list — keeps the v1 default.
+fn resolve_scope(snapshot: &Snapshot, settings: &settings::Settings) -> Scope {
+    snapshot
+        .active
+        .and_then(|active| settings::active_workspace(&snapshot.workspaces, active))
+        .map_or(Scope::CurrentWorkspace, |active| {
+            settings::scope_for(active, settings)
+        })
 }
 
 /// Whether the overlay should close itself right now.
@@ -204,6 +267,7 @@ pub fn run() -> Result<(), RunError> {
 
     let mut mru = Mru::default();
     let mut snapshot = fresh_snapshot(&mut session, &mut mru);
+    let mut settings = LiveSettings::load();
     let mut pending: Vec<UnixStream> = Vec::new();
     let mut last_activity = Instant::now();
 
@@ -242,7 +306,14 @@ pub fn run() -> Result<(), RunError> {
             session.overlay_touch();
             match gesture.feed(input) {
                 GestureOutput::Step(direction) => {
-                    step_and_show(&mut session, &mut gesture, &mut open, &snapshot, direction);
+                    step_and_show(
+                        &mut session,
+                        &mut gesture,
+                        &mut open,
+                        &snapshot,
+                        direction,
+                        &mut settings,
+                    );
                 }
                 GestureOutput::Commit => {
                     // The ring was built when the session opened; the
@@ -308,6 +379,7 @@ pub fn run() -> Result<(), RunError> {
                                 &mut open,
                                 &snapshot,
                                 direction,
+                                &mut settings,
                             );
                         }
                         // One ack byte cannot realistically hit a full
@@ -334,15 +406,28 @@ pub fn run() -> Result<(), RunError> {
 /// A session with nothing to show (empty workspace, or a selection that is
 /// no longer eligible) is closed on the spot so the next press starts
 /// fresh.
+///
+/// Session open is the only moment settings matter: the config is
+/// stat-checked and re-resolved exactly when a session starts, and an
+/// already-open session keeps the scope it was built with — a mid-gesture
+/// edit must not swap the list under the user's held Alt.
 fn step_and_show(
     session: &mut wayland::Session,
     gesture: &mut Gesture,
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
     direction: Direction,
+    settings: &mut LiveSettings,
 ) {
-    let selected = ring_step(open, snapshot, direction);
-    let model = selected.and_then(|handle| crate::ui::overlay_model(snapshot, handle));
+    let scope = match open {
+        Some(open) => open.scope,
+        None => {
+            settings.refresh();
+            resolve_scope(snapshot, &settings.settings)
+        }
+    };
+    let selected = ring_step(open, snapshot, direction, scope);
+    let model = selected.and_then(|handle| crate::ui::overlay_model(snapshot, handle, scope));
     match model {
         Some(model) => session.overlay_show(model),
         None => {
@@ -502,7 +587,7 @@ mod tests {
         );
         let mut open = None;
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
             Some(Handle(2))
         );
     }
@@ -519,7 +604,12 @@ mod tests {
         );
         let mut open = None;
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Previous),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Previous,
+                Scope::CurrentWorkspace
+            ),
             Some(Handle(3))
         );
     }
@@ -536,19 +626,24 @@ mod tests {
         );
         let mut open = None;
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
             Some(Handle(2))
         );
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
             Some(Handle(3))
         );
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
             Some(Handle(1))
         );
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Previous),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Previous,
+                Scope::CurrentWorkspace
+            ),
             Some(Handle(3))
         );
     }
@@ -568,7 +663,7 @@ mod tests {
         );
         let mut open = None;
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
             Some(Handle(4))
         );
     }
@@ -577,20 +672,34 @@ mod tests {
     fn ring_step_on_an_empty_workspace_selects_nothing() {
         let snap = snapshot(vec![toplevel(1, &[2], State::ACTIVATED, 30)], Some(1));
         let mut open = None;
-        assert_eq!(ring_step(&mut open, &snap, Direction::Next), None);
-        assert_eq!(ring_step(&mut open, &snap, Direction::Previous), None);
+        assert_eq!(
+            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
+            None
+        );
+        assert_eq!(
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Previous,
+                Scope::CurrentWorkspace
+            ),
+            None
+        );
     }
 
     #[test]
     fn ring_step_without_an_active_workspace_selects_nothing() {
         let snap = snapshot(vec![toplevel(1, &[1], State::ACTIVATED, 30)], None);
         let mut open = None;
-        assert_eq!(ring_step(&mut open, &snap, Direction::Next), None);
+        assert_eq!(
+            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
+            None
+        );
         // No ring was cached, so a later snapshot with an active workspace
         // can still open one.
         let snap = snapshot(vec![toplevel(1, &[1], State::ACTIVATED, 30)], Some(1));
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next),
+            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
             Some(Handle(1))
         );
     }
@@ -605,7 +714,7 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next);
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
         let open = open.expect("session opened");
         assert!(session_holds(&open, &snap));
     }
@@ -620,7 +729,7 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next);
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
         let open = open.expect("session opened");
 
         // Even a sticky selection — still switchable everywhere — is voided
@@ -645,7 +754,7 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next);
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
         let open = open.expect("session opened");
 
         let closed = snapshot(vec![toplevel(1, &[1], State::default(), 30)], Some(1));
@@ -662,7 +771,7 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next);
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
         let open = open.expect("session opened");
 
         let moved = snapshot(
@@ -685,7 +794,7 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next);
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
         let open = open.expect("session opened");
 
         let minimized = snapshot(
@@ -709,7 +818,7 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next);
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
         let open = open.expect("session opened");
 
         let unstickied = snapshot(
@@ -732,7 +841,7 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next);
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
         let open = open.expect("session opened");
         assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
     }
@@ -747,7 +856,7 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next);
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
         let open = open.expect("session opened");
 
         let moved = snapshot(
@@ -771,5 +880,195 @@ mod tests {
     fn hard_deadline_closes_even_while_alt_is_held() {
         assert!(should_close(true, true, true));
         assert!(should_close(false, true, true));
+    }
+
+    #[test]
+    fn ring_step_under_all_lists_cross_workspace_windows_in_mru_order() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 40),
+                // On workspace 2: excluded by CurrentWorkspace, listed by All.
+                toplevel(2, &[2], State::default(), 30),
+                toplevel(3, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        assert_eq!(
+            ring_step(&mut open, &snap, Direction::Next, Scope::All),
+            Some(Handle(2))
+        );
+        assert_eq!(
+            ring_step(&mut open, &snap, Direction::Next, Scope::All),
+            Some(Handle(3))
+        );
+        assert_eq!(
+            ring_step(&mut open, &snap, Direction::Next, Scope::All),
+            Some(Handle(1))
+        );
+    }
+
+    #[test]
+    fn commit_of_a_cross_workspace_selection_validates_under_all_only() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[2], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next, Scope::All);
+        let open = open.expect("session opened");
+        // The selection lives on workspace 2; under All that is commitable.
+        assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
+
+        // The same selection under the v1 scope is not switchable — and a
+        // CurrentWorkspace session could never hold it in the first place.
+        let confined = Switch {
+            ring: open.ring.clone(),
+            workspace: WorkspaceId(1),
+            scope: Scope::CurrentWorkspace,
+        };
+        assert_eq!(commit_target(&confined, &snap), None);
+    }
+
+    #[test]
+    fn session_voids_on_a_workspace_switch_under_both_scopes() {
+        // A sticky window stays switchable everywhere, so only the premise
+        // break (the workspace switch) can end these sessions.
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::STICKY, 20),
+            ],
+            Some(1),
+        );
+        let switched = snapshot(
+            vec![
+                toplevel(1, &[1], State::default(), 30),
+                toplevel(2, &[1], State::STICKY, 20),
+            ],
+            Some(2),
+        );
+        for scope in [Scope::CurrentWorkspace, Scope::All] {
+            let mut open = None;
+            ring_step(&mut open, &snap, Direction::Next, scope);
+            let open = open.expect("session opened");
+            assert!(session_holds(&open, &snap), "holds under {scope:?}");
+            assert!(!session_holds(&open, &switched), "voids under {scope:?}");
+        }
+    }
+
+    #[test]
+    fn resolve_scope_applies_settings_for_the_active_workspace() {
+        let snap = Snapshot {
+            toplevels: Vec::new(),
+            workspaces: vec![crate::switcher::Workspace {
+                id: WorkspaceId(1),
+                name: "browse".to_owned(),
+                coordinates: vec![0, 0],
+            }],
+            active: Some(WorkspaceId(1)),
+        };
+        let not_isolated = crate::settings::Settings {
+            workspaces: vec![crate::settings::WorkspaceRule {
+                reference: crate::settings::WorkspaceRef::Name("browse".to_owned()),
+                isolated: false,
+            }],
+        };
+        assert_eq!(resolve_scope(&snap, &not_isolated), Scope::All);
+        // No settings, no rule, or an unknown workspace: v1 default.
+        assert_eq!(
+            resolve_scope(&snap, &crate::settings::Settings::default()),
+            Scope::CurrentWorkspace
+        );
+        let unknown = Snapshot {
+            toplevels: Vec::new(),
+            workspaces: Vec::new(),
+            active: Some(WorkspaceId(9)),
+        };
+        assert_eq!(
+            resolve_scope(&unknown, &not_isolated),
+            Scope::CurrentWorkspace
+        );
+    }
+
+    /// Unique disposable directory (no tempfile dependency).
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "airlock-daemon-{tag}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            TempDir(path)
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn live_at(path: std::path::PathBuf) -> LiveSettings {
+        LiveSettings {
+            source: crate::settings::SettingsSource::at(path),
+            settings: crate::settings::Settings::default(),
+        }
+    }
+
+    #[test]
+    fn refresh_adopts_a_changed_config_file() {
+        let dir = TempDir::new("adopt");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, b"[[workspace]]\nname = \"code\"\nisolated = false\n")
+            .expect("write");
+        let mut live = live_at(path);
+        live.refresh();
+        assert_eq!(live.settings.workspaces.len(), 1);
+        // Unchanged file: same settings, no churn.
+        live.refresh();
+        assert_eq!(live.settings.workspaces.len(), 1);
+    }
+
+    #[test]
+    fn refresh_keeps_last_good_settings_when_the_file_turns_malformed() {
+        let dir = TempDir::new("last-good");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, b"[[workspace]]\nname = \"code\"\nisolated = false\n")
+            .expect("write");
+        let mut live = live_at(path.clone());
+        live.refresh();
+        assert_eq!(live.settings.workspaces.len(), 1);
+
+        std::fs::write(&path, b"[[[[broken").expect("break");
+        live.refresh();
+        assert_eq!(
+            live.settings.workspaces.len(),
+            1,
+            "last-good settings survive a malformed edit"
+        );
+    }
+
+    #[test]
+    fn refresh_without_a_config_file_falls_back_to_defaults() {
+        let dir = TempDir::new("absent");
+        let mut live = live_at(dir.path().join("config.toml"));
+        live.settings.workspaces = vec![crate::settings::WorkspaceRule {
+            reference: crate::settings::WorkspaceRef::Name("stale".to_owned()),
+            isolated: false,
+        }];
+        live.refresh();
+        assert_eq!(live.settings, crate::settings::Settings::default());
     }
 }
