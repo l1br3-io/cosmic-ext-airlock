@@ -40,6 +40,8 @@ fn main() {
         }
         Command::AltTab => invoke(Invoke::Cycle(Direction::Next)),
         Command::ShiftAltTab => invoke(Invoke::Cycle(Direction::Previous)),
+        Command::SameApp => invoke(Invoke::CycleApp(Direction::Next)),
+        Command::SameAppPrevious => invoke(Invoke::CycleApp(Direction::Previous)),
         Command::QuickToggle => invoke(Invoke::QuickToggle),
         Command::Install { uninstall } => match install::run(uninstall) {
             Ok(report) => println!("{report}"),

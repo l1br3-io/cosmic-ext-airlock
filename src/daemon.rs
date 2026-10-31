@@ -86,6 +86,11 @@ pub struct Switch {
     ring: switcher::Ring,
     workspace: WorkspaceId,
     scope: Scope,
+    /// The app a same-app session lists windows of, or `None` for a plain
+    /// Alt+Tab session. Chosen once at open and never re-derived: fresh
+    /// snapshots are re-filtered by it, but a mid-gesture press never
+    /// re-anchors.
+    app: Option<String>,
 }
 
 /// Whether an open session still matches reality: the workspace it was
@@ -144,12 +149,53 @@ pub fn ring_step(
             ring: switcher::Ring::new(switcher::eligible(&snapshot.toplevels, active, scope)),
             workspace: active,
             scope,
+            app: None,
         });
     }
     match direction {
         Direction::Next => open.as_mut()?.ring.next(),
         Direction::Previous => open.as_mut()?.ring.previous(),
     }
+}
+
+/// One step of the gesture session, plain or same-app: [`ring_step`] over
+/// the list the session was opened on.
+///
+/// A first `same_app` press anchors on the current application — the app_id
+/// of the MRU-front eligible window; an empty app_id never anchors — and
+/// opens the ring on that app's eligible windows alone. Fewer than two of
+/// them makes the press a silent no-op: no session is stored, nothing is
+/// selected, and the next press starts fresh. An already-open session steps
+/// its frozen ring whatever key stepped it; a same-app session re-filters
+/// the fresh snapshot by its frozen anchor (see [`step_and_show`]), but the
+/// ring itself never rebuilds — the same freeze philosophy as the scope.
+pub fn session_step(
+    open: &mut Option<Switch>,
+    snapshot: &Snapshot,
+    direction: Direction,
+    scope: Scope,
+    same_app: bool,
+) -> Option<Handle> {
+    // An open session steps its frozen ring; the snapshot and scope only
+    // matter when a session opens. Plain opens go straight through.
+    if open.is_some() || !same_app {
+        return ring_step(open, snapshot, direction, scope);
+    }
+    // A new same-app session: anchor, narrow, and hold the two-window
+    // floor — one window of the app is nothing to cycle.
+    let active = snapshot.active?;
+    let app = switcher::app_anchor(&snapshot.toplevels, active, scope)?;
+    let view = switcher::app_view(snapshot, &app, scope);
+    if view.toplevels.len() < 2 {
+        return None;
+    }
+    let selected = ring_step(open, &view, direction, scope);
+    // ring_step stored the session on the filtered ring; freeze the anchor
+    // into it so later steps re-filter by it.
+    if let Some(session) = open.as_mut() {
+        session.app = Some(app);
+    }
+    selected
 }
 
 /// Live settings state: the parsed rules plus the source that watches
@@ -318,12 +364,15 @@ pub fn run() -> Result<(), RunError> {
             session.overlay_touch();
             match gesture.feed(input) {
                 GestureOutput::Step(direction) => {
+                    // Keyboard steps only arrive while a session is open,
+                    // so which ring a new session would open is moot here.
                     step_and_show(
                         &mut session,
                         &mut gesture,
                         &mut open,
                         &snapshot,
                         direction,
+                        false,
                         &mut settings,
                     );
                 }
@@ -379,12 +428,16 @@ pub fn run() -> Result<(), RunError> {
                     activity = true;
                     if let Some(command) = ipc::parse_command(byte[0]) {
                         match command {
-                            ipc::Invoke::Cycle(direction) => {
-                                // A stub press is an Invoke: open (or
-                                // continue) the gesture session and step the
-                                // selection. Activation waits for the Alt
-                                // release — or Escape, focus loss, or the
-                                // timeouts to end the session instead.
+                            // A stub press is an Invoke: open (or continue)
+                            // the gesture session and step the selection.
+                            // Alt+Tab opens the full ring; Alt+grave
+                            // (CycleApp) opens it narrowed to the current
+                            // application — and once a session is open, any
+                            // invoke steps its frozen ring. Activation waits
+                            // for the Alt release — or Escape, focus loss,
+                            // or the timeouts to end the session instead.
+                            ipc::Invoke::Cycle(direction) | ipc::Invoke::CycleApp(direction) => {
+                                let same_app = matches!(command, ipc::Invoke::CycleApp(_));
                                 if let GestureOutput::Step(direction) =
                                     gesture.feed(GestureInput::Invoke(direction))
                                 {
@@ -394,6 +447,7 @@ pub fn run() -> Result<(), RunError> {
                                         &mut open,
                                         &snapshot,
                                         direction,
+                                        same_app,
                                         &mut settings,
                                     );
                                 }
@@ -409,9 +463,6 @@ pub fn run() -> Result<(), RunError> {
                                     session.activate(handle).map_err(RunError::Session)?;
                                 }
                             }
-                            // Routed when the same-app session lands; acked
-                            // as a no-op until then.
-                            ipc::Invoke::CycleApp(_) => {}
                         }
                         // One ack byte cannot realistically hit a full
                         // send buffer; a dropped ack makes the stub retry.
@@ -434,9 +485,15 @@ pub fn run() -> Result<(), RunError> {
 
 /// Applies one `Step`: advance the session ring and refresh the overlay.
 ///
-/// A session with nothing to show (empty workspace, or a selection that is
-/// no longer eligible) is closed on the spot so the next press starts
-/// fresh.
+/// `same_app` decides which ring a *new* session opens (see
+/// [`session_step`]); an already-open session is stepped as-is whatever
+/// key stepped it.
+///
+/// The overlay lists what the session lists: a same-app session's frozen
+/// anchor re-filters the fresh snapshot, a plain session lists every
+/// eligible window. A session with nothing to show (empty workspace, or a
+/// selection that is no longer eligible) is closed on the spot so the next
+/// press starts fresh.
 ///
 /// Session open is the only moment settings matter: the config is
 /// stat-checked and re-resolved exactly when a session starts, and an
@@ -448,6 +505,7 @@ fn step_and_show(
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
     direction: Direction,
+    same_app: bool,
     settings: &mut LiveSettings,
 ) {
     let scope = match open {
@@ -457,8 +515,16 @@ fn step_and_show(
             resolve_scope(snapshot, &settings.settings)
         }
     };
-    let selected = ring_step(open, snapshot, direction, scope);
-    let model = selected.and_then(|handle| crate::ui::overlay_model(snapshot, handle, scope));
+    let selected = session_step(open, snapshot, direction, scope, same_app);
+    let model = open.as_ref().and_then(|current| {
+        let model_of = |list: &Snapshot| {
+            selected.and_then(|handle| crate::ui::overlay_model(list, handle, current.scope))
+        };
+        match current.app.as_deref() {
+            Some(app) => model_of(&switcher::app_view(snapshot, app, current.scope)),
+            None => model_of(snapshot),
+        }
+    });
     match model {
         Some(model) => session.overlay_show(model),
         None => {
@@ -965,6 +1031,274 @@ mod tests {
         assert_eq!(quick_toggle_target(&snap, Scope::CurrentWorkspace), None);
     }
 
+    /// Like [`toplevel`], with the app under test's choosing.
+    fn app_toplevel(
+        handle: u64,
+        app: &str,
+        workspaces: &[u64],
+        state: State,
+        last_activated: u64,
+    ) -> Toplevel {
+        Toplevel {
+            app_id: app.to_string(),
+            ..toplevel(handle, workspaces, state, last_activated)
+        }
+    }
+
+    /// Editor windows 1, 3, 4 with a browser interleaved by MRU: a same-app
+    /// session on "editor" must never let the browser surface.
+    fn same_app_snapshot() -> Snapshot {
+        snapshot(
+            vec![
+                app_toplevel(1, "editor", &[1], State::ACTIVATED, 40),
+                app_toplevel(2, "browser", &[1], State::default(), 35),
+                app_toplevel(3, "editor", &[1], State::default(), 30),
+                app_toplevel(4, "editor", &[1], State::default(), 20),
+            ],
+            Some(1),
+        )
+    }
+
+    #[test]
+    fn same_app_first_press_selects_the_apps_mru_second_window() {
+        let snap = same_app_snapshot();
+        let mut open = None;
+        assert_eq!(
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                true
+            ),
+            Some(Handle(3)),
+            "the browser never enters the ring; the app's own MRU-second lands first"
+        );
+        let session = open.expect("same-app session opened");
+        assert_eq!(session.app.as_deref(), Some("editor"));
+        assert_eq!(session.scope, Scope::CurrentWorkspace);
+    }
+
+    #[test]
+    fn same_app_first_previous_press_wraps_to_the_apps_least_recent_window() {
+        let snap = same_app_snapshot();
+        let mut open = None;
+        assert_eq!(
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Previous,
+                Scope::CurrentWorkspace,
+                true
+            ),
+            Some(Handle(4))
+        );
+    }
+
+    #[test]
+    fn same_app_presses_walk_only_the_apps_windows() {
+        let snap = same_app_snapshot();
+        let mut open = None;
+        let steps = [
+            (Direction::Next, Some(Handle(3))),
+            (Direction::Next, Some(Handle(4))),
+            (Direction::Next, Some(Handle(1))),
+            (Direction::Previous, Some(Handle(4))),
+        ];
+        for (direction, expected) in steps {
+            assert_eq!(
+                session_step(&mut open, &snap, direction, Scope::CurrentWorkspace, true),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn same_app_with_fewer_than_two_app_windows_is_a_silent_no_op() {
+        let snap = snapshot(
+            vec![
+                app_toplevel(1, "editor", &[1], State::ACTIVATED, 30),
+                app_toplevel(2, "browser", &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        assert_eq!(
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                true
+            ),
+            None
+        );
+        assert!(open.is_none(), "no session, no overlay");
+    }
+
+    #[test]
+    fn same_app_without_an_anchorable_window_opens_nothing() {
+        let snap = snapshot(
+            vec![
+                app_toplevel(1, "", &[1], State::ACTIVATED, 30),
+                app_toplevel(2, "", &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        assert_eq!(
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                true
+            ),
+            None
+        );
+        assert!(open.is_none());
+    }
+
+    #[test]
+    fn same_app_session_keeps_its_frozen_anchor_when_reinvoked() {
+        let snap = same_app_snapshot();
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            true,
+        );
+
+        // Mid-gesture, focus moves to the browser: the next press must
+        // step the frozen editor ring, never re-anchor on the browser.
+        let refocused = snapshot(
+            vec![
+                app_toplevel(2, "browser", &[1], State::ACTIVATED, 50),
+                app_toplevel(1, "editor", &[1], State::default(), 40),
+                app_toplevel(3, "editor", &[1], State::default(), 30),
+                app_toplevel(4, "editor", &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        assert_eq!(
+            session_step(
+                &mut open,
+                &refocused,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                true
+            ),
+            Some(Handle(4))
+        );
+        assert_eq!(
+            open.as_ref().expect("session survives").app.as_deref(),
+            Some("editor")
+        );
+    }
+
+    #[test]
+    fn plain_presses_step_an_open_same_app_ring() {
+        // Once the same-app session is open, any invoke steps its frozen
+        // ring — including a plain Alt+Tab press.
+        let snap = same_app_snapshot();
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            true,
+        );
+        assert_eq!(
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                false
+            ),
+            Some(Handle(4))
+        );
+    }
+
+    #[test]
+    fn same_app_presses_step_an_open_plain_ring() {
+        // And the mirror image: a same-app press during a plain session
+        // steps that session's ring instead of re-anchoring.
+        let snap = same_app_snapshot();
+        let mut open = None;
+        assert_eq!(
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                false
+            ),
+            Some(Handle(2)),
+            "a plain session steps the full ring: the global MRU-second"
+        );
+        assert_eq!(
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                true
+            ),
+            Some(Handle(3)),
+            "the frozen plain ring keeps walking; the anchor never applies"
+        );
+        assert_eq!(open.as_ref().expect("session survives").app, None);
+    }
+
+    #[test]
+    fn same_app_commit_validates_against_the_full_snapshot() {
+        // The session ring is filtered; commit validation is not. Under
+        // All, a cross-workspace window of the anchored app commits.
+        let snap = snapshot(
+            vec![
+                app_toplevel(1, "editor", &[1], State::ACTIVATED, 30),
+                app_toplevel(2, "editor", &[2], State::default(), 20),
+                app_toplevel(3, "browser", &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        session_step(&mut open, &snap, Direction::Next, Scope::All, true);
+        let open = open.expect("same-app session opened");
+        assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
+    }
+
+    #[test]
+    fn same_app_session_voids_when_its_selection_minimizes() {
+        // Session validity runs against the full snapshot under the
+        // session's scope, exactly like a plain session.
+        let snap = same_app_snapshot();
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            true,
+        );
+        let open = open.expect("same-app session opened");
+
+        let minimized = snapshot(
+            vec![
+                app_toplevel(1, "editor", &[1], State::default(), 40),
+                app_toplevel(2, "browser", &[1], State::default(), 35),
+                app_toplevel(3, "editor", &[1], State::MINIMIZED, 30),
+                app_toplevel(4, "editor", &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        assert!(!session_holds(&open, &minimized));
+    }
+
     #[test]
     fn idle_deadline_closes_only_when_alt_is_not_held() {
         assert!(should_close(true, false, false));
@@ -1025,6 +1359,7 @@ mod tests {
             ring: open.ring.clone(),
             workspace: WorkspaceId(1),
             scope: Scope::CurrentWorkspace,
+            app: None,
         };
         assert_eq!(commit_target(&confined, &snap), None);
     }

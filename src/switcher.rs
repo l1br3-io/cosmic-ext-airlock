@@ -125,6 +125,53 @@ pub fn switchable(snapshot: &Snapshot, handle: Handle, scope: Scope) -> bool {
         .any(|toplevel| toplevel.handle == handle && is_switchable(toplevel, active, scope))
 }
 
+/// The app a same-app session on `active` under `scope` anchors to: the
+/// app_id of the frontmost eligible window in MRU order. An empty app_id
+/// never anchors — windows the compositor cannot attribute never group —
+/// so anchoring walks down the MRU list to the first attributable window.
+pub fn app_anchor(toplevels: &[Toplevel], active: WorkspaceId, scope: Scope) -> Option<String> {
+    eligible(toplevels, active, scope)
+        .iter()
+        .find_map(|handle| {
+            toplevels
+                .iter()
+                .find(|t| t.handle == *handle && !t.app_id.is_empty())
+                .map(|t| t.app_id.clone())
+        })
+}
+
+/// A same-app session's view of `snapshot`: the toplevels [`eligible`]
+/// would list on the active workspace under `scope`, narrowed to `app`.
+///
+/// The result is an ordinary snapshot, so the ring, overlay, and commit
+/// paths treat it like any other. Order follows [`eligible`] exactly (MRU
+/// first, ties keep snapshot order); an empty `app` — like an empty
+/// app_id — groups nothing.
+pub fn app_view(snapshot: &Snapshot, app: &str, scope: Scope) -> Snapshot {
+    let Some(active) = snapshot.active else {
+        return Snapshot {
+            toplevels: Vec::new(),
+            workspaces: snapshot.workspaces.clone(),
+            active: None,
+        };
+    };
+    let toplevels = eligible(&snapshot.toplevels, active, scope)
+        .iter()
+        .filter_map(|handle| {
+            snapshot
+                .toplevels
+                .iter()
+                .find(|t| t.handle == *handle && !t.app_id.is_empty() && t.app_id == app)
+                .cloned()
+        })
+        .collect();
+    Snapshot {
+        toplevels,
+        workspaces: snapshot.workspaces.clone(),
+        active: snapshot.active,
+    }
+}
+
 /// A selection ring over the MRU-ordered eligible list: `next`/`previous`
 /// move the selection with wrap-around, and an empty ring selects nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -305,6 +352,176 @@ mod tests {
         ];
         let handles = eligible(&toplevels, WorkspaceId(1), Scope::All);
         assert_eq!(handles, vec![Handle(2)]);
+    }
+
+    /// Like [`toplevel`], with the app under test's choosing.
+    fn app_window(
+        handle: u64,
+        app: &str,
+        workspaces: &[u64],
+        state: State,
+        last_activated: u64,
+    ) -> Toplevel {
+        Toplevel {
+            app_id: app.to_string(),
+            ..toplevel(handle, workspaces, state, last_activated)
+        }
+    }
+
+    #[test]
+    fn app_anchor_picks_the_front_eligible_windows_app() {
+        let toplevels = vec![
+            app_window(1, "editor", &[1], State::ACTIVATED, 30),
+            app_window(2, "browser", &[1], State::default(), 20),
+        ];
+        assert_eq!(
+            app_anchor(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace),
+            Some("editor".to_string())
+        );
+    }
+
+    #[test]
+    fn app_anchor_skips_windows_the_compositor_cannot_attribute() {
+        // MRU order is 1 then 2; the empty app_id never anchors, so the
+        // front attributable window's app wins.
+        let toplevels = vec![
+            app_window(1, "", &[1], State::ACTIVATED, 30),
+            app_window(2, "editor", &[1], State::default(), 20),
+        ];
+        assert_eq!(
+            app_anchor(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace),
+            Some("editor".to_string())
+        );
+    }
+
+    #[test]
+    fn app_anchor_is_none_when_no_window_has_an_app() {
+        let toplevels = vec![
+            app_window(1, "", &[1], State::ACTIVATED, 30),
+            app_window(2, "", &[1], State::default(), 20),
+        ];
+        assert_eq!(
+            app_anchor(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace),
+            None
+        );
+    }
+
+    #[test]
+    fn app_anchor_follows_the_scope_not_just_recency() {
+        // The MRU-front window lives on another workspace: under the v1
+        // scope the anchor comes from this workspace's front window.
+        let toplevels = vec![
+            app_window(1, "browser", &[2], State::default(), 40),
+            app_window(2, "editor", &[1], State::ACTIVATED, 30),
+            app_window(3, "editor", &[1], State::default(), 20),
+        ];
+        assert_eq!(
+            app_anchor(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace),
+            Some("editor".to_string())
+        );
+        assert_eq!(
+            app_anchor(&toplevels, WorkspaceId(1), Scope::All),
+            Some("browser".to_string())
+        );
+    }
+
+    #[test]
+    fn app_view_lists_only_the_anchored_apps_eligible_windows_in_mru_order() {
+        let snapshot = Snapshot {
+            toplevels: vec![
+                app_window(1, "editor", &[1], State::ACTIVATED, 30),
+                app_window(2, "browser", &[1], State::default(), 25),
+                app_window(3, "editor", &[1], State::default(), 20),
+                // Same app, but minimized and parked away: never listed.
+                app_window(4, "editor", &[1], State::MINIMIZED, 15),
+                app_window(5, "editor", &[2], State::default(), 10),
+            ],
+            workspaces: Vec::new(),
+            active: Some(WorkspaceId(1)),
+        };
+        let view = app_view(&snapshot, "editor", Scope::CurrentWorkspace);
+        let handles: Vec<Handle> = view.toplevels.iter().map(|t| t.handle).collect();
+        assert_eq!(handles, vec![Handle(1), Handle(3)]);
+    }
+
+    #[test]
+    fn app_view_keeps_sticky_app_windows_from_other_workspaces() {
+        let snapshot = Snapshot {
+            toplevels: vec![
+                app_window(1, "editor", &[1], State::ACTIVATED, 30),
+                // Sticky editor window parked on workspace 2 — visible
+                // everywhere, exactly like any other sticky window.
+                app_window(2, "editor", &[2], State::STICKY, 20),
+            ],
+            workspaces: Vec::new(),
+            active: Some(WorkspaceId(1)),
+        };
+        let view = app_view(&snapshot, "editor", Scope::CurrentWorkspace);
+        let handles: Vec<Handle> = view.toplevels.iter().map(|t| t.handle).collect();
+        assert_eq!(handles, vec![Handle(1), Handle(2)]);
+    }
+
+    #[test]
+    fn app_view_under_all_scope_crosses_workspaces() {
+        let snapshot = Snapshot {
+            toplevels: vec![
+                app_window(1, "editor", &[1], State::ACTIVATED, 30),
+                app_window(2, "editor", &[2], State::default(), 20),
+            ],
+            workspaces: Vec::new(),
+            active: Some(WorkspaceId(1)),
+        };
+        let confined = app_view(&snapshot, "editor", Scope::CurrentWorkspace);
+        assert_eq!(confined.toplevels.len(), 1);
+        let everywhere = app_view(&snapshot, "editor", Scope::All);
+        assert_eq!(everywhere.toplevels.len(), 2);
+    }
+
+    #[test]
+    fn a_single_window_app_yields_a_one_entry_view() {
+        let snapshot = Snapshot {
+            toplevels: vec![
+                app_window(1, "editor", &[1], State::ACTIVATED, 30),
+                app_window(2, "browser", &[1], State::default(), 20),
+            ],
+            workspaces: Vec::new(),
+            active: Some(WorkspaceId(1)),
+        };
+        let view = app_view(&snapshot, "editor", Scope::CurrentWorkspace);
+        assert_eq!(view.toplevels.len(), 1);
+    }
+
+    #[test]
+    fn app_view_excludes_windows_the_compositor_cannot_attribute() {
+        let snapshot = Snapshot {
+            toplevels: vec![
+                app_window(1, "editor", &[1], State::ACTIVATED, 30),
+                app_window(2, "", &[1], State::default(), 20),
+            ],
+            workspaces: Vec::new(),
+            active: Some(WorkspaceId(1)),
+        };
+        // Even an empty anchor groups nothing.
+        for app in ["editor", ""] {
+            let view = app_view(&snapshot, app, Scope::CurrentWorkspace);
+            let listed = view
+                .toplevels
+                .iter()
+                .filter(|t| t.app_id.is_empty())
+                .count();
+            assert_eq!(listed, 0, "empty app_id grouped under anchor {app:?}");
+        }
+    }
+
+    #[test]
+    fn app_view_without_an_active_workspace_is_empty() {
+        let snapshot = Snapshot {
+            toplevels: vec![app_window(1, "editor", &[1], State::ACTIVATED, 30)],
+            workspaces: Vec::new(),
+            active: None,
+        };
+        let view = app_view(&snapshot, "editor", Scope::CurrentWorkspace);
+        assert!(view.toplevels.is_empty());
     }
 
     #[test]

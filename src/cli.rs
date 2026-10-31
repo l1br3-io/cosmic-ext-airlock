@@ -9,6 +9,11 @@ pub enum Command {
     AltTab,
     /// Spawn stub: ask the daemon to cycle to the previous window.
     ShiftAltTab,
+    /// Spawn stub: ask the daemon to cycle through the current
+    /// application's windows.
+    SameApp,
+    /// Spawn stub: same as [`Command::SameApp`], stepping backwards.
+    SameAppPrevious,
     /// Spawn stub: ask the daemon to switch to the previous window with no
     /// overlay at all.
     QuickToggle,
@@ -43,6 +48,8 @@ pub fn parse(args: &[String]) -> Result<Command, ParseError> {
         "daemon" => no_extra_args(rest).map(|()| Command::Daemon),
         "alt-tab" => no_extra_args(rest).map(|()| Command::AltTab),
         "shift-alt-tab" => no_extra_args(rest).map(|()| Command::ShiftAltTab),
+        "same-app" => no_extra_args(rest).map(|()| Command::SameApp),
+        "same-app-previous" => no_extra_args(rest).map(|()| Command::SameAppPrevious),
         "quick-toggle" => no_extra_args(rest).map(|()| Command::QuickToggle),
         "install" => {
             let (uninstall, rest) = match rest.first().map(String::as_str) {
@@ -74,6 +81,8 @@ commands:
   daemon                    run the switcher daemon (foreground)
   alt-tab                   switch to the next window on this workspace
   shift-alt-tab             switch to the previous window on this workspace
+  same-app                  cycle through the current application's windows
+  same-app-previous         cycle backwards through the current application's windows
   quick-toggle              switch to the previous window without the overlay
   install [--uninstall]     take over (or restore) the Alt+Tab keybind
   list                      print toplevels, workspaces, and the active workspace
@@ -111,6 +120,19 @@ mod tests {
     #[test]
     fn parses_quick_toggle() {
         assert_eq!(parse(&args(&["quick-toggle"])), Ok(Command::QuickToggle));
+    }
+
+    #[test]
+    fn parses_same_app() {
+        assert_eq!(parse(&args(&["same-app"])), Ok(Command::SameApp));
+    }
+
+    #[test]
+    fn parses_same_app_previous() {
+        assert_eq!(
+            parse(&args(&["same-app-previous"])),
+            Ok(Command::SameAppPrevious)
+        );
     }
 
     #[test]
@@ -159,6 +181,14 @@ mod tests {
     }
 
     #[test]
+    fn extra_arg_after_same_app_reports_unexpected() {
+        assert_eq!(
+            parse(&args(&["same-app", "now"])),
+            Err(ParseError::Unexpected("now".to_string()))
+        );
+    }
+
+    #[test]
     fn extra_arg_after_quick_toggle_reports_unexpected() {
         assert_eq!(
             parse(&args(&["quick-toggle", "now"])),
@@ -197,6 +227,8 @@ mod tests {
             "daemon",
             "alt-tab",
             "shift-alt-tab",
+            "same-app",
+            "same-app-previous",
             "quick-toggle",
             "install",
             "list",
