@@ -13,7 +13,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use cli::Command;
-use ipc::Direction;
+use ipc::{Direction, Invoke};
 
 /// How long a stub waits for a (possibly auto-spawned) daemon to answer.
 const STUB_DEADLINE: Duration = Duration::from_secs(3);
@@ -38,8 +38,9 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Command::AltTab => cycle(Direction::Next),
-        Command::ShiftAltTab => cycle(Direction::Previous),
+        Command::AltTab => invoke(Invoke::Cycle(Direction::Next)),
+        Command::ShiftAltTab => invoke(Invoke::Cycle(Direction::Previous)),
+        Command::QuickToggle => invoke(Invoke::QuickToggle),
         Command::Install { uninstall } => match install::run(uninstall) {
             Ok(report) => println!("{report}"),
             Err(error) => {
@@ -59,10 +60,10 @@ fn main() {
     }
 }
 
-/// Asks the daemon to cycle one window, spawning it first if needed. The
+/// Asks the daemon to run one command, spawning it first if needed. The
 /// stub is silent on success: it usually runs from a keybind with nowhere
 /// to print.
-fn cycle(direction: Direction) {
+fn invoke(command: Invoke) {
     let path = match ipc::socket_path() {
         Ok(path) => path,
         Err(error) => {
@@ -72,7 +73,7 @@ fn cycle(direction: Direction) {
     };
     if let Err(error) = ipc::send_with_deadline(
         &path,
-        direction,
+        command,
         Instant::now() + STUB_DEADLINE,
         spawn_daemon_detached,
     ) {
