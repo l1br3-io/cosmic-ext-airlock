@@ -9,6 +9,9 @@ pub enum Command {
     AltTab,
     /// Spawn stub: ask the daemon to cycle to the previous window.
     ShiftAltTab,
+    /// Spawn stub: ask the daemon to switch to the previous window with no
+    /// overlay at all.
+    QuickToggle,
     /// Take over — or with `--uninstall`, restore — the Alt+Tab keybind.
     Install { uninstall: bool },
     /// Debug: print toplevels, workspaces, and the active workspace.
@@ -40,6 +43,7 @@ pub fn parse(args: &[String]) -> Result<Command, ParseError> {
         "daemon" => no_extra_args(rest).map(|()| Command::Daemon),
         "alt-tab" => no_extra_args(rest).map(|()| Command::AltTab),
         "shift-alt-tab" => no_extra_args(rest).map(|()| Command::ShiftAltTab),
+        "quick-toggle" => no_extra_args(rest).map(|()| Command::QuickToggle),
         "install" => {
             let (uninstall, rest) = match rest.first().map(String::as_str) {
                 Some("--uninstall") => (true, &rest[1..]),
@@ -70,6 +74,7 @@ commands:
   daemon                    run the switcher daemon (foreground)
   alt-tab                   switch to the next window on this workspace
   shift-alt-tab             switch to the previous window on this workspace
+  quick-toggle              switch to the previous window without the overlay
   install [--uninstall]     take over (or restore) the Alt+Tab keybind
   list                      print toplevels, workspaces, and the active workspace
 "
@@ -101,6 +106,11 @@ mod tests {
     #[test]
     fn parses_list() {
         assert_eq!(parse(&args(&["list"])), Ok(Command::List));
+    }
+
+    #[test]
+    fn parses_quick_toggle() {
+        assert_eq!(parse(&args(&["quick-toggle"])), Ok(Command::QuickToggle));
     }
 
     #[test]
@@ -149,6 +159,14 @@ mod tests {
     }
 
     #[test]
+    fn extra_arg_after_quick_toggle_reports_unexpected() {
+        assert_eq!(
+            parse(&args(&["quick-toggle", "now"])),
+            Err(ParseError::Unexpected("now".to_string()))
+        );
+    }
+
+    #[test]
     fn uninstall_flag_after_alt_tab_reports_unexpected() {
         assert_eq!(
             parse(&args(&["alt-tab", "--uninstall"])),
@@ -175,7 +193,14 @@ mod tests {
     #[test]
     fn usage_lists_every_subcommand() {
         let usage = usage();
-        for name in ["daemon", "alt-tab", "shift-alt-tab", "install", "list"] {
+        for name in [
+            "daemon",
+            "alt-tab",
+            "shift-alt-tab",
+            "quick-toggle",
+            "install",
+            "list",
+        ] {
             assert!(usage.contains(name), "usage is missing `{name}`");
         }
     }

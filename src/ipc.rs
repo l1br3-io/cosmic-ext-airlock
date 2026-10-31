@@ -1,8 +1,9 @@
 //! Unix-socket IPC between the spawn stubs and the daemon.
 //!
-//! Wire protocol: the stub connects, writes one command byte (`n` or `p`),
-//! and blocks for one ack byte (`a`). One byte each way is the whole frame —
-//! anything longer is a protocol error and the connection is dropped.
+//! Wire protocol: the stub connects, writes one command byte (`n`, `p`, `s`,
+//! `b`, or `q`), and blocks for one ack byte (`a`). One byte each way is the
+//! whole frame — anything longer is a protocol error and the connection is
+//! dropped.
 
 use std::io::{self, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -19,7 +20,7 @@ pub const ACK: u8 = b'a';
 /// Pause between connect retries while waiting for the daemon to come up.
 const RETRY_STEP: Duration = Duration::from_millis(25);
 
-/// Which way the stub asks the daemon to cycle.
+/// Which way a cycle command steps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     /// Cycle to the next window in MRU order.
@@ -28,12 +29,27 @@ pub enum Direction {
     Previous,
 }
 
-impl Direction {
-    /// The wire byte for this direction.
+/// One stub command on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Invoke {
+    /// Step the Alt+Tab gesture one window (`n` / `p`, byte-stable since
+    /// the first release).
+    Cycle(Direction),
+    /// Open — or step — the same-app session (`s` / `b`).
+    CycleApp(Direction),
+    /// Switch to the MRU-second window immediately, no overlay (`q`).
+    QuickToggle,
+}
+
+impl Invoke {
+    /// The wire byte for this command.
     pub fn wire_byte(self) -> u8 {
         match self {
-            Direction::Next => b'n',
-            Direction::Previous => b'p',
+            Invoke::Cycle(Direction::Next) => b'n',
+            Invoke::Cycle(Direction::Previous) => b'p',
+            Invoke::CycleApp(Direction::Next) => b's',
+            Invoke::CycleApp(Direction::Previous) => b'b',
+            Invoke::QuickToggle => b'q',
         }
     }
 }
@@ -80,10 +96,13 @@ impl From<io::Error> for IpcError {
 }
 
 /// Decodes a command byte. Junk is not a command.
-pub fn parse_command(byte: u8) -> Option<Direction> {
+pub fn parse_command(byte: u8) -> Option<Invoke> {
     match byte {
-        b'n' => Some(Direction::Next),
-        b'p' => Some(Direction::Previous),
+        b'n' => Some(Invoke::Cycle(Direction::Next)),
+        b'p' => Some(Invoke::Cycle(Direction::Previous)),
+        b's' => Some(Invoke::CycleApp(Direction::Next)),
+        b'b' => Some(Invoke::CycleApp(Direction::Previous)),
+        b'q' => Some(Invoke::QuickToggle),
         _ => None,
     }
 }
@@ -155,7 +174,7 @@ pub fn bind_exclusive(path: &Path) -> io::Result<BindOutcome> {
 /// Returns [`IpcError::TimedOut`] when `deadline` passes first.
 pub fn send_with_deadline(
     path: &Path,
-    direction: Direction,
+    invoke: Invoke,
     deadline: Instant,
     spawn_daemon: impl FnOnce(),
 ) -> Result<(), IpcError> {
@@ -171,7 +190,7 @@ pub fn send_with_deadline(
             Ok(mut stream) => {
                 let remaining = deadline.saturating_duration_since(now);
                 stream.set_read_timeout(Some(remaining.max(Duration::from_millis(1))))?;
-                match send_once(&mut stream, direction) {
+                match send_once(&mut stream, invoke) {
                     Ok(()) => return Ok(()),
                     Err(err) if err.kind() == io::ErrorKind::InvalidData => {
                         return Err(IpcError::Io(err));
@@ -194,8 +213,8 @@ pub fn send_with_deadline(
 }
 
 /// Writes the command byte and reads the ack on an established stream.
-fn send_once(stream: &mut UnixStream, direction: Direction) -> io::Result<()> {
-    stream.write_all(&[direction.wire_byte()])?;
+fn send_once(stream: &mut UnixStream, invoke: Invoke) -> io::Result<()> {
+    stream.write_all(&[invoke.wire_byte()])?;
     let mut ack = [0u8; 1];
     stream.read_exact(&mut ack)?;
     if ack[0] == ACK {
@@ -284,21 +303,52 @@ mod tests {
 
     #[test]
     fn parse_command_maps_wire_bytes() {
-        assert_eq!(parse_command(b'n'), Some(Direction::Next));
-        assert_eq!(parse_command(b'p'), Some(Direction::Previous));
+        assert_eq!(parse_command(b'n'), Some(Invoke::Cycle(Direction::Next)));
+        assert_eq!(
+            parse_command(b'p'),
+            Some(Invoke::Cycle(Direction::Previous))
+        );
+        assert_eq!(parse_command(b's'), Some(Invoke::CycleApp(Direction::Next)));
+        assert_eq!(
+            parse_command(b'b'),
+            Some(Invoke::CycleApp(Direction::Previous))
+        );
+        assert_eq!(parse_command(b'q'), Some(Invoke::QuickToggle));
+    }
+
+    #[test]
+    fn alt_tab_wire_bytes_stay_n_and_p() {
+        // Byte-stable since the first release: installed keybinds send
+        // these bytes, so they must never drift.
+        assert_eq!(Invoke::Cycle(Direction::Next).wire_byte(), b'n');
+        assert_eq!(Invoke::Cycle(Direction::Previous).wire_byte(), b'p');
     }
 
     #[test]
     fn parse_command_rejects_junk() {
         assert_eq!(parse_command(b'x'), None);
+        // Near-miss uppercase of every valid byte.
         assert_eq!(parse_command(b'N'), None);
+        assert_eq!(parse_command(b'P'), None);
+        assert_eq!(parse_command(b'S'), None);
+        assert_eq!(parse_command(b'B'), None);
+        assert_eq!(parse_command(b'Q'), None);
+        // The ack byte is not a command.
+        assert_eq!(parse_command(ACK), None);
         assert_eq!(parse_command(0), None);
     }
 
     #[test]
     fn wire_bytes_round_trip_through_parse_command() {
-        for direction in [Direction::Next, Direction::Previous] {
-            assert_eq!(parse_command(direction.wire_byte()), Some(direction));
+        let invokes = [
+            Invoke::Cycle(Direction::Next),
+            Invoke::Cycle(Direction::Previous),
+            Invoke::CycleApp(Direction::Next),
+            Invoke::CycleApp(Direction::Previous),
+            Invoke::QuickToggle,
+        ];
+        for invoke in invokes {
+            assert_eq!(parse_command(invoke.wire_byte()), Some(invoke));
         }
     }
 
@@ -340,7 +390,7 @@ mod tests {
         let server = fake_daemon(&dir.socket(), Server::Ack);
         let result = send_with_deadline(
             &dir.socket(),
-            Direction::Next,
+            Invoke::Cycle(Direction::Next),
             Instant::now() + Duration::from_secs(5),
             || panic!("no spawn expected when the daemon answers"),
         );
@@ -354,7 +404,21 @@ mod tests {
         let server = fake_daemon(&dir.socket(), Server::Ack);
         let result = send_with_deadline(
             &dir.socket(),
-            Direction::Previous,
+            Invoke::Cycle(Direction::Previous),
+            Instant::now() + Duration::from_secs(5),
+            || panic!("no spawn expected when the daemon answers"),
+        );
+        assert!(result.is_ok());
+        server.join().expect("test daemon exits");
+    }
+
+    #[test]
+    fn send_round_trips_quick_toggle_command() {
+        let dir = TempDir::new();
+        let server = fake_daemon(&dir.socket(), Server::Ack);
+        let result = send_with_deadline(
+            &dir.socket(),
+            Invoke::QuickToggle,
             Instant::now() + Duration::from_secs(5),
             || panic!("no spawn expected when the daemon answers"),
         );
@@ -369,7 +433,7 @@ mod tests {
         let _silent = fake_daemon(&dir.socket(), Server::Silent);
         let result = send_with_deadline(
             &dir.socket(),
-            Direction::Next,
+            Invoke::Cycle(Direction::Next),
             Instant::now() + Duration::from_millis(200),
             || (),
         );
@@ -382,7 +446,7 @@ mod tests {
         let server = fake_daemon(&dir.socket(), Server::Garbage);
         let result = send_with_deadline(
             &dir.socket(),
-            Direction::Next,
+            Invoke::Cycle(Direction::Next),
             Instant::now() + Duration::from_secs(5),
             || (),
         );
@@ -410,7 +474,7 @@ mod tests {
         });
         let result = send_with_deadline(
             &dir.socket(),
-            Direction::Next,
+            Invoke::Cycle(Direction::Next),
             Instant::now() + Duration::from_secs(5),
             || (),
         );
@@ -423,7 +487,7 @@ mod tests {
         let dir = TempDir::new();
         let result = send_with_deadline(
             &dir.socket(),
-            Direction::Next,
+            Invoke::Cycle(Direction::Next),
             Instant::now() + Duration::from_millis(250),
             || (),
         );

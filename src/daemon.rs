@@ -111,6 +111,18 @@ pub fn commit_target(open: &Switch, snapshot: &Snapshot) -> Option<Handle> {
         .filter(|&handle| switcher::switchable(snapshot, handle, open.scope))
 }
 
+/// The window a quick toggle should activate: the MRU-second eligible
+/// window under `scope` — the same target one quick Alt+Tab tap reaches —
+/// or `None` when fewer than two windows are eligible, which makes the
+/// toggle a silent no-op. No session, no overlay: the caller activates the
+/// target immediately or does nothing at all.
+pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> {
+    let active = snapshot.active?;
+    switcher::eligible(&snapshot.toplevels, active, scope)
+        .get(1)
+        .copied()
+}
+
 /// Starts or advances the gesture session's selection ring by one step.
 ///
 /// A session's first press builds the ring from the MRU front — the focused
@@ -365,22 +377,41 @@ pub fn run() -> Result<(), RunError> {
                 Ok(0) => {}
                 Ok(_) => {
                     activity = true;
-                    if let Some(direction) = ipc::parse_command(byte[0]) {
-                        // A stub press is an Invoke: open (or continue) the
-                        // gesture session and step the selection. Activation
-                        // waits for the Alt release — or Escape, focus loss,
-                        // or the timeouts to end the session instead.
-                        if let GestureOutput::Step(direction) =
-                            gesture.feed(GestureInput::Invoke(direction))
-                        {
-                            step_and_show(
-                                &mut session,
-                                &mut gesture,
-                                &mut open,
-                                &snapshot,
-                                direction,
-                                &mut settings,
-                            );
+                    if let Some(command) = ipc::parse_command(byte[0]) {
+                        match command {
+                            ipc::Invoke::Cycle(direction) => {
+                                // A stub press is an Invoke: open (or
+                                // continue) the gesture session and step the
+                                // selection. Activation waits for the Alt
+                                // release — or Escape, focus loss, or the
+                                // timeouts to end the session instead.
+                                if let GestureOutput::Step(direction) =
+                                    gesture.feed(GestureInput::Invoke(direction))
+                                {
+                                    step_and_show(
+                                        &mut session,
+                                        &mut gesture,
+                                        &mut open,
+                                        &snapshot,
+                                        direction,
+                                        &mut settings,
+                                    );
+                                }
+                            }
+                            ipc::Invoke::QuickToggle => {
+                                // No session, no overlay: refresh settings
+                                // like a session open would, then activate
+                                // the MRU-second window — or nothing, when
+                                // there is nothing to toggle to.
+                                settings.refresh();
+                                let scope = resolve_scope(&snapshot, &settings.settings);
+                                if let Some(handle) = quick_toggle_target(&snapshot, scope) {
+                                    session.activate(handle).map_err(RunError::Session)?;
+                                }
+                            }
+                            // Routed when the same-app session lands; acked
+                            // as a no-op until then.
+                            ipc::Invoke::CycleApp(_) => {}
                         }
                         // One ack byte cannot realistically hit a full
                         // send buffer; a dropped ack makes the stub retry.
@@ -867,6 +898,71 @@ mod tests {
             Some(1),
         );
         assert_eq!(commit_target(&open, &moved), None);
+    }
+
+    #[test]
+    fn quick_toggle_targets_the_mru_second_window() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        assert_eq!(
+            quick_toggle_target(&snap, Scope::CurrentWorkspace),
+            Some(Handle(2))
+        );
+    }
+
+    #[test]
+    fn quick_toggle_with_fewer_than_two_eligible_windows_targets_nothing() {
+        let one = snapshot(vec![toplevel(1, &[1], State::ACTIVATED, 30)], Some(1));
+        assert_eq!(quick_toggle_target(&one, Scope::CurrentWorkspace), None);
+        let none = snapshot(vec![], Some(1));
+        assert_eq!(quick_toggle_target(&none, Scope::CurrentWorkspace), None);
+    }
+
+    #[test]
+    fn quick_toggle_respects_the_workspace_scope() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                // On workspace 2: the MRU-second under All, invisible here.
+                toplevel(2, &[2], State::default(), 20),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        assert_eq!(quick_toggle_target(&snap, Scope::All), Some(Handle(2)));
+        assert_eq!(
+            quick_toggle_target(&snap, Scope::CurrentWorkspace),
+            Some(Handle(3))
+        );
+    }
+
+    #[test]
+    fn quick_toggle_skips_minimized_windows() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                // The MRU-second, but minimized: not a toggle target.
+                toplevel(2, &[1], State::MINIMIZED, 20),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        assert_eq!(
+            quick_toggle_target(&snap, Scope::CurrentWorkspace),
+            Some(Handle(3))
+        );
+    }
+
+    #[test]
+    fn quick_toggle_without_an_active_workspace_targets_nothing() {
+        let snap = snapshot(vec![toplevel(1, &[1], State::ACTIVATED, 30)], None);
+        assert_eq!(quick_toggle_target(&snap, Scope::CurrentWorkspace), None);
     }
 
     #[test]
