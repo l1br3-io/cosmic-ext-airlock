@@ -11,9 +11,11 @@ elsewhere leaks into your focus.
 
 Hold **Alt** and tap **Tab**: an overlay lists the windows of the current
 workspace in most-recently-used order. **Tab** walks forward, **Shift+Tab**
-walks back, releasing **Alt** focuses the selection and dismisses the
-overlay, **Escape** dismisses without switching. A quick tap — released
-before the overlay even appears — still switches.
+walks back, and the arrow keys step too — **Up** or **Left** back,
+**Down** or **Right** forward. Releasing **Alt** focuses the selection and
+dismisses the overlay; **Enter** confirms the same outcome without letting
+go of **Alt**. **Escape** dismisses without switching. A quick tap —
+released before the overlay even appears — still switches.
 
 Only windows whose workspace set includes the current workspace are listed:
 sticky windows appear everywhere, minimized windows nowhere, and a window

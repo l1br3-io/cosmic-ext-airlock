@@ -33,6 +33,17 @@ them sticky, and at least one minimized. Build and install first
       switches
 - [ ] Two rapid invokes in a row behave as one continuous gesture session
 
+### Gesture keys (Enter and arrows)
+
+- [ ] While the overlay is up, Enter commits mid-hold — the selection
+      focuses and the overlay unmaps, exactly as if Alt had been released
+- [ ] Arrows step the selection both directions: Up/Left back, Down/Right
+      forward, wrapping at the list ends like Tab
+- [ ] Regression: Escape still dismisses without switching
+- [ ] Regression: Alt release still commits the selection
+- [ ] Regression: a quick Alt+Tab tap still switches, no lingering overlay
+- [ ] Regression: Shift+Tab still walks back
+
 ## 4. Takeover and restore
 
 - [ ] `airlock install` redirects Alt+Tab / Shift+Alt+Tab to Airlock at user
