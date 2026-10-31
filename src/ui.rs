@@ -50,6 +50,12 @@ pub const PAD_Y: u32 = 16;
 /// Vertical gap between rows.
 pub const ROW_GAP: u32 = 12;
 
+/// How far the selection fill extends above and below the row's glyph
+/// block, so the fill holds the row rather than an 8-pixel stripe bound
+/// to the font metric. The fill is the only motion the user tracks at Tab
+/// speed; it must read in peripheral vision before any title does.
+pub const SELECT_BLEED: u32 = 4;
+
 /// Maximum title columns shown before truncation.
 pub const MAX_COLS: u32 = 48;
 
@@ -75,6 +81,16 @@ pub const COLOR_TEXT: u32 = 0xFF_F2_F4_F8;
 const _: () = {
     assert!(COLOR_BACKGROUND >> 24 >= 0xFA);
     assert!(COLOR_SELECTED_BG >> 24 >= 0xFA);
+};
+
+// The selection band paints inside space the card already reserves:
+// it never leaves the card (bleed stays inside the vertical padding) and
+// adjacent band positions never merge into one block while the fill
+// walks the rows. On the 4/8 step scale like every other metric.
+const _: () = {
+    assert!(SELECT_BLEED < PAD_Y);
+    assert!(SELECT_BLEED * 2 <= ROW_GAP);
+    assert!(SELECT_BLEED.is_multiple_of(4));
 };
 
 /// Placeholder shown when a window has neither title nor app_id.
@@ -151,7 +167,11 @@ pub fn render(model: &OverlayModel, canvas: &mut [u8], width: u32, height: u32, 
     for (index, row) in model.rows.iter().enumerate() {
         let top = PAD_Y + index as u32 * (GLYPH_H + ROW_GAP);
         if row.selected {
-            for y in top..top + GLYPH_H {
+            // `top >= PAD_Y > SELECT_BLEED`, so the subtraction cannot
+            // underflow; the compile-time asserts pin the geometry.
+            let band_top = top - SELECT_BLEED;
+            let band_bottom = top + GLYPH_H + SELECT_BLEED;
+            for y in band_top..band_bottom {
                 for x in 0..width {
                     put_pixel(canvas, stride, x, y, COLOR_SELECTED_BG);
                 }
@@ -1068,6 +1088,97 @@ mod tests {
         assert_eq!(pixel(2, row1_y + 2), COLOR_SELECTED_BG);
         // Top padding is plain background above both rows.
         assert_eq!(pixel(2, PAD_Y / 2), COLOR_BACKGROUND);
+    }
+
+    #[test]
+    fn render_selection_band_holds_the_row_with_even_bleed() {
+        // Three rows, the middle selected: the fill opens SELECT_BLEED
+        // above the glyph block, closes SELECT_BLEED below it, spans the
+        // full card width, and clears the neighboring rows' glyphs.
+        let snap = snapshot(
+            vec![
+                toplevel(1, "Top", "app.a", &[1], switcher::State::ACTIVATED, 3),
+                toplevel(2, "Middle", "app.b", &[1], switcher::State::default(), 2),
+                toplevel(3, "Bottom", "app.c", &[1], switcher::State::default(), 1),
+            ],
+            Some(1),
+        );
+        let model = overlay_model(&snap, Handle(2), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
+        let (w, h) = (model.width, model.height);
+        let stride = w * 4;
+        let mut canvas = vec![0x00; (stride * h) as usize];
+        render(&model, &mut canvas, w, h, stride);
+
+        let pixel = |x: u32, y: u32| {
+            let index = (y * stride + x * 4) as usize;
+            u32::from_le_bytes(
+                canvas[index..index + 4]
+                    .try_into()
+                    .expect("pixel-sized chunk"),
+            )
+        };
+        let mid = PAD_Y + (GLYPH_H + ROW_GAP);
+        let band_top = mid - SELECT_BLEED;
+        let band_bottom = mid + GLYPH_H + SELECT_BLEED;
+        // Band edges at both card margins: full width, even bleed.
+        assert_eq!(pixel(0, band_top), COLOR_SELECTED_BG);
+        assert_eq!(pixel(w - 1, band_top), COLOR_SELECTED_BG);
+        assert_eq!(pixel(0, band_bottom - 1), COLOR_SELECTED_BG);
+        assert_eq!(pixel(w - 1, band_bottom - 1), COLOR_SELECTED_BG);
+        // One pixel outside the band the card is plain background again.
+        assert_eq!(pixel(0, band_top - 1), COLOR_BACKGROUND);
+        assert_eq!(pixel(0, band_bottom), COLOR_BACKGROUND);
+        // The first row's window glyph (all-lit first scanline) is plain
+        // text: the band clears neighboring glyph blocks entirely.
+        assert_eq!(pixel(PAD_X, PAD_Y), COLOR_TEXT);
+    }
+
+    #[test]
+    fn render_selection_band_stays_inside_the_card_at_the_edges() {
+        // Selecting the first and then the last row: the band reaches into
+        // the padding ring but never crosses it, so the card keeps its
+        // symmetric silhouette at any selection.
+        let snap = snapshot(
+            vec![
+                toplevel(1, "Top", "app.a", &[1], switcher::State::ACTIVATED, 2),
+                toplevel(2, "Bottom", "app.b", &[1], switcher::State::default(), 1),
+            ],
+            Some(1),
+        );
+        let (w, h) = (
+            2 * GLYPH_W + ICON_W + ICON_GAP + 2 * PAD_X,
+            2 * PAD_Y + GLYPH_H + (GLYPH_H + ROW_GAP),
+        );
+        let stride = w * 4;
+        let pixel = |canvas: &[u8], x: u32, y: u32| {
+            let index = (y * stride + x * 4) as usize;
+            u32::from_le_bytes(
+                canvas[index..index + 4]
+                    .try_into()
+                    .expect("pixel-sized chunk"),
+            )
+        };
+
+        let model = overlay_model(&snap, Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
+        let mut canvas = vec![0x00; (stride * h) as usize];
+        render(&model, &mut canvas, w, h, stride);
+        assert_eq!(pixel(&canvas, 0, PAD_Y - SELECT_BLEED), COLOR_SELECTED_BG);
+        assert_eq!(
+            pixel(&canvas, 0, PAD_Y - SELECT_BLEED - 1),
+            COLOR_BACKGROUND
+        );
+
+        let model = overlay_model(&snap, Handle(2), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
+        let mut canvas = vec![0x00; (stride * h) as usize];
+        render(&model, &mut canvas, w, h, stride);
+        let last_top = PAD_Y + (GLYPH_H + ROW_GAP);
+        let band_bottom = last_top + GLYPH_H + SELECT_BLEED;
+        assert_eq!(pixel(&canvas, 0, band_bottom - 1), COLOR_SELECTED_BG);
+        assert_eq!(pixel(&canvas, 0, band_bottom), COLOR_BACKGROUND);
+        assert_eq!(pixel(&canvas, 0, h - 1), COLOR_BACKGROUND);
     }
 
     #[test]
