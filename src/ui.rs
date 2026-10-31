@@ -243,6 +243,9 @@ fn truncate_cols(title: String) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GestureKey {
     Tab,
+    /// Explicit confirm: Return / KP_Enter / ISO_Enter while showing.
+    /// Same outcome as releasing Alt.
+    Commit,
     Escape,
     Other,
 }
@@ -306,6 +309,10 @@ impl Gesture {
                 } else {
                     Direction::Next
                 }),
+                GestureKey::Commit => {
+                    self.showing = false;
+                    GestureOutput::Commit
+                }
                 GestureKey::Escape => {
                     self.showing = false;
                     GestureOutput::Dismiss
@@ -369,6 +376,7 @@ pub fn key_input(keysym: Keysym, shift_held: bool) -> GestureInput {
     let (key, shift) = match keysym {
         Keysym::ISO_Left_Tab => (GestureKey::Tab, true),
         Keysym::Tab => (GestureKey::Tab, shift_held),
+        Keysym::Return | Keysym::KP_Enter | Keysym::ISO_Enter => (GestureKey::Commit, shift_held),
         Keysym::Escape => (GestureKey::Escape, shift_held),
         _ => (GestureKey::Other, shift_held),
     };
@@ -1335,6 +1343,21 @@ mod tests {
     }
 
     #[test]
+    fn enter_commits_the_selection_even_while_alt_is_held() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        gesture.feed(GestureInput::Modifiers { alt: true });
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Commit,
+                shift: false
+            }),
+            GestureOutput::Commit
+        );
+        assert!(!gesture.showing());
+    }
+
+    #[test]
     fn focus_lost_dismisses() {
         let mut gesture = Gesture::default();
         gesture.feed(GestureInput::Invoke(Direction::Next));
@@ -1366,6 +1389,18 @@ mod tests {
         );
         assert_eq!(
             gesture.feed(GestureInput::FocusLost),
+            GestureOutput::Nothing
+        );
+    }
+
+    #[test]
+    fn commit_between_sessions_is_nothing() {
+        let mut gesture = Gesture::default();
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Commit,
+                shift: false
+            }),
             GestureOutput::Nothing
         );
     }
@@ -1439,9 +1474,23 @@ mod tests {
         assert_eq!(
             key_input(Keysym::Return, false),
             GestureInput::Press {
-                key: GestureKey::Other,
+                key: GestureKey::Commit,
                 shift: false
             }
         );
+    }
+
+    #[test]
+    fn key_input_maps_the_enter_family_to_commit() {
+        // Return, KP_Enter, and ISO_Enter are one key by three names.
+        for keysym in [Keysym::Return, Keysym::KP_Enter, Keysym::ISO_Enter] {
+            assert_eq!(
+                key_input(keysym, false),
+                GestureInput::Press {
+                    key: GestureKey::Commit,
+                    shift: false
+                }
+            );
+        }
     }
 }
