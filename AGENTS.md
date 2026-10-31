@@ -28,6 +28,7 @@ This project uses the [addyosmani/agent-skills](https://github.com/addyosmani/ag
 - Refactoring / simplification → `code-simplification`
 - API or module boundary design → `api-and-interface-design`
 - Rust code / review → `rust-best-practices`
+- Switcher overlay visual design (colors, spacing, glyphs, glance legibility), gesture-time presentation, or user-facing copy in the CLI, config diagnostics, or docs → `airlock-design`
 - Security-sensitive input, auth, secrets, dependencies → `security-and-hardening`
 - Performance requirements or suspected regressions → `performance-optimization`
 - Making a change (always) → `git-workflow-and-versioning`
@@ -51,6 +52,7 @@ This project uses the [addyosmani/agent-skills](https://github.com/addyosmani/ag
 - Run `cargo clippy` and `cargo fmt --check` before a change counts as done; `cargo test` is the verification gate.
 - Unit tests live inline in `#[cfg(test)] mod tests`. When a test module outgrows ~500 lines, move it to a sibling `tests.rs` (e.g. `src/app/tests.rs`) declared as `#[cfg(test)] mod tests;` — it stays a child module, keeping private access and cfg gating while keeping whole-file reads cheap for agents. Never move unit tests to a top-level `tests/` dir; that is integration-test territory and loses private access.
 - This is a COSMIC Wayland app: runtime behavior is only testable on real COSMIC hardware; unit tests cover what can be tested headless.
+- **Never run the app on the local host.** Airlock takes over Alt+Tab, binds Wayland input, and paints overlays — launching it here hijacks the developer's real desktop session. Any execution of the `airlock` binary (`cargo run`, `just run`, running `./target/**/airlock` or `~/.cargo/bin/airlock` directly) is host-forbidden; so is `just install` on the host, because the spawn stub re-executes the daemon on the next key press. Runtime and manual testing happen only inside the COSMIC VM via the `just vm-*` recipes — see `docs/vm-development.md` — snapshotting first (`just vm-snapshot`) when exercising install/uninstall or crash paths. Headless commands (`cargo build`, `cargo test`, `just check`, `just fmt-check`) are safe locally.
 
 ## Spec & task artifacts (local working docs)
 
