@@ -246,6 +246,8 @@ pub enum GestureKey {
     /// Explicit confirm: Return / KP_Enter / ISO_Enter while showing.
     /// Same outcome as releasing Alt.
     Commit,
+    /// A directional step: Up/Left previous, Down/Right next.
+    Arrow(Direction),
     Escape,
     Other,
 }
@@ -313,6 +315,7 @@ impl Gesture {
                     self.showing = false;
                     GestureOutput::Commit
                 }
+                GestureKey::Arrow(direction) => GestureOutput::Step(direction),
                 GestureKey::Escape => {
                     self.showing = false;
                     GestureOutput::Dismiss
@@ -377,6 +380,8 @@ pub fn key_input(keysym: Keysym, shift_held: bool) -> GestureInput {
         Keysym::ISO_Left_Tab => (GestureKey::Tab, true),
         Keysym::Tab => (GestureKey::Tab, shift_held),
         Keysym::Return | Keysym::KP_Enter | Keysym::ISO_Enter => (GestureKey::Commit, shift_held),
+        Keysym::Up | Keysym::Left => (GestureKey::Arrow(Direction::Previous), false),
+        Keysym::Down | Keysym::Right => (GestureKey::Arrow(Direction::Next), false),
         Keysym::Escape => (GestureKey::Escape, shift_held),
         _ => (GestureKey::Other, shift_held),
     };
@@ -1358,6 +1363,29 @@ mod tests {
     }
 
     #[test]
+    fn arrows_step_the_selection_while_showing() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        gesture.feed(GestureInput::Modifiers { alt: true });
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Arrow(Direction::Previous),
+                shift: false
+            }),
+            GestureOutput::Step(Direction::Previous)
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Arrow(Direction::Next),
+                shift: false
+            }),
+            GestureOutput::Step(Direction::Next)
+        );
+        // Stepping never closes the session; wrap is the ring's contract.
+        assert!(gesture.showing());
+    }
+
+    #[test]
     fn focus_lost_dismisses() {
         let mut gesture = Gesture::default();
         gesture.feed(GestureInput::Invoke(Direction::Next));
@@ -1492,5 +1520,36 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn key_input_maps_arrows_to_directional_steps() {
+        // Direction rides the key, not the seat's shift state: arrows carry
+        // their direction inherently, so shift is reported false either way.
+        for (keysym, direction) in [
+            (Keysym::Up, Direction::Previous),
+            (Keysym::Left, Direction::Previous),
+            (Keysym::Down, Direction::Next),
+            (Keysym::Right, Direction::Next),
+        ] {
+            assert_eq!(
+                key_input(keysym, true),
+                GestureInput::Press {
+                    key: GestureKey::Arrow(direction),
+                    shift: false
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn key_input_leaves_unknown_keysyms_alone() {
+        assert_eq!(
+            key_input(Keysym::Delete, true),
+            GestureInput::Press {
+                key: GestureKey::Other,
+                shift: true
+            }
+        );
     }
 }
