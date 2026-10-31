@@ -19,6 +19,9 @@ Only windows whose workspace set includes the current workspace are listed:
 sticky windows appear everywhere, minimized windows nowhere, and a window
 parked on another workspace can never be focused through Airlock.
 
+The isolation is per-workspace configurable: a workspace can opt into the
+global switcher through a config file — see [Settings](docs/settings.md).
+
 A small daemon keeps a live snapshot of the compositor state; the keybind
 stubs are milliseconds-thin and auto-start the daemon on first press. The
 overlay is software-rendered — no GPU required.
@@ -119,6 +122,7 @@ Verification gates: `just test`, `just check` (clippy, warnings denied),
 
 ## Documentation
 
+- [Per-workspace settings](docs/settings.md)
 - [Hardware verification checklist](docs/hardware-checklist.md)
 - [Developing and testing in the COSMIC VM](docs/vm-development.md)
 - [Research index](docs/research/README.md)
