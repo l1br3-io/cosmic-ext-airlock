@@ -17,6 +17,18 @@ dismisses the overlay; **Enter** confirms the same outcome without letting
 go of **Alt**. **Escape** dismisses without switching. A quick tap —
 released before the overlay even appears — still switches.
 
+Each row shows the window's application icon — resolved through the same
+desktop-entry and icon-theme pipeline the COSMIC launcher uses — next to
+its title; an application with no themed icon falls back to a generic
+window glyph. The card is a dark rounded rectangle with a hairline border,
+at most 600 px wide, with the selected row highlighted; text renders at
+16 px and stays sharp on HiDPI displays (the overlay renders at the
+output's scale). To preview the look without a COSMIC session:
+
+```sh
+cargo run --example overlay-preview -- preview.png
+```
+
 Only windows whose workspace set includes the current workspace are listed:
 sticky windows appear everywhere, minimized windows nowhere, and a window
 parked on another workspace can never be focused through Airlock.

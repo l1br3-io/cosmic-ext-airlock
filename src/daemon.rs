@@ -153,7 +153,7 @@ pub fn ring_step(
         });
     }
     match direction {
-        Direction::Next => open.as_mut()?.ring.next(),
+        Direction::Next => open.as_mut()?.ring.step(1),
         Direction::Previous => open.as_mut()?.ring.previous(),
     }
 }
@@ -196,6 +196,13 @@ pub fn session_step(
         session.app = Some(app);
     }
     selected
+}
+
+/// One step request into [`step_and_show`]: the direction, and whether a
+/// *new* session should narrow to the current application.
+struct Step {
+    direction: Direction,
+    same_app: bool,
 }
 
 /// Live settings state: the parsed rules plus the source that watches
@@ -326,6 +333,9 @@ pub fn run() -> Result<(), RunError> {
     let mut mru = Mru::default();
     let mut snapshot = fresh_snapshot(&mut session, &mut mru);
     let mut settings = LiveSettings::load();
+    // Desktop-entry enumeration once per daemon (tens of ms, off the
+    // press path); rasterization happens per first-seen app.
+    let mut icons = crate::icons::Cache::new();
     let mut pending: Vec<UnixStream> = Vec::new();
     let mut last_activity = Instant::now();
 
@@ -371,9 +381,12 @@ pub fn run() -> Result<(), RunError> {
                         &mut gesture,
                         &mut open,
                         &snapshot,
-                        direction,
-                        false,
+                        Step {
+                            direction,
+                            same_app: false,
+                        },
                         &mut settings,
+                        &mut icons,
                     );
                 }
                 GestureOutput::Commit => {
@@ -446,9 +459,12 @@ pub fn run() -> Result<(), RunError> {
                                         &mut gesture,
                                         &mut open,
                                         &snapshot,
-                                        direction,
-                                        same_app,
+                                        Step {
+                                            direction,
+                                            same_app,
+                                        },
                                         &mut settings,
+                                        &mut icons,
                                     );
                                 }
                             }
@@ -499,14 +515,19 @@ pub fn run() -> Result<(), RunError> {
 /// stat-checked and re-resolved exactly when a session starts, and an
 /// already-open session keeps the scope it was built with — a mid-gesture
 /// edit must not swap the list under the user's held Alt.
+///
+/// Icons are prepared here too, at the session's render scale: every app
+/// already seen by the daemon is a cache hit, and a first-seen app
+/// rasterizes once (~1 ms, benchmarked in `src/icons.rs`) — icon I/O
+/// never lands on the warm-press path twice for the same app.
 fn step_and_show(
     session: &mut wayland::Session,
     gesture: &mut Gesture,
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
-    direction: Direction,
-    same_app: bool,
+    step: Step,
     settings: &mut LiveSettings,
+    icons: &mut crate::icons::Cache,
 ) {
     let scope = match open {
         Some(open) => open.scope,
@@ -515,10 +536,20 @@ fn step_and_show(
             resolve_scope(snapshot, &settings.settings)
         }
     };
-    let selected = session_step(open, snapshot, direction, scope, same_app);
+    let selected = session_step(open, snapshot, step.direction, scope, step.same_app);
+    let scale = session.render_scale();
+    icons.prepare(
+        snapshot
+            .toplevels
+            .iter()
+            .map(|toplevel| toplevel.app_id.as_str()),
+        scale,
+    );
     let model = open.as_ref().and_then(|current| {
         let model_of = |list: &Snapshot| {
-            selected.and_then(|handle| crate::ui::overlay_model(list, handle, current.scope))
+            selected.and_then(|handle| {
+                crate::ui::overlay_model(list, handle, current.scope, icons, scale)
+            })
         };
         match current.app.as_deref() {
             Some(app) => model_of(&switcher::app_view(snapshot, app, current.scope)),

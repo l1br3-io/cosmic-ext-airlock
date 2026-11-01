@@ -185,31 +185,9 @@ impl Ring {
         Self { handles, index: 0 }
     }
 
-    /// Number of windows in the ring.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the overlay renders the ring length in task T5")
-    )]
-    pub fn len(&self) -> usize {
-        self.handles.len()
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the overlay renders the ring length in task T5")
-    )]
-    pub fn is_empty(&self) -> bool {
-        self.handles.is_empty()
-    }
-
     /// The currently selected handle, or `None` when the ring is empty.
     pub fn selected(&self) -> Option<Handle> {
         self.handles.get(self.index).copied()
-    }
-
-    /// Advances the selection (wrapping) and returns it.
-    pub fn next(&mut self) -> Option<Handle> {
-        self.step(1)
     }
 
     /// Retreats the selection (wrapping) and returns it.
@@ -217,13 +195,26 @@ impl Ring {
         self.step(self.handles.len().checked_sub(1)?)
     }
 
-    fn step(&mut self, delta: usize) -> Option<Handle> {
+    /// Advances the selection by `delta` (wrapping) and returns it.
+    pub fn step(&mut self, delta: usize) -> Option<Handle> {
         let len = self.handles.len();
         if len == 0 {
             return None;
         }
         self.index = (self.index + delta) % len;
         self.selected()
+    }
+}
+
+#[cfg(test)]
+impl Ring {
+    /// Number of windows in the ring (test assertions).
+    pub fn len(&self) -> usize {
+        self.handles.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.handles.is_empty()
     }
 }
 
@@ -535,9 +526,9 @@ mod tests {
     #[test]
     fn ring_next_advances_and_wraps_around() {
         let mut ring = Ring::new(vec![Handle(1), Handle(2), Handle(3)]);
-        assert_eq!(ring.next(), Some(Handle(2)));
-        assert_eq!(ring.next(), Some(Handle(3)));
-        assert_eq!(ring.next(), Some(Handle(1)));
+        assert_eq!(ring.step(1), Some(Handle(2)));
+        assert_eq!(ring.step(1), Some(Handle(3)));
+        assert_eq!(ring.step(1), Some(Handle(1)));
     }
 
     #[test]
@@ -551,7 +542,7 @@ mod tests {
     #[test]
     fn ring_on_single_item_returns_itself_in_both_directions() {
         let mut ring = Ring::new(vec![Handle(9)]);
-        assert_eq!(ring.next(), Some(Handle(9)));
+        assert_eq!(ring.step(1), Some(Handle(9)));
         assert_eq!(ring.previous(), Some(Handle(9)));
     }
 
@@ -561,7 +552,7 @@ mod tests {
         assert!(ring.is_empty());
         assert_eq!(ring.len(), 0);
         assert_eq!(ring.selected(), None);
-        assert_eq!(ring.next(), None);
+        assert_eq!(ring.step(1), None);
         assert_eq!(ring.previous(), None);
     }
 

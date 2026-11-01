@@ -61,6 +61,22 @@ binary.
 - [ ] Regression: Alt+Tab still lists every window in scope, not only the
       current application's
 
+### Overlay visuals (icons, card, HiDPI)
+
+- [ ] Six or more applications show their real themed icons in the rows,
+      including an SVG-only icon (Firefox) and a Flatpak application
+- [ ] An application with no themed icon shows the generic window glyph,
+      and the daemon log names it once (`no icon for app_id …`)
+- [ ] The card reads on a **light** and a **dark** wallpaper: hairline
+      border and rounded corners visible and clean on both (screenshot
+      each)
+- [ ] The selected row's inset highlight is legible on both wallpapers
+      and walks the rows at Tab speed
+- [ ] Set the display to 200% scale: text and icons stay crisp (no
+      upscaled blur), the card stays centered
+- [ ] A 48+-character title truncates with `…`; an untitled window shows
+      `(untitled)`
+
 ## 4. Takeover and restore
 
 - [ ] `airlock install` redirects Alt+Tab / Shift+Alt+Tab to Airlock at user

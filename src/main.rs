@@ -2,6 +2,7 @@
 
 mod cli;
 mod daemon;
+mod icons;
 mod install;
 mod ipc;
 mod settings;

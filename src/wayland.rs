@@ -14,22 +14,27 @@ use cosmic_client_toolkit as cctk;
 use cctk::cosmic_protocols::toplevel_info::v1::client::zcosmic_toplevel_handle_v1::State as CosmicState;
 use cctk::cosmic_protocols::toplevel_info::v1::client::zcosmic_toplevel_handle_v1::ZcosmicToplevelHandleV1;
 use cctk::sctk::compositor::{CompositorHandler, CompositorState};
-use cctk::sctk::output::{OutputHandler, OutputState};
+use cctk::sctk::output::{OutputData, OutputHandler, OutputState};
 use cctk::sctk::registry::{ProvidesRegistryState, RegistryState};
 use cctk::sctk::seat::{
     keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
     Capability, SeatHandler, SeatState,
 };
+use cctk::sctk::shell::WaylandSurface;
 use cctk::sctk::shell::wlr_layer::{
-    LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure,
+    Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
+    LayerSurfaceConfigure,
 };
+use cctk::sctk::shm::slot::SlotPool;
 use cctk::sctk::shm::{Shm, ShmHandler};
 use cctk::toplevel_info::{ToplevelInfoHandler, ToplevelInfoState};
 use cctk::toplevel_management::{ToplevelManagerHandler, ToplevelManagerState};
 use cctk::wayland_client::{Connection, DispatchError, Proxy, QueueHandle, WEnum};
 use cctk::wayland_client::backend::WaylandError;
 use cctk::wayland_client::globals::registry_queue_init;
-use cctk::wayland_client::protocol::{wl_keyboard, wl_output, wl_seat, wl_surface};
+use cctk::wayland_client::protocol::wl_output::WlOutput;
+use cctk::wayland_client::protocol::wl_surface::WlSurface;
+use cctk::wayland_client::protocol::{wl_keyboard, wl_output, wl_seat, wl_shm, wl_surface};
 use cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1;
 use cctk::wayland_protocols::ext::workspace::v1::client::ext_workspace_handle_v1::{ExtWorkspaceHandleV1, State as ExtWorkspaceState};
 use cctk::wayland_protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_keyboard_shortcuts_inhibit_manager_v1::{
@@ -248,7 +253,7 @@ pub(crate) struct App {
     shift_held: bool,
     /// First output seen; hosts the overlay surface.
     first_output: Option<wl_output::WlOutput>,
-    overlay: Option<ui::Overlay>,
+    overlay: Option<Overlay>,
     /// Gesture inputs queued by keyboard handlers during dispatch; the
     /// daemon's serve loop drains them after each poll.
     gesture_inputs: Vec<GestureInput>,
@@ -698,6 +703,210 @@ pub struct Session {
     activatable: HashMap<Handle, ZcosmicToplevelHandleV1>,
 }
 
+/// Why creating the overlay failed. The daemon logs this and carries on
+/// without a switcher surface rather than dying mid-press.
+#[derive(Debug)]
+pub struct OverlayError(pub String);
+
+impl std::fmt::Display for OverlayError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for OverlayError {}
+
+/// The mapped switcher overlay: one layer-shell surface backed by a shared
+/// memory pool, showing one [`OverlayModel`].
+///
+/// Creating the surface sends an initial empty commit; the compositor
+/// answers with a configure, and only then may buffers attach (attaching
+/// earlier is a protocol error). While mapped, a keyboard-shortcuts
+/// inhibitor keeps the compositor's own Alt+Tab from stealing the gesture;
+/// dropping the `LayerSurface` unmaps the overlay and dropping the
+/// inhibitor uninhibits.
+///
+/// The model is logical pixels; buffers are `scale ×` that, with
+/// `set_buffer_scale` declared before the first commit, so HiDPI outputs
+/// get native pixels instead of an upscaled blur.
+pub struct Overlay {
+    /// Declared before `layer` so the inhibit lifts before the unmap.
+    inhibitor: ksi_inhibitor::ZwpKeyboardShortcutsInhibitorV1,
+    layer: LayerSurface,
+    pool: SlotPool,
+    model: OverlayModel,
+    /// Device pixels per logical pixel this overlay renders at.
+    scale: u32,
+    /// Size granted by the compositor; `None` until the first configure.
+    size: Option<(u32, u32)>,
+    close_at: Instant,
+    hard_close_at: Instant,
+}
+
+/// Everything a new overlay borrows from the live session.
+pub struct OverlayEnv<'a> {
+    pub compositor: &'a CompositorState,
+    pub layer_shell: &'a LayerShell,
+    pub shm: &'a Shm,
+    pub shortcuts: &'a ksi_manager::ZwpKeyboardShortcutsInhibitManagerV1,
+    pub seat: &'a wl_seat::WlSeat,
+    pub qh: &'a QueueHandle<App>,
+    pub output: Option<&'a WlOutput>,
+    /// Render scale for this overlay: device pixels per logical pixel
+    /// (`max(2, output scale)` upstream).
+    pub scale: u32,
+}
+
+impl Overlay {
+    /// Creates the overlay surface for `model` (centered on `env.output`,
+    /// overlay layer, exclusive keyboard interactivity) and requests its
+    /// first configure.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the shared-memory pool cannot be created.
+    pub fn new(model: OverlayModel, env: OverlayEnv<'_>) -> Result<Self, OverlayError> {
+        let OverlayEnv {
+            compositor,
+            layer_shell,
+            shm,
+            shortcuts,
+            seat,
+            qh,
+            output,
+            scale,
+        } = env;
+        let surface = compositor.create_surface(qh);
+        let layer =
+            layer_shell.create_layer_surface(qh, surface, Layer::Overlay, Some("airlock"), output);
+        // No anchor edges: the surface centers in its output.
+        layer.set_anchor(Anchor::empty());
+        layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        // Declared before the first commit: buffers will arrive at
+        // scale × logical size.
+        layer.wl_surface().set_buffer_scale(scale as i32);
+        layer.set_size(model.width, model.height);
+        layer.commit();
+
+        // With shortcuts inhibited, the compositor forwards Alt (and every
+        // other key) to the grabbed surface instead of acting on its own
+        // bindings — the release that commits the gesture arrives as a
+        // modifiers event.
+        let inhibitor = shortcuts.inhibit_shortcuts(layer.wl_surface(), seat, qh, ());
+
+        let len =
+            model.width as usize * scale as usize * model.height as usize * scale as usize * 4;
+        let pool = SlotPool::new(len, shm)
+            .map_err(|err| OverlayError(format!("shared memory pool: {err}")))?;
+
+        Ok(Self {
+            inhibitor,
+            layer,
+            pool,
+            model,
+            scale,
+            size: None,
+            close_at: Instant::now() + ui::CLOSE_AFTER,
+            hard_close_at: Instant::now() + ui::HARD_CLOSE,
+        })
+    }
+
+    /// Swaps in a fresh model. Same-sized redraws happen immediately; a size
+    /// change goes through `set_size` + commit and draws on the next
+    /// configure.
+    pub fn update(&mut self, model: OverlayModel) {
+        let unchanged = self.size == Some((model.width, model.height));
+        self.close_at = Instant::now() + ui::CLOSE_AFTER;
+        let (width, height) = (model.width, model.height);
+        self.model = model;
+        if unchanged {
+            self.draw();
+        } else {
+            self.layer.set_size(width, height);
+            self.layer.commit();
+        }
+    }
+
+    /// Applies a configure: remember the granted size and draw. A zero
+    /// dimension means "pick your own", which for this surface is the model
+    /// size.
+    pub fn on_configure(&mut self, width: u32, height: u32) {
+        let width = if width == 0 { self.model.width } else { width };
+        let height = if height == 0 {
+            self.model.height
+        } else {
+            height
+        };
+        self.size = Some((width, height));
+        self.draw();
+    }
+
+    /// Whether the idle close deadline has passed at `now`.
+    pub fn expired(&self, now: Instant) -> bool {
+        now >= self.close_at
+    }
+
+    /// Whether the hard close deadline has passed at `now`.
+    pub fn hard_expired(&self, now: Instant) -> bool {
+        now >= self.hard_close_at
+    }
+
+    /// Pushes the idle close deadline out again; called for every gesture
+    /// input so the timeout only bites when input has truly gone quiet.
+    pub fn touch(&mut self) {
+        self.close_at = Instant::now() + ui::CLOSE_AFTER;
+    }
+
+    /// The model currently shown.
+    pub fn model(&self) -> &OverlayModel {
+        &self.model
+    }
+
+    /// The overlay's surface, for matching keyboard focus events.
+    pub fn wl_surface(&self) -> &WlSurface {
+        self.layer.wl_surface()
+    }
+
+    /// Renders the model into a fresh buffer and commits it. A no-op before
+    /// the first configure; draw failures are logged and leave the surface
+    /// as-is — the next press retries with a fresh pool slot.
+    fn draw(&mut self) {
+        let Some((width, height)) = self.size else {
+            return;
+        };
+        // Buffers carry device pixels: logical size × render scale.
+        let (bw, bh) = (width * self.scale, height * self.scale);
+        let stride = bw.saturating_mul(4);
+        let Ok((buffer, canvas)) = self.pool.create_buffer(
+            bw as i32,
+            bh as i32,
+            stride as i32,
+            wl_shm::Format::Argb8888,
+        ) else {
+            eprintln!("airlock daemon: overlay buffer allocation failed");
+            return;
+        };
+        ui::render(&self.model, canvas, bw, bh, stride, self.scale);
+        let surface = self.layer.wl_surface();
+        surface.damage_buffer(0, 0, bw as i32, bh as i32);
+        if let Err(err) = buffer.attach_to(surface) {
+            eprintln!("airlock daemon: overlay buffer attach failed: {err}");
+            return;
+        }
+        self.layer.commit();
+    }
+}
+
+impl Drop for Overlay {
+    /// Sends the inhibitor's destroy request: dropping the proxy alone does
+    /// not uninhibit, and a leaked inhibitor would keep the compositor
+    /// swallowing its own keyboard shortcuts after the overlay is gone.
+    /// The layer surface (and the unmap) follows in field drops.
+    fn drop(&mut self) {
+        self.inhibitor.destroy();
+    }
+}
+
 impl Session {
     /// Connects to the compositor and binds every protocol Airlock needs.
     ///
@@ -989,6 +1198,22 @@ impl Session {
         Ok(true)
     }
 
+    /// The render scale for overlays hosted on the first output:
+    /// `max(2, output scale)` — text is never smaller than 16 logical
+    /// px, and HiDPI outputs get native pixels instead of an upscaled
+    /// blur. Re-read on every overlay build, so a display-scale change
+    /// applies from the next gesture session.
+    pub fn render_scale(&self) -> u32 {
+        let output_scale = self
+            .app
+            .first_output
+            .as_ref()
+            .and_then(|output| output.data::<OutputData>())
+            .map(|data| data.scale_factor())
+            .unwrap_or(1);
+        u32::try_from(output_scale).unwrap_or(1).max(2)
+    }
+
     /// Maps the switcher overlay with `model`, or refreshes it if it is
     /// already up. Creation failures are logged, not fatal: a press that
     /// cannot draw still cycles focus.
@@ -1007,9 +1232,10 @@ impl Session {
             return;
         };
         let qh = self.queue.handle();
-        let overlay = ui::Overlay::new(
+        let scale = self.render_scale();
+        let overlay = Overlay::new(
             model,
-            ui::OverlayEnv {
+            OverlayEnv {
                 compositor: &self.app.compositor,
                 layer_shell: &self.app.layer_shell,
                 shm: &self.app.shm,
@@ -1017,6 +1243,7 @@ impl Session {
                 seat: &seat,
                 qh: &qh,
                 output: self.app.first_output.as_ref(),
+                scale,
             },
         );
         match overlay {
