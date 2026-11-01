@@ -1199,10 +1199,11 @@ impl Session {
     }
 
     /// The render scale for overlays hosted on the first output:
-    /// `max(2, output scale)` — text is never smaller than 16 logical
-    /// px, and HiDPI outputs get native pixels instead of an upscaled
-    /// blur. Re-read on every overlay build, so a display-scale change
-    /// applies from the next gesture session.
+    /// `max(2, output scale)` — 12-px text keeps whole device blocks
+    /// (3 px per font pixel at the floor), and HiDPI outputs get native
+    /// pixels instead of an upscaled blur. Re-read on every overlay
+    /// build, so a display-scale change applies from the next gesture
+    /// session.
     pub fn render_scale(&self) -> u32 {
         let output_scale = self
             .app

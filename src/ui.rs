@@ -33,18 +33,24 @@ pub struct IconBitmap {
     pub argb: Vec<u32>,
 }
 
-/// Logical pixels per font pixel. Text is 16 logical px tall — twice the
-/// pre-refresh 8 — which is the single biggest glance improvement: the
-/// 200-ms glance hypothesis is *icon shape + first words*, and 8-px text
-/// cannot carry words. Doubled with the font's own spacing intact, so
-/// the bitmap-font identity survives the size change.
-pub const FONT_SCALE: u32 = 2;
+/// Font scale as an exact rational (numerator over denominator): text is
+/// 12 logical px tall, re-pinned 2026-11-02 after the hardware pass read
+/// the overlay-visuals refresh's 16 px as oversized next to the 32-px
+/// icons. 12 is the studied switchers' consensus middle (13–16 px;
+/// research record §2.10, cosmic-launcher's body text) and the smallest
+/// step that still carries first words in the 200-ms glance — 8 px
+/// cannot. Exact on the 8-grid at the render-scale floor of 2, where
+/// each font pixel is a whole 3 device px; a hypothetical odd render
+/// scale drops the last half-pixel per cell and spaces glyphs slightly
+/// wide rather than overlapping them.
+pub const FONT_SCALE_NUM: u32 = 3;
+pub const FONT_SCALE_DEN: u32 = 2;
 
-/// Title text cell width in logical pixels (glyph cell × [`FONT_SCALE`]).
-pub const TEXT_W: u32 = GLYPH_W * FONT_SCALE;
+/// Title text cell width in logical pixels (glyph cell × font scale).
+pub const TEXT_W: u32 = GLYPH_W * FONT_SCALE_NUM / FONT_SCALE_DEN;
 
 /// Title text height in logical pixels.
-pub const TEXT_H: u32 = GLYPH_H * FONT_SCALE;
+pub const TEXT_H: u32 = GLYPH_H * FONT_SCALE_NUM / FONT_SCALE_DEN;
 
 /// App-icon cell, square, in logical pixels. 32 is the converged switcher
 /// row-icon size — cosmic-launcher's alt-tab row uses exactly this
@@ -88,11 +94,11 @@ pub const RADIUS: u32 = 12;
 /// Hairline card border thickness in logical pixels.
 pub const BORDER: u32 = 1;
 
-/// Maximum title columns shown before elision. 32 columns of 16-px text
-/// keeps the card at ≈600 logical px wide — cosmic-launcher's fixed
-/// switcher width and the cross-platform consensus cap (research record
-/// §2.6, §2.10).
-pub const MAX_COLS: u32 = 32;
+/// Maximum title columns shown before elision. 43 columns of 12-px text
+/// keeps the card at exactly 600 logical px wide — cosmic-launcher's
+/// fixed switcher width and the cross-platform consensus cap (research
+/// record §2.6, §2.10).
+pub const MAX_COLS: u32 = 43;
 
 /// How long the overlay stays up before closing itself when idle.
 pub const CLOSE_AFTER: Duration = Duration::from_secs(2);
@@ -150,7 +156,10 @@ const _: () = {
 // corner; and the border is a hairline, not a frame.
 const _: () = {
     assert!(ROW_H == ICON + 2 * ROW_PAD_Y);
-    assert!(TEXT_H == GLYPH_H * FONT_SCALE);
+    assert!(TEXT_H == GLYPH_H * FONT_SCALE_NUM / FONT_SCALE_DEN);
+    assert!(TEXT_W == TEXT_H);
+    // The glyph block is whole device pixels at the render-scale floor.
+    assert!((TEXT_W * 2).is_multiple_of(GLYPH_W));
     assert!(ROW_H >= TEXT_H);
     assert!(PAD_Y >= RADIUS);
     assert!(RADIUS.is_multiple_of(4));
@@ -374,7 +383,7 @@ pub fn render(
                 glyph(ch),
                 lx * scale,
                 text_y * scale,
-                FONT_SCALE * scale,
+                TEXT_W * scale / GLYPH_W,
             );
             lx += TEXT_W;
         }
@@ -1230,7 +1239,7 @@ mod tests {
         };
         let (canvas, stride) = rendered(&model, 2);
         let glyph_x = (PAD_X + (ICON - GLYPH_W * GLYPH_SCALE) / 2) * 2;
-        let glyph_y = (PAD_Y + (ROW_H - GLYPH_H * FONT_SCALE) / 2) * 2;
+        let glyph_y = (PAD_Y + (ROW_H - ICON) / 2 + (ICON - GLYPH_W * GLYPH_SCALE) / 2) * 2;
         // The window glyph's first scanline is fully lit.
         assert_eq!(pixel(&canvas, stride, glyph_x, glyph_y), COLOR_TEXT);
     }
@@ -1254,20 +1263,21 @@ mod tests {
         let text_x = (PAD_X + ICON + ICON_GAP) * 2;
         let text_y = (PAD_Y + (ROW_H - TEXT_H) / 2) * 2;
         // Empty cell, then 'A' pixels at font columns 2 and 3 (each a
-        // 4×4 device block at scale 2 × FONT_SCALE 2).
-        // Font column c lands FONT_SCALE logical px in; 'A' row 0 is bits
-        // 2 and 3.
+        // 3×3 device block: text cell × scale ÷ glyph cell at the
+        // scale-2 floor). Font column c lands c blocks in; 'A' row 0 is
+        // bits 2 and 3.
+        let block = TEXT_W * 2 / GLYPH_W;
         assert_eq!(pixel(&canvas, stride, text_x, text_y), COLOR_BACKGROUND);
         assert_eq!(
-            pixel(&canvas, stride, text_x + 2 * FONT_SCALE * 2, text_y),
+            pixel(&canvas, stride, text_x + 2 * block, text_y),
             COLOR_TEXT
         );
         assert_eq!(
-            pixel(&canvas, stride, text_x + 3 * FONT_SCALE * 2, text_y),
+            pixel(&canvas, stride, text_x + 3 * block, text_y),
             COLOR_TEXT
         );
         assert_eq!(
-            pixel(&canvas, stride, text_x + 7 * FONT_SCALE * 2, text_y),
+            pixel(&canvas, stride, text_x + 7 * block, text_y),
             COLOR_BACKGROUND
         );
     }
@@ -1456,7 +1466,8 @@ mod tests {
         render(&model, &mut canvas, w, h, stride, 2);
         // The 'A' pixels land at the text origin — font column 2 — not
         // at the row start.
-        let text_x = (PAD_X + ICON + ICON_GAP + 2 * FONT_SCALE) * 2;
+        let block = TEXT_W * 2 / GLYPH_W;
+        let text_x = (PAD_X + ICON + ICON_GAP) * 2 + 2 * block;
         let text_y = (PAD_Y + (ROW_H - TEXT_H) / 2) * 2;
         assert_eq!(pixel(&canvas, stride, text_x, text_y), COLOR_TEXT);
     }

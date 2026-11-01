@@ -57,7 +57,9 @@ the room.
   the same on light and dark wallpapers. A new color states what it does
   on both polarities or it doesn't ship.
 - **The 8-pixel grid is the layout system.** One 8×8 bitmap font (drawn at
-  `FONT_SCALE`, so 16-px text), no font anti-aliasing: metrics are whole
+  a 1.5× font scale, so 12-px text — re-pinned 2026-11-02 from the
+  refresh's 16 px after the hardware pass read it oversized next to the
+  32-px icons), no font anti-aliasing: metrics are whole
   logical pixels in the 4/8 step scale the constants already use,
   symmetric padding mirrors top and bottom, and the row gap lives between
   rows only. Corners are the one deliberate exception — rounded by exact
