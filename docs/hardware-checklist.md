@@ -115,16 +115,29 @@ binary.
 
 Measure and compare against the targets:
 
-| Measurement | How | Target | Reference (2026-10-25) |
+| Measurement | How | Target | Reference (2026-11-02) |
 |---|---|---|---|
-| Daemon RSS / threads | `ps -o rss=,nlwp= -C airlock` | < 30 MB | 4.0 MB / 1 thread |
-| Warm press round-trip | `time airlock alt-tab` (daemon running) | < 50 ms | 3–4 ms |
-| Cold press (respawn + settle + switch) | `time airlock alt-tab` (daemon stopped) | — | ~300 ms |
+| Daemon RSS / threads | `ps -o rss=,nlwp= -C airlock` | < 30 MB | 8.0 MB / 1 thread |
+| Warm press round-trip | `time airlock alt-tab` (daemon running) | < 50 ms | < 10 ms |
+| Cold press (respawn + settle + switch) | `time airlock alt-tab` (daemon stopped) | — | ~340 ms |
+
+The 2026-11-02 values are the overlay-visuals build: the +4 MB RSS is
+the icon corpus and resvg, the ~40 ms of extra cold time is the
+one-time desktop-entry enumeration — both prices of real app icons,
+both far inside the budgets. Warm presses were measured from outside
+the session through the guest agent (timer granularity 10 ms); spawn
+with the session's `XDG_CURRENT_DESKTOP`/`XDG_SESSION_TYPE` or cosmic-comp
+withholds the initial toplevel burst and the daemon never settles.
 
 For scale: the switcher path this replaces (cosmic-launcher's
 cosmic-switch-less) measured ≈ 170 MB RSS.
 
 ## Latest pass
+
+2026-11-02 — full pass (sections 1–7) by the developer on the live
+session with the overlay-visuals build: icons on 6+ apps including an
+SVG-only icon, both wallpaper polarities, 200% scale crisp, gesture and
+same-app regressions clean, plus the reference measurements above.
 
 2026-10-25 — full pass (sections 1–6) by the developer on the live session,
 plus the reference measurements above with the overlay-polish build.
