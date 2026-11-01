@@ -49,20 +49,25 @@ the room.
 ## Tokens before values
 
 - **The design system is the constants block in `src/ui.rs`.** Glyph and
-  icon cells, gaps, paddings, `MAX_COLS`, and the three `COLOR_*` values
-  are named, documented constants. Every new visual value lands there with
-  a doc comment — never as a literal inside render math.
+  icon cells, gaps, paddings, `MAX_COLS`, the render-scale floor, and the
+  color values are named, documented constants. Every new visual value
+  lands there with a doc comment — never as a literal inside render math.
 - **Near-opaque is a contract, not a taste.** The background and selection
   fills carry alpha ≥ 0xFA, asserted at compile time, so the card reads
   the same on light and dark wallpapers. A new color states what it does
   on both polarities or it doesn't ship.
-- **The 8-pixel grid is the layout system.** One 8×8 bitmap font, no
-  anti-aliasing: metrics are whole logical pixels in the 4/8 step scale
-  the constants already use, symmetric padding mirrors top and bottom, and
-  the row gap lives between rows only.
-- **One glyph vocabulary, decided once.** Every row carries the same
-  generic window glyph — titles-only, no theme-icon dependency. A new
-  glyph is a decision made for all rows, not per-app decoration.
+- **The 8-pixel grid is the layout system.** One 8×8 bitmap font (drawn at
+  `FONT_SCALE`, so 16-px text), no font anti-aliasing: metrics are whole
+  logical pixels in the 4/8 step scale the constants already use,
+  symmetric padding mirrors top and bottom, and the row gap lives between
+  rows only. Corners are the one deliberate exception — rounded by exact
+  area-sampled coverage (`shape_cov`), never blurred.
+- **Rows carry the app's themed icon; the generic window glyph is the
+  fallback.** Re-pinned 2026-11-01 by the owner (`overlay-visuals`
+  module): titles stay primary, icons accompany them at 32 px from the
+  pop-launcher pipeline in `src/icons.rs`. Iconless rows draw the one
+  window glyph, scaled (`GLYPH_SCALE`) to hold its weight next to real
+  icons — still one glyph vocabulary, never per-app decoration.
 
 ## Calibrate against generic output
 
@@ -72,15 +77,17 @@ some briefs; here most are wrong:
 1. The glass card — semi-transparent fill, blur, wallpaper showing
    through. Translucency on a hand-composited shm surface means bleed, and
    the near-opaque contract exists precisely to prevent it.
-2. Per-app icons from the icon theme, standing in for titles. Decided
-   against; the generic glyph column is the identity.
+2. Per-app icons *standing in for* titles — icons accompany, never
+   replace, the title (re-pinned 2026-11-01; see the tokens above).
 3. Fade-in/fade-out choreography. Motion here costs first-frame latency —
    and the gesture itself is the animation.
 4. Metadata dressing: app ids under titles, middle-dot joins, tracked
    ALL-CAPS eyebrows, a header saying "Switch windows".
-5. Rounded corners and drop shadows as free decoration — arcs and soft
-   edges alias on a renderer with no anti-aliasing; the crisp rectangle
-   is the choice that costs nothing.
+5. Drop shadows and blur — impossible without soft edges on this
+   renderer. Rounded corners are the deliberate exception: radius 12 with
+   exactly area-sampled coverage anti-aliasing, plus the 1-px border that
+   keeps the card edge readable on dark wallpapers (two preview-review
+   rounds set its 18% strength).
 6. A louder selection — scaled-up row, accent bar, glow. Selection is one
    flat fill moving at Tab speed; that is enough hierarchy for a glance.
 
@@ -105,7 +112,10 @@ Build to this floor without announcing it:
   bytes out, unit-tested without a compositor) is a design constraint too:
   what can't be asserted in a test gets verified in the COSMIC VM — never
   by running the app on the host (see AGENTS.md) — against the gesture and
-  soak sections of `docs/hardware-checklist.md`.
+  soak sections of `docs/hardware-checklist.md`. The design-review loop
+  itself is headless: `cargo run --example overlay-preview -- out.png`
+  renders the scenarios over light and dark backdrops; judge the image,
+  not the code.
 
 ## Motion
 
@@ -145,8 +155,8 @@ and the docs.
    that part and say what changed and why.
 3. **Build** in the constants block, keep the compile-time asserts
    passing, and extend the headless tests for any layout-math change.
-4. **Review** against the running overlay in the VM, not the code:
-   screenshot it on a light and a dark wallpaper, with a long list and a
-   one-row list; walk the gesture section of
-   `docs/hardware-checklist.md`; and remove one accessory before calling
-   it done.
+4. **Review** the preview sheet (`overlay-preview`) and the running
+   overlay in the VM, not the code: a light and a dark wallpaper, a long
+   list and a one-row list, selection at the edges; walk the gesture and
+   overlay-visuals sections of `docs/hardware-checklist.md`; and remove
+   one accessory before calling it done.

@@ -13,6 +13,16 @@ path = "src/main.rs"
 
 [dependencies]
 cosmic-client-toolkit = "0.2.0"
+# App icons, per docs/research/switcher-ux-and-icons.md §3.4: pop-launcher's
+# pipeline. Entries: app_id → icon name (gettext off — no C binding, icon()
+# is locale-independent). Icons: name → themed file (SVG or PNG path).
+# resvg rasterizes the SVGs the Pop/Cosmic themes ship (no-text build drops
+# the font stack; embedded raster <image> elements degrade to dropped).
+# png decodes the raster icons hicolor/pixmaps carry.
+freedesktop-desktop-entry = { version = "0.8", default-features = false }
+freedesktop-icons = { version = "0.4", default-features = false }
+png = { version = "0.17", default-features = false }
+resvg = { version = "0.45.1", default-features = false }
 # Settings parsing only: hand-walked `toml::Value`, no derive macros.
 # Verified-minimal features: Value itself is gated on `serde` (we still
 # never derive), FromStr needs `parse`, fs/env need `std`; only `display`
