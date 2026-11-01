@@ -24,6 +24,16 @@ parked on another workspace can never be focused through Airlock.
 The isolation is per-workspace configurable: a workspace can opt into the
 global switcher through a config file — see [Settings](docs/settings.md).
 
+`airlock install` also claims three more keys. Hold **Alt** and tap
+**grave** (the key above Tab): the overlay lists only the current
+application's windows, MRU order — the same gesture, the same isolation
+rule (`isolated = false` widens the list to that application's windows
+everywhere). **Alt+Shift+grave** opens it stepping backwards. An
+application with fewer than two windows in scope does nothing — there is
+nothing to cycle. **Alt+Esc** switches to the MRU-second window under the
+same scope — the window a quick Alt+Tab tap would reach — with no overlay
+at all.
+
 A small daemon keeps a live snapshot of the compositor state; the keybind
 stubs are milliseconds-thin and auto-start the daemon on first press. The
 overlay is software-rendered — no GPU required.
@@ -48,11 +58,16 @@ just install        # prerequisites + build → ~/.cargo/bin/airlock
 airlock install     # take over the Alt+Tab keybind (user level)
 ```
 
-The takeover rewrites only the user-level
-`~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/system_actions`
-file — `WindowSwitcher` / `WindowSwitcherPrevious` now run `airlock
-alt-tab` / `airlock shift-alt-tab`. It survives re-login and never touches
-`/usr/share`. The first key press starts the daemon automatically.
+The takeover rewrites only user-level files in
+`~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1`:
+`system_actions` points `WindowSwitcher` / `WindowSwitcherPrevious` at
+`airlock alt-tab` / `airlock shift-alt-tab`, and the sibling `custom` file
+gains three marked bindings — `Alt+grave` → `airlock same-app`,
+`Alt+Shift+grave` → `airlock same-app-previous`, `Alt+Esc` → `airlock
+quick-toggle`. A key already bound to one of your own shortcuts is left
+alone: install names it and skips it. Everything survives re-login and
+never touches `/usr/share`. The first key press starts the daemon
+automatically.
 
 ## Uninstall
 
@@ -61,10 +76,11 @@ airlock install --uninstall   # restore the pre-install switcher, byte-exactly
 cargo uninstall cosmic-ext-airlock   # optional: remove the binary
 ```
 
-`--uninstall` replays the backup Airlock keeps inside the config file, so
-the previous state returns byte-for-byte. If a takeover was hand-written
-without Airlock's markers, restore falls back to the system default
-commands (best effort).
+`--uninstall` replays the backups Airlock keeps inside the config files,
+so the previous state returns byte-for-byte — a `custom` file install
+created is deleted again. If a takeover was hand-written without
+Airlock's markers, restore falls back to the system default commands
+(best effort).
 
 ## Troubleshooting
 
@@ -77,6 +93,10 @@ commands (best effort).
   and Airlock will clobber each other — last writer wins. Re-run
   `airlock install` to take the slot back; `--uninstall` then restores
   whatever Airlock itself backed up.
+- **Alt+grave or Alt+Esc does nothing after install.** The key was already
+  bound to another command; install left it alone and said so in its
+  output. Free the key in Settings → Input → Keyboard → Shortcuts →
+  Custom and re-run `airlock install`.
 - **After a logout or compositor crash.** The daemon exits loudly by
   design; the next key press spawns a fresh one. A stale socket self-heals.
 - **The overlay ever sticks** (it should not — a 30 s hard deadline always
