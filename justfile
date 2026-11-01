@@ -135,6 +135,17 @@ deps:
 install: deps
 	cargo install --path .
 
+# Install the app icon and desktop entry at user level (~/.local/share;
+# /usr/share stays untouched). Idempotent. The daemon needs neither —
+# this is for theme/launcher tooling and future packaging.
+install-assets:
+	install -Dm0644 res/icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg 		"${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg"
+	install -Dm0644 res/io.github.l1br3-io.Airlock.desktop 		"${XDG_DATA_HOME:-$HOME/.local/share}/applications/io.github.l1br3-io.Airlock.desktop"
+
+# Remove exactly the two files install-assets places.
+uninstall-assets:
+	rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg" 		"${XDG_DATA_HOME:-$HOME/.local/share}/applications/io.github.l1br3-io.Airlock.desktop"
+
 # --- CP4 VM rehearsal plumbing (delegates to scripts/vm.sh) ---
 # Guest-side actions ride the QEMU guest agent: install it in the VM once
 # with `sudo apt install qemu-guest-agent`. The keypress rehearsal itself

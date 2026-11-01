@@ -5,7 +5,24 @@ edition = "2024"
 rust-version = "1.93"
 license = "GPL-3.0-only"
 description = "Workspace-isolated Alt+Tab switcher for the COSMIC desktop"
-publish = false
+repository = "https://github.com/l1br3-io/cosmic-ext-airlock"
+homepage = "https://github.com/l1br3-io/cosmic-ext-airlock"
+readme = "README.md"
+keywords = ["cosmic", "wayland", "alt-tab", "switcher", "linux"]
+categories = ["command-line-utilities", "os::linux-apis"]
+# Crate = source + README + LICENSE + assets the tests reference. The
+# agent skill pack, docs, and VM plumbing stay in the repository.
+exclude = [
+    ".agents",
+    ".opencode",
+    ".zcode",
+    ".zcodeignore",
+    "docs",
+    "scripts",
+    "justfile",
+    "skills-lock.json",
+    "PRODUCT.md",
+]
 
 [[bin]]
 name = "airlock"

@@ -75,10 +75,10 @@ same-application cycling gesture the platform default does not offer.
   documented degradation (a real font would be a deliberate future
   decision); glance legibility on both wallpaper polarities is a floor,
   not a preference.
-- Open decisions: app ID / GitHub username for
-  `io.github.<username>.Airlock` — the pre-existing packaging blocker,
-  now near-term because the community release is first; crates.io /
-  Flathub publishing; icon + `.desktop` install loop waits on it.
+- Decided (2026-11-02): app ID **`io.github.l1br3-io.Airlock`** (the
+  real GitHub org), crate `cosmic-ext-airlock` owned personally on
+  crates.io, v0.1.0 channels GitHub Release + crates.io (Flathub out of
+  scope — a sandboxed keybind daemon fights the Flatpak model).
 
 ## Brand Commitments
 
@@ -90,8 +90,8 @@ same-application cycling gesture the platform default does not offer.
   not-affiliated statement (research record
   `naming-trademark-clearance.md`).
 - Own icon direction: a circular airlock hatch
-  (`res/icons/hicolor/scalable/apps/airlock.svg`), monochrome with a
-  single orange hub accent.
+  (`res/icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg`),
+  monochrome with a single orange hub accent.
 
 ## Evidence on Hand
 

@@ -617,7 +617,7 @@ mod tests {
     #[test]
     fn brand_hatch_icon_renders_at_overlay_sizes() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("res/icons/hicolor/scalable/apps/airlock.svg");
+            .join("res/icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg");
         for side in [16, 32, 64] {
             let bitmap = rasterize_svg(&path, side).expect("hatch renders");
             assert_eq!(bitmap.side, side);

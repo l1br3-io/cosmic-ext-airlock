@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <!-- Airlock: a circular hatch. Monochrome white on the card's own dark,
        with the hub as the single accent — designed to read at 16 px.
-       File name pending the app-ID decision (naming research record);
-       "airlock" is the working name for docs/README use. -->
+       File name is the locked app ID (decision 2026-11-02): the icon
+       name, desktop-file basename, and metainfo id all match it. -->
   <circle cx="64" cy="64" r="58" fill="#1E2126"/>
   <circle cx="64" cy="64" r="58" fill="none" stroke="#F2F4F8" stroke-width="9"/>
   <g stroke="#F2F4F8" stroke-width="9" stroke-linecap="butt">

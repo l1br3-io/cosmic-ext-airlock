@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Airlock
+Comment=Workspace-isolated Alt+Tab switcher for the COSMIC desktop
+Exec=airlock list
+Icon=io.github.l1br3-io.Airlock
+NoDisplay=true
+Terminal=false
+Categories=Utility;

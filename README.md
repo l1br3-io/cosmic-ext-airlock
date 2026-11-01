@@ -55,20 +55,25 @@ overlay is software-rendered — no GPU required.
 - A COSMIC desktop session (epoch). Other compositors are out of scope for
   v1; on one that lacks the required protocols the daemon exits non-zero
   with a diagnostic naming what is missing.
-- A Rust toolchain to build (prebuilt packages are not yet published —
-  see [Packaging](#packaging)). `just install` checks the build
-  prerequisites first — the C toolchain, pkg-config, the Wayland/xkbcommon
-  headers, and cargo — and installs whatever is missing through the
-  distro's package manager (apt/dnf/pacman/zypper) and rustup, so a
-  fresh machine needs nothing by hand.
+- A Rust toolchain to build (`cargo install cosmic-ext-airlock` handles
+  the rest; see [Install](#install)). Building from a checkout with
+  `just install` checks the build prerequisites first — the C toolchain,
+  pkg-config, the Wayland/xkbcommon headers, and cargo — and installs
+  whatever is missing through the distro's package manager
+  (apt/dnf/pacman/zypper) and rustup, so a fresh machine needs nothing
+  by hand.
 
 ## Install
 
 ```sh
-just install        # prerequisites + build → ~/.cargo/bin/airlock
-                    # (or: cargo install --path ., with prerequisites by hand)
-airlock install     # take over the Alt+Tab keybind (user level)
+cargo install cosmic-ext-airlock   # from crates.io → ~/.cargo/bin/airlock
+airlock install                    # take over the Alt+Tab keybind (user level)
 ```
+
+Building from a checkout instead: `just install` (checks the build
+prerequisites first). The app icon and desktop entry are optional
+repo-side assets: from a checkout, `just install-assets` places them in
+`~/.local/share` (never `/usr/share`).
 
 The takeover rewrites only user-level files in
 `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1`:
@@ -134,10 +139,14 @@ cosmic-switch-less) measures ≈ 170 MB RSS.
 
 ## Packaging
 
-Not yet published. The only blocker is the app-ID decision
-(`io.github.<username>.Airlock` needs the owner's GitHub username, or a
-different prefix); releasing to crates.io / Flathub is a deliberate,
-separate step.
+Published to [crates.io](https://crates.io/crates/cosmic-ext-airlock) as
+`cosmic-ext-airlock`. App ID: `io.github.l1br3-io.Airlock` — it names
+the icon, the desktop entry, and the AppStream metainfo under `res/`
+(AppStream warns about the hyphen in `l1br3-io`; the ID deliberately
+matches the GitHub org, and hyphenated `io.github.<org>` IDs are
+widespread). Flathub is out of scope for v1: a sandboxed global-keybind
+daemon fights the Flatpak model — the takeover rewrites
+`~/.config/cosmic/…`, outside the sandbox. Revisit only on demand.
 
 ## Development
 

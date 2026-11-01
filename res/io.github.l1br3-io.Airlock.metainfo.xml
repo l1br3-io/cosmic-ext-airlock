@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.l1br3-io.Airlock</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Airlock</name>
+  <summary>Workspace-isolated Alt+Tab switcher for the COSMIC desktop</summary>
+  <description>
+    <p>Airlock takes over Alt+Tab on the COSMIC desktop and lists only the
+    windows of the current workspace, in most-recently-used order —
+    nothing you parked on another workspace leaks into your focus. Sticky
+    windows appear everywhere, minimized windows nowhere.</p>
+    <p>The overlay shows each window's application icon and title on a
+    compact card; releasing Alt focuses the selection. Alt+grave cycles
+    the current application's windows and Alt+Esc toggles to the previous
+    one. A small daemon keeps the compositor state and switches in
+    single-digit milliseconds; `airlock install` claims the keybind at
+    user level and `airlock install --uninstall` restores the previous
+    state byte-exactly.</p>
+  </description>
+  <launchable type="desktop-id">io.github.l1br3-io.Airlock.desktop</launchable>
+  <developer id="io.github.l1br3-io/"><name>l1br3-io</name></developer>
+  <url type="homepage">https://github.com/l1br3-io/cosmic-ext-airlock</url>
+  <url type="bugtracker">https://github.com/l1br3-io/cosmic-ext-airlock/issues</url>
+  <releases>
+    <release version="0.1.0" date="2026-11-02">
+      <description>
+        <ul>
+          <li>Workspace-isolated Alt+Tab overlay with application icons,
+              MRU ordering, arrow keys, Enter commit, Escape dismiss.</li>
+          <li>Same-application cycling (Alt+grave) and no-overlay quick
+              toggle (Alt+Esc).</li>
+          <li>Per-workspace isolation config; installer-managed keybind
+              takeover with byte-exact uninstall.</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>
