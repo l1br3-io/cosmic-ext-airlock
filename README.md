@@ -34,12 +34,17 @@ overlay is software-rendered — no GPU required.
   v1; on one that lacks the required protocols the daemon exits non-zero
   with a diagnostic naming what is missing.
 - A Rust toolchain to build (prebuilt packages are not yet published —
-  see [Packaging](#packaging)).
+  see [Packaging](#packaging)). `just install` checks the build
+  prerequisites first — the C toolchain, pkg-config, the Wayland/xkbcommon
+  headers, and cargo — and installs whatever is missing through the
+  distro's package manager (apt/dnf/pacman/zypper) and rustup, so a
+  fresh machine needs nothing by hand.
 
 ## Install
 
 ```sh
-just install        # or: cargo install --path .   → ~/.cargo/bin/airlock
+just install        # prerequisites + build → ~/.cargo/bin/airlock
+                    # (or: cargo install --path ., with prerequisites by hand)
 airlock install     # take over the Alt+Tab keybind (user level)
 ```
 
