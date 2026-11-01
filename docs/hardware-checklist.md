@@ -5,8 +5,10 @@ headless. This is the checklist a human runs on a real COSMIC session —
 after meaningful changes, and always before calling a build release-ready.
 
 Setup: a COSMIC session with windows on **at least two workspaces**, one of
-them sticky, and at least one minimized. Build and install first
-(`just install`), so the presses below exercise the installed binary.
+them sticky, at least one minimized, and at least one application with two
+windows on the current workspace (a second terminal is enough). Build and
+install first (`just install`), so the presses below exercise the installed
+binary.
 
 ## 1. State layer
 
@@ -44,6 +46,21 @@ them sticky, and at least one minimized. Build and install first
 - [ ] Regression: a quick Alt+Tab tap still switches, no lingering overlay
 - [ ] Regression: Shift+Tab still walks back
 
+### Same-app and quick toggle
+
+- [ ] Alt+grave opens the overlay listing only the current application's
+      windows, MRU order; Tab walks them; Alt release commits
+- [ ] Alt+Shift+grave opens the same list stepping backwards
+- [ ] An application with a single window in scope is a silent no-op — no
+      overlay, no switch
+- [ ] On a default isolated workspace the list holds that application's
+      windows here; on one with `isolated = false`
+      ([settings](settings.md)), that application's windows everywhere
+- [ ] Alt+Esc flips to the MRU-second window with nothing rendered;
+      repeated presses ping-pong between the top two
+- [ ] Regression: Alt+Tab still lists every window in scope, not only the
+      current application's
+
 ## 4. Takeover and restore
 
 - [ ] `airlock install` redirects Alt+Tab / Shift+Alt+Tab to Airlock at user
@@ -51,6 +68,13 @@ them sticky, and at least one minimized. Build and install first
 - [ ] `airlock install --uninstall` brings the previous switcher back
       exactly (diff `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/system_actions`
       before install and after uninstall: byte-identical)
+- [ ] `airlock install` also adds three marked custom bindings — Alt+grave,
+      Alt+Shift+grave, Alt+Esc — to the sibling `custom` file; a key
+      already bound by one of your shortcuts is skipped with a diagnostic,
+      never clobbered
+- [ ] `--uninstall` restores the `custom` file byte-exactly too (same
+      diff), or deletes it when install created it; unmarked entries
+      survive
 
 ## 5. Live-state edge cases
 
