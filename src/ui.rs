@@ -288,6 +288,11 @@ pub fn render(
     stride: u32,
     scale: u32,
 ) {
+    // Unreachable in production (render_scale clamps with max(2, ·)),
+    // but render is pub: fail loudly in debug, clamp in release, never
+    // divide by zero.
+    debug_assert!(scale > 0, "render scale must be positive");
+    let scale = scale.max(1);
     let lw = width / scale;
     let lh = height / scale;
     // Coverage masks on the logical grid, computed once per render:

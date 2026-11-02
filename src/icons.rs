@@ -612,6 +612,75 @@ mod tests {
         assert!(dst.iter().all(|p| *p == 0xFF_10_20_30));
     }
 
+    /// The seam every real icon traverses: `overlay_model` must attach the
+    /// cache's prepared bitmap to the row, at the scale the daemon
+    /// prepared — and return the glyph (None) when the scale disagrees.
+    /// A regression here degrades every icon to the glyph silently; only
+    /// a hardware pass would notice.
+    #[test]
+    fn overlay_model_attaches_prepared_icons_per_scale() {
+        use crate::switcher::{self, Handle, Scope, Snapshot};
+        use crate::ui::{self, overlay_model};
+
+        let svg = svg_fixture("end-to-end.svg");
+        let (lookup, _calls) = stub("org.test.e2e", svg);
+        let mut cache = Cache::with_entries(
+            corpus(&[(
+                "org.test.E2e.desktop",
+                "[Desktop Entry]\nType=Application\nName=E2e\nIcon=org.test.e2e\n",
+            )]),
+            lookup,
+        );
+        cache.prepare(["org.test.e2e"], 2);
+
+        let toplevel = switcher::Toplevel {
+            handle: Handle(1),
+            title: "Window".into(),
+            app_id: "org.test.e2e".into(),
+            state: switcher::State::ACTIVATED,
+            workspaces: [switcher::WorkspaceId(1)].into(),
+            last_activated: 1,
+        };
+        let snap = Snapshot {
+            toplevels: vec![toplevel],
+            workspaces: Vec::new(),
+            active: Some(switcher::WorkspaceId(1)),
+        };
+
+        let model = overlay_model(&snap, Handle(1), Scope::CurrentWorkspace, &cache, 2)
+            .expect("eligible windows exist");
+        let bitmap = model.rows[0]
+            .icon
+            .as_ref()
+            .expect("icon attached at scale 2");
+        assert_eq!(bitmap.side, ui::ICON * 2);
+
+        // An unprepared scale is a plain miss: the row draws the glyph.
+        let model = overlay_model(&snap, Handle(1), Scope::CurrentWorkspace, &cache, 3)
+            .expect("eligible windows exist");
+        assert!(model.rows[0].icon.is_none(), "unprepared scale must miss");
+    }
+
+    /// `find_app_by_id` prefers StartupWMClass — the resolution path for
+    /// app_ids that share nothing with the desktop file's name.
+    #[test]
+    fn startup_wm_class_resolves_before_the_file_name() {
+        let svg = svg_fixture("wmclass.svg");
+        let (lookup, _calls) = stub("org.test.wmclass", svg);
+        let mut cache = Cache::with_entries(
+            corpus(&[(
+                "org.unrelated.Name.desktop",
+                "[Desktop Entry]\nType=Application\nName=Unrelated\nStartupWMClass=Foo.Bar\nIcon=org.test.wmclass\n",
+            )]),
+            lookup,
+        );
+        cache.prepare(["Foo.Bar"], 1);
+        assert!(
+            cache.bitmap("Foo.Bar", 1).is_some(),
+            "StartupWMClass must resolve the icon"
+        );
+    }
+
     /// The brand hatch icon ships in-repo and must rasterize at every
     /// overlay-relevant size (it also proves the asset is valid SVG).
     #[test]
