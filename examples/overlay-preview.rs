@@ -175,7 +175,8 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
                 row("Fallback glyph row", None, false),
                 row(&elided, icons[6].clone(), false),
                 row("(untitled)", None, false),
-                // Non-ASCII titles degrade to '?' — the documented state.
+                // Non-ASCII letters degrade to '?' — the documented
+                // state; the em-dash itself folds to '-'.
                 row("Résumé — naïve.txt", icons[7].clone(), false),
             ],
             ..single()

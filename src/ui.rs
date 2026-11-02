@@ -196,6 +196,12 @@ const WINDOW_GLYPH: [u8; 8] = [0xFF, 0x81, 0x81, 0xFF, 0x81, 0x81, 0x81, 0xFF];
 /// 1/3/5.
 const ELLIPSIS_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x2A, 0x00];
 
+/// Middle dot for `·`/`•` separators (GNOME-style `file.py · src` titles)
+/// — same hand-drawn family as the ellipsis: one 2×2 dot at the x-height
+/// middle, where a middle dot belongs rather than on the period's
+/// baseline.
+const MIDDLE_DOT_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00];
+
 /// One rendered row: a title, an optional app icon, and whether it is
 /// the selection. `icon: None` draws the generic window glyph.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -542,12 +548,39 @@ fn draw_glyph(canvas: &mut [u8], stride: u32, glyph: [u8; 8], x: u32, y: u32, bl
 }
 
 /// Glyph bitmap for one character: ASCII printables come from [`FONT`],
-/// the ellipsis is [`ELLIPSIS_GLYPH`], everything else renders as `?`.
+/// the ellipsis is [`ELLIPSIS_GLYPH`], typographic punctuation folds to
+/// its ASCII lookalike ([`fold_punct`]), everything else renders as `?`.
 fn glyph(ch: char) -> [u8; 8] {
-    match ch {
+    match fold_punct(ch) {
         '…' => ELLIPSIS_GLYPH,
+        '·' | '•' => MIDDLE_DOT_GLYPH,
         ch if ch.is_ascii() && !ch.is_ascii_control() => FONT[(ch as usize) - 0x20],
         _ => FONT[('?' as usize) - 0x20],
+    }
+}
+
+/// Folds the typographic punctuation window titles routinely carry onto
+/// its ASCII lookalike: `main.rs — airlock` and `Notes “draft”` render as
+/// punctuation, not as a row of `?` where a title's own separator went.
+/// At the 8×8 cell the fold is invisible — the ASCII glyph and a
+/// purpose-drawn one differ by pixels, not shape. Every fold is one char
+/// to one char, so column math is unchanged. Letters and other scripts
+/// still fall through to `?`: the honest floor of an ASCII font, stated
+/// rather than papered over with lookalike letters.
+fn fold_punct(ch: char) -> char {
+    match ch {
+        // Hyphen, figure dash, en dash, em dash, horizontal bar, minus.
+        '‐' | '‑' | '‒' | '–' | '—' | '―' | '−' => '-',
+        '‘' | '’' | '‛' => '\'',
+        '“' | '”' | '‟' => '"',
+        // Every Unicode space is a space.
+        '\u{00A0}'
+        | '\u{1680}'
+        | '\u{2000}'..='\u{200A}'
+        | '\u{202F}'
+        | '\u{205F}'
+        | '\u{3000}' => ' ',
+        _ => ch,
     }
 }
 
@@ -1575,6 +1608,29 @@ mod tests {
         assert_eq!(glyph(' '), FONT[0]);
         assert_eq!(glyph('…'), ELLIPSIS_GLYPH);
         assert_ne!(glyph('…'), glyph('?'));
+    }
+
+    #[test]
+    fn typographic_punctuation_folds_to_its_ascii_lookalike() {
+        // The separator a title carries must not degrade to `?`.
+        assert_eq!(glyph('—'), glyph('-'));
+        assert_eq!(glyph('–'), glyph('-'));
+        assert_eq!(glyph('−'), glyph('-'));
+        assert_eq!(glyph('’'), glyph('\''));
+        assert_eq!(glyph('“'), glyph('"'));
+        assert_eq!(glyph('”'), glyph('"'));
+        assert_eq!(glyph('\u{00A0}'), glyph(' '));
+        assert_eq!(glyph('\u{2003}'), glyph(' '));
+        // Dots draw as dots, on the middle-dot's own baseline.
+        assert_eq!(glyph('·'), MIDDLE_DOT_GLYPH);
+        assert_eq!(glyph('•'), MIDDLE_DOT_GLYPH);
+        assert_ne!(glyph('·'), glyph('?'));
+        assert_ne!(glyph('·'), glyph('.'));
+        // Every fold is one char to one char, so column math never shifts.
+        assert_eq!(
+            "main.rs — airlock".chars().count(),
+            "main.rs - airlock".chars().count()
+        );
     }
 
     #[test]
