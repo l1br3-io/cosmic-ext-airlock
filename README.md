@@ -90,17 +90,28 @@ automatically.
 ## Uninstall
 
 ```sh
-airlock install --uninstall   # restore the pre-install switcher, byte-exactly,
-                              # and remove the app icon + desktop entry
+airlock install --uninstall   # restore the previous switcher and remove
+                              # the app icon + desktop entry
 cargo uninstall cosmic-ext-airlock   # optional: remove the binary
 ```
 
-`--uninstall` replays the backups Airlock keeps inside the config files,
-so the previous state returns byte-for-byte — a `custom` file install
-created is deleted again — and removes both asset files, unless you
-edited one by hand: yours is kept and named, never silently deleted. If
-a takeover was hand-written without Airlock's markers, restore falls
-back to the system default commands (best effort).
+`--uninstall` puts the previous switcher back. Airlock keeps its backups
+inside the config files themselves, so the pre-install state returns
+byte-for-byte — a `custom` file install created is deleted again — and
+both asset files are removed too, unless you edited one by hand: yours
+is kept and named, never silently deleted.
+
+The ignore rule is per key. A switcher slot that runs some other tool
+was never Airlock's, and `--uninstall` does not rewrite it — even when
+the sibling key does run Airlock.
+
+One degradation is real: while Airlock is installed, a cosmic-settings
+rewrite can strip the backup comments from the file. Without them,
+`--uninstall` restores the built-in COSMIC switcher commands instead —
+best effort, and its report says so — the same restore a
+hand-written takeover without markers gets. In that one case a
+third-party switcher from before install cannot be recovered; every
+other path returns your exact bytes.
 
 ## Troubleshooting
 
