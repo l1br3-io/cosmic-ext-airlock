@@ -310,11 +310,14 @@ fn manage_assets(uninstall: bool, locations: &Locations) -> Result<String, Strin
         locations.desktop.display()
     ))
 }
+
+/// Resolves the real [`Locations`]: the XDG config and data base
+/// directories, plus the fixed system default path.
 ///
 /// # Errors
 ///
-/// Returns a diagnostic when neither an absolute `XDG_CONFIG_HOME`/`XDG_DATA_HOME`
-/// nor a usable `HOME` is set.
+/// Returns a diagnostic when neither an absolute
+/// `XDG_CONFIG_HOME`/`XDG_DATA_HOME` nor a usable `HOME` is set.
 fn default_locations() -> Result<Locations, String> {
     let config = xdg_dir("XDG_CONFIG_HOME", ".config")?;
     let data = xdg_dir("XDG_DATA_HOME", ".local/share")?;
