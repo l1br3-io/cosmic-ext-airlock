@@ -758,16 +758,32 @@ fn uninstall_keeps_a_user_edited_asset_and_names_it() {
 }
 
 #[test]
-fn uninstall_without_assets_is_a_clean_no_op() {
+fn uninstall_without_assets_still_restores_the_shortcut_files() {
     let dir = TempDir::new("assets-absent");
     let locations = locations_for(dir.path());
     write_file(&locations.system_default, SYSTEM_DEFAULT);
+    write_file(&locations.system_actions, USER_EXISTING);
+
+    run_at(false, &locations).expect("install");
+    // The old-binary scenario: shortcuts installed, assets never
+    // placed (or already removed by hand).
+    fs::remove_file(&locations.icon).expect("icon absent");
+    fs::remove_file(&locations.desktop).expect("desktop absent");
 
     let report = run_at(true, &locations).expect("uninstall report");
-    assert!(
-        report.contains("nothing to uninstall"),
-        "absent assets report nothing to remove: {report}"
+    assert_eq!(
+        read_file(&locations.system_actions),
+        USER_EXISTING,
+        "shortcuts must still restore byte-exact with the assets absent"
     );
-    assert!(!locations.icon.exists());
-    assert!(!locations.desktop.exists());
+    assert!(
+        report.contains("no airlock assets present"),
+        "the assets line must name itself, not ride the shortcut files' \
+         wording: {report}"
+    );
+    assert!(!locations.icon.exists(), "uninstall must not create a file");
+    assert!(
+        !locations.desktop.exists(),
+        "uninstall must not create a file"
+    );
 }

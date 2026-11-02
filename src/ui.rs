@@ -1626,11 +1626,54 @@ mod tests {
         assert_eq!(glyph('•'), MIDDLE_DOT_GLYPH);
         assert_ne!(glyph('·'), glyph('?'));
         assert_ne!(glyph('·'), glyph('.'));
-        // Every fold is one char to one char, so column math never shifts.
-        assert_eq!(
-            "main.rs — airlock".chars().count(),
-            "main.rs - airlock".chars().count()
-        );
+        // Every fold is one char to one char, so column math never
+        // shifts — asserted over the whole table, not a sample, so a
+        // dropped match arm cannot silently regress a separator to `?`.
+        for (input, folded) in [
+            // Hyphen, figure dash, en dash, em dash, horizontal bar, minus.
+            ('‐', '-'),
+            ('‑', '-'),
+            ('‒', '-'),
+            ('–', '-'),
+            ('—', '-'),
+            ('―', '-'),
+            ('−', '-'),
+            // Curly single and double quotes, opening and closing.
+            ('‘', '\''),
+            ('’', '\''),
+            ('‛', '\''),
+            ('“', '"'),
+            ('”', '"'),
+            ('‟', '"'),
+            // Every Unicode space.
+            ('\u{00A0}', ' '),
+            ('\u{1680}', ' '),
+            ('\u{2000}', ' '),
+            ('\u{2001}', ' '),
+            ('\u{2002}', ' '),
+            ('\u{2003}', ' '),
+            ('\u{2004}', ' '),
+            ('\u{2005}', ' '),
+            ('\u{2006}', ' '),
+            ('\u{2007}', ' '),
+            ('\u{2008}', ' '),
+            ('\u{2009}', ' '),
+            ('\u{200A}', ' '),
+            ('\u{202F}', ' '),
+            ('\u{205F}', ' '),
+            ('\u{3000}', ' '),
+        ] {
+            assert_eq!(
+                fold_punct(input),
+                folded,
+                "U+{:04X} must fold to '{folded}'",
+                input as u32
+            );
+        }
+        // Only the table folds: everything else passes through — the
+        // ellipsis keeps its own glyph path, letters stay themselves.
+        assert_eq!(fold_punct('…'), '…');
+        assert_eq!(fold_punct('é'), 'é');
     }
 
     #[test]
