@@ -57,9 +57,10 @@ the room.
   the same on light and dark wallpapers. A new color states what it does
   on both polarities or it doesn't ship.
 - **The 8-pixel grid is the layout system.** One 8×8 bitmap font (drawn at
-  a 1.5× font scale, so 12-px text — re-pinned 2026-11-02 from the
-  refresh's 16 px after the hardware pass read it oversized next to the
-  32-px icons), no font anti-aliasing: metrics are whole
+  a 1× font scale, so 8-px text — re-pinned 2026-11-02 by the owner, twice
+  in one day: 16 px read oversized next to the 32-px icons, and so did
+  12 px; the icons carry the row's identity, the title only confirms it),
+  no font anti-aliasing: metrics are whole
   logical pixels in the 4/8 step scale the constants already use,
   symmetric padding mirrors top and bottom, and the row gap lives between
   rows only. Corners are the one deliberate exception — rounded by exact
@@ -101,11 +102,13 @@ Build to this floor without announcing it:
 
 - **Both wallpaper polarities pass.** Verify every color and contrast
   change on a light and a dark wallpaper, not just the one on screen.
-- **Degradation is honest.** Non-ASCII titles render as `?` today; a CJK
-  title reads as `?????`. If that's no longer acceptable, the fix is a
-  font decision with its costs stated — never a special case for one
-  script.
-- **Shape the edges with data**: one row and fifteen; the 48-column
+- **Degradation is honest.** Typographic punctuation (dashes, curly
+  quotes, Unicode spaces, `·`) folds onto its ASCII lookalike, so a
+  title's own separator never reads as `?`; non-ASCII *letters* still
+  render as `?` — a CJK title reads as `?????`. If that's no longer
+  acceptable, the fix is a font decision with its costs stated — never a
+  special case for one script, and never silent lookalike letters.
+- **Shape the edges with data**: one row and fifteen; the 64-column
   truncated title and the empty one (falling back to `(untitled)`);
   selection at the top, middle, and bottom of the list.
 - **The overlay never lingers.** `CLOSE_AFTER` and `HARD_CLOSE` are safety

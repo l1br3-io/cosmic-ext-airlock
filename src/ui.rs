@@ -34,17 +34,16 @@ pub struct IconBitmap {
 }
 
 /// Font scale as an exact rational (numerator over denominator): text is
-/// 12 logical px tall, re-pinned 2026-11-02 after the hardware pass read
-/// the overlay-visuals refresh's 16 px as oversized next to the 32-px
-/// icons. 12 is the studied switchers' consensus middle (13–16 px;
-/// research record §2.10, cosmic-launcher's body text) and the smallest
-/// step that still carries first words in the 200-ms glance — 8 px
-/// cannot. Exact on the 8-grid at the render-scale floor of 2, where
-/// each font pixel is a whole 3 device px; a hypothetical odd render
-/// scale drops the last half-pixel per cell and spaces glyphs slightly
-/// wide rather than overlapping them.
-pub const FONT_SCALE_NUM: u32 = 3;
-pub const FONT_SCALE_DEN: u32 = 2;
+/// 8 logical px tall, re-pinned 2026-11-02 by the owner after the
+/// hardware pass read even the 12-px step as oversized next to the 32-px
+/// icons — the icons carry the row's identity, the title only has to
+/// confirm it, and an 8-px bitmap stays crisp where a fractional 10-px
+/// scale would letter-space every glyph. Whole-pixel exact at every
+/// render scale (each font pixel is `scale` device px); the studied
+/// switchers' 13–16 px consensus (research record §2.10) spends its
+/// height on richer fonts, not on proportion.
+pub const FONT_SCALE_NUM: u32 = 1;
+pub const FONT_SCALE_DEN: u32 = 1;
 
 /// Title text cell width in logical pixels (glyph cell × font scale).
 pub const TEXT_W: u32 = GLYPH_W * FONT_SCALE_NUM / FONT_SCALE_DEN;
@@ -94,11 +93,12 @@ pub const RADIUS: u32 = 12;
 /// Hairline card border thickness in logical pixels.
 pub const BORDER: u32 = 1;
 
-/// Maximum title columns shown before elision. 43 columns of 12-px text
-/// keeps the card at exactly 600 logical px wide — cosmic-launcher's
-/// fixed switcher width and the cross-platform consensus cap (research
-/// record §2.6, §2.10).
-pub const MAX_COLS: u32 = 43;
+/// Maximum title columns shown before elision. 64 columns of 8-px text
+/// keeps the card at 596 logical px wide — cosmic-launcher's fixed
+/// switcher width and the cross-platform consensus cap of ~600 (research
+/// record §2.6, §2.10). The 8-px re-pin spends its savings on more first
+/// words per title, not on a narrower card.
+pub const MAX_COLS: u32 = 64;
 
 /// How long the overlay stays up before closing itself when idle.
 pub const CLOSE_AFTER: Duration = Duration::from_secs(2);

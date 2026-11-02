@@ -22,7 +22,7 @@ desktop-entry and icon-theme pipeline the COSMIC launcher uses — next to
 its title; an application with no themed icon falls back to a generic
 window glyph. The card is a dark rounded rectangle with a hairline border,
 at most 600 px wide, with the selected row highlighted; text renders at
-12 px and stays sharp on HiDPI displays (the overlay renders at the
+8 px and stays sharp on HiDPI displays (the overlay renders at the
 output's scale). To preview the look without a COSMIC session:
 
 ```sh
