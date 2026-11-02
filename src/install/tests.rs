@@ -275,6 +275,38 @@ fn markerless_one_key_takeover_leaves_third_party_sibling_untouched() {
 }
 
 #[test]
+fn uninstall_after_marker_strip_restores_builtin_switcher() {
+    let installed = install_content(Some(USER_EXISTING), SYSTEM_DEFAULT).expect("install");
+    // A cosmic-settings rewrite keeps the body but drops the leading
+    // marker comments — the realistic degradation while installed.
+    let stripped: String = installed.split_inclusive('\n').skip(2).collect();
+
+    match uninstall_content(&stripped, SYSTEM_DEFAULT).expect("uninstall") {
+        UninstallOutcome::Restored {
+            content,
+            best_effort,
+        } => {
+            assert!(
+                best_effort,
+                "markerless restore should be flagged best-effort"
+            );
+            assert_eq!(
+                content,
+                concat!(
+                    "{\n",
+                    "    WindowSwitcher: \"cosmic-launcher alt-tab\",\n",
+                    "    Mute: \"wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle\",\n",
+                    "    WindowSwitcherPrevious: \"cosmic-launcher shift-alt-tab\",\n",
+                    "}\n",
+                ),
+                "built-in not restored / unrelated lines changed:\n{content}"
+            );
+        }
+        other => panic!("expected Restored, got {other:?}"),
+    }
+}
+
+#[test]
 fn uninstall_without_airlock_values_reports_not_installed() {
     match uninstall_content(USER_EXISTING, SYSTEM_DEFAULT).expect("uninstall") {
         UninstallOutcome::NotInstalled => {}
@@ -617,6 +649,38 @@ fn run_at_uninstall_without_files_reports_not_installed() {
     assert!(
         !locations.custom.exists(),
         "uninstall must not create a file"
+    );
+}
+
+#[test]
+fn best_effort_without_needed_default_key_fails_loudly() {
+    let dir = TempDir::new("missing-default");
+    let locations = locations_for(dir.path());
+    // A system default lacking WindowSwitcherPrevious: the restore plan
+    // for an airlock-owned key cannot be built, so nothing may be written.
+    let default_lacking_prev = concat!(
+        "{\n",
+        "    WindowSwitcher: \"cosmic-launcher alt-tab\",\n",
+        "}\n",
+    );
+    write_file(&locations.system_default, default_lacking_prev);
+    write_file(&locations.system_actions, USER_HAND_EDITED);
+
+    match run_at(true, &locations) {
+        Err(report) => assert!(
+            report.contains(SWITCHER_PREV_KEY),
+            "error must name the missing key: {report}"
+        ),
+        Ok(report) => panic!("expected Err, got Ok: {report}"),
+    }
+    assert!(
+        !locations.custom.exists(),
+        "no file may appear on a failed uninstall"
+    );
+    assert_eq!(
+        read_file(&locations.system_actions),
+        USER_HAND_EDITED,
+        "the user file must be untouched when the plan fails"
     );
 }
 
