@@ -507,25 +507,26 @@ fn uninstall_content(user: &str, system_default: &str) -> Result<UninstallOutcom
 }
 
 /// Markerless file: either airlock owns nothing here, or the takeover was
-/// written by hand and only the system default can put it back.
+/// written by hand (or a cosmic-settings rewrite stripped the markers) and
+/// only the system default can put the built-in switcher back. Only entries
+/// actually running an airlock command are rewritten; any other entry — a
+/// third-party switcher on the sibling key — survives byte-exact.
 fn restore_without_markers(
     lines: &[&str],
     system_default: &str,
 ) -> Result<UninstallOutcome, String> {
-    let airlock_owned = [(SWITCHER_KEY, NEXT_CMD), (SWITCHER_PREV_KEY, PREV_CMD)]
-        .into_iter()
-        .any(|(key, command)| {
-            key_line_index(lines, key).is_some_and(|index| lines[index].contains(command))
-        });
-    if !airlock_owned {
-        return Ok(UninstallOutcome::NotInstalled);
-    }
     let defaults = split_lines(system_default);
     let mut restored: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
-    for key in [SWITCHER_KEY, SWITCHER_PREV_KEY] {
+    let mut airlock_owned = false;
+    for (key, command) in [(SWITCHER_KEY, NEXT_CMD), (SWITCHER_PREV_KEY, PREV_CMD)] {
         let Some(index) = key_line_index(lines, key) else {
             continue;
         };
+        if !lines[index].contains(command) {
+            // Someone else's entry: never a byte of it moves.
+            continue;
+        }
+        airlock_owned = true;
         let Some(default) = key_line_index(&defaults, key) else {
             return Err(format!(
                 "the system default has no {key} entry to restore; edit the file manually"
@@ -537,6 +538,9 @@ fn restore_without_markers(
             ""
         };
         restored[index] = format!("{}{newline}", defaults[default].trim_end_matches('\n'));
+    }
+    if !airlock_owned {
+        return Ok(UninstallOutcome::NotInstalled);
     }
     Ok(UninstallOutcome::Restored {
         content: restored.concat(),

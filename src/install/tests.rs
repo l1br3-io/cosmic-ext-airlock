@@ -42,6 +42,16 @@ const USER_HAND_EDITED: &str = concat!(
     "}\n",
 );
 
+/// A markerless file where only one switcher key runs airlock and the
+/// sibling runs a third-party tool: "using something else → ignore"
+/// applies per key, never per file.
+const USER_ONE_KEY_TAKEOVER: &str = concat!(
+    "{\n",
+    "    WindowSwitcher: \"airlock alt-tab\",\n",
+    "    WindowSwitcherPrevious: \"my-tool\",\n",
+    "}\n",
+);
+
 /// Round-trip escape torture: backslashes in the command, a CR at line
 /// end.
 const USER_BACKSLASH_CR: &str = concat!(
@@ -232,6 +242,32 @@ fn uninstall_of_hand_edited_takeover_restores_system_default_values() {
                     "}\n",
                 ),
                 "values not restored from the system default:\n{content}"
+            );
+        }
+        other => panic!("expected Restored, got {other:?}"),
+    }
+}
+
+#[test]
+fn markerless_one_key_takeover_leaves_third_party_sibling_untouched() {
+    match uninstall_content(USER_ONE_KEY_TAKEOVER, SYSTEM_DEFAULT).expect("uninstall") {
+        UninstallOutcome::Restored {
+            content,
+            best_effort,
+        } => {
+            assert!(
+                best_effort,
+                "markerless restore should be flagged best-effort"
+            );
+            assert_eq!(
+                content,
+                concat!(
+                    "{\n",
+                    "    WindowSwitcher: \"cosmic-launcher alt-tab\",\n",
+                    "    WindowSwitcherPrevious: \"my-tool\",\n",
+                    "}\n",
+                ),
+                "airlock key not restored / sibling not byte-identical:\n{content}"
             );
         }
         other => panic!("expected Restored, got {other:?}"),
