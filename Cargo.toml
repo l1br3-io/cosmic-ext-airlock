@@ -13,6 +13,7 @@ categories = ["command-line-utilities", "os::linux-apis"]
 # Crate = source + README + LICENSE + assets the tests reference. The
 # agent skill pack, docs, and VM plumbing stay in the repository.
 exclude = [
+    "AGENTS.md",
     ".agents",
     ".opencode",
     ".zcode",

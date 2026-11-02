@@ -17,7 +17,7 @@ Initial release.
   switches before the overlay appears.
 - **Application icons in the overlay**, resolved through the same
   desktop-entry and icon-theme pipeline the COSMIC launcher uses; apps
-  without a themed icon fall back honestly. Text renders at 16 px and
+  without a themed icon fall back honestly. Text renders at 12 px and
   stays sharp on HiDPI displays.
 - **Same-application cycling** (Alt+grave, Alt+Shift+grave) and a
   **no-overlay quick toggle** (Alt+Esc) to the previous window.
