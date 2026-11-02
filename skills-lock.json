@@ -121,6 +121,12 @@
       "skillPath": "skills/planning-and-task-breakdown/SKILL.md",
       "computedHash": "0dc14a1402cdabd376f2d81d2225fcb4a18ee63d58b945ff83affeb024285b8f"
     },
+    "rust-review": {
+      "source": "trailofbits/skills",
+      "sourceType": "github",
+      "skillPath": "plugins/rust-review/skills/rust-review/SKILL.md",
+      "computedHash": "3de2fb6f09a8d57d4f5c3ea2e94871af222b960f5da444115ad4119af6fb38a4"
+    },
     "security-and-hardening": {
       "source": "addyosmani/agent-skills",
       "sourceType": "github",

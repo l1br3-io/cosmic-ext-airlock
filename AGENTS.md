@@ -28,6 +28,7 @@ This project uses the [addyosmani/agent-skills](https://github.com/addyosmani/ag
 - Refactoring / simplification → `code-simplification`
 - API or module boundary design → `api-and-interface-design`
 - Rust code / review → `rust-best-practices`
+- Rust security audit / vulnerability sweep → `rust-review` (Trail of Bits; requires `uv` on PATH — its planner and judge scripts run through it — and `rg`; cluster/finder machinery is vendored at `.agents/skills/rust-review/plugins/rust-review/`)
 - Switcher overlay visual design (colors, spacing, glyphs, glance legibility), gesture-time presentation, or user-facing copy in the CLI, config diagnostics, or docs → `airlock-design`
 - Security-sensitive input, auth, secrets, dependencies → `security-and-hardening`
 - Performance requirements or suspected regressions → `performance-optimization`
