@@ -483,10 +483,13 @@ fn read_file(path: &Path) -> String {
 
 fn locations_for(dir: &Path) -> Locations {
     let shortcuts = dir.join("config/cosmic/com.system76.CosmicSettings.Shortcuts/v1");
+    let data = dir.join("share");
     Locations {
         system_actions: shortcuts.join("system_actions"),
         system_default: dir.join("usr-share/system_actions"),
         custom: shortcuts.join("custom"),
+        icon: data.join("icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg"),
+        desktop: data.join("applications/io.github.l1br3-io.Airlock.desktop"),
     }
 }
 
@@ -579,4 +582,92 @@ fn run_at_uninstall_without_files_reports_not_installed() {
         !locations.custom.exists(),
         "uninstall must not create a file"
     );
+}
+
+#[test]
+fn install_places_both_assets_from_the_binary() {
+    let dir = TempDir::new("assets");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+
+    let report = run_at(false, &locations).expect("install");
+    assert_eq!(fs::read(&locations.icon).expect("icon placed"), ICON_SVG);
+    assert_eq!(
+        fs::read(&locations.desktop).expect("desktop entry placed"),
+        DESKTOP_ENTRY
+    );
+    assert!(
+        report.contains("app assets"),
+        "report must mention the assets: {report}"
+    );
+}
+
+#[test]
+fn reinstall_rewrites_the_same_asset_bytes() {
+    let dir = TempDir::new("assets-idempotent");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+
+    run_at(false, &locations).expect("first install");
+    // Simulate a stray external edit: re-install must restore our bytes.
+    write_file(&locations.desktop, "[Desktop Entry]\nName=stale\n");
+    run_at(false, &locations).expect("re-install");
+    assert_eq!(
+        fs::read(&locations.desktop).expect("desktop entry placed"),
+        DESKTOP_ENTRY,
+        "re-install must rewrite the embedded bytes"
+    );
+}
+
+#[test]
+fn uninstall_removes_unmodified_assets() {
+    let dir = TempDir::new("assets-undo");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+
+    run_at(false, &locations).expect("install");
+    run_at(true, &locations).expect("uninstall");
+    assert!(!locations.icon.exists(), "icon must be removed");
+    assert!(!locations.desktop.exists(), "desktop entry must be removed");
+}
+
+#[test]
+fn uninstall_keeps_a_user_edited_asset_and_names_it() {
+    let dir = TempDir::new("assets-edited");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+
+    run_at(false, &locations).expect("install");
+    let edited = "[Desktop Entry]\nType=Application\nName=Airlock (mine)\n";
+    write_file(&locations.desktop, edited);
+
+    let report = run_at(true, &locations).expect("uninstall");
+    assert!(
+        !locations.icon.exists(),
+        "unmodified icon must still be removed"
+    );
+    assert_eq!(
+        fs::read(&locations.desktop).expect("edited entry kept"),
+        edited.as_bytes(),
+        "user-edited asset must never be deleted"
+    );
+    assert!(
+        report.contains(&locations.desktop.display().to_string()),
+        "report must name the kept file: {report}"
+    );
+}
+
+#[test]
+fn uninstall_without_assets_is_a_clean_no_op() {
+    let dir = TempDir::new("assets-absent");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+
+    let report = run_at(true, &locations).expect("uninstall report");
+    assert!(
+        report.contains("nothing to uninstall"),
+        "absent assets report nothing to remove: {report}"
+    );
+    assert!(!locations.icon.exists());
+    assert!(!locations.desktop.exists());
 }

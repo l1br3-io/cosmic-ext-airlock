@@ -6,7 +6,9 @@
 //! state back byte-exactly.
 //!
 //! Boundary (spec): the only files this module may ever write are the
-//! user's `system_actions` and `custom` shortcuts files. The pre-install
+//! user's `system_actions` and `custom` shortcuts files, plus exactly
+//! two asset files under the user's data dir — the embedded app icon
+//! and desktop entry. The pre-install
 //! state is therefore recorded *inside* those files as leading
 //! `// airlock-v1` comment markers — one per switcher key, plus one
 //! `custom=absent-file` marker when install creates the `custom` file —
@@ -14,6 +16,9 @@
 //! `/usr/share` is only ever read, as the source for first installs.
 //! Unmarked user entries are never modified: a binding a user already
 //! holds is skipped with a diagnostic naming the key and the way out.
+//! Assets are removed on uninstall only while their bytes still match
+//! what install wrote — a hand-edited file is the user's now, kept and
+//! named in the report.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -38,6 +43,12 @@ const MARKER_PREFIX: &str = "// airlock-v1 ";
 const MARKER_ABSENT_FILE: &str = "absent-file";
 /// Marker value when the file existed but had no entry for the key.
 const MARKER_ABSENT_KEY: &str = "absent-key";
+/// The app icon, embedded so a crates.io install needs no checkout —
+/// `airlock install` is the complete setup.
+const ICON_SVG: &[u8] =
+    include_bytes!("../res/icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg");
+/// The desktop entry, embedded alongside the icon.
+const DESKTOP_ENTRY: &[u8] = include_bytes!("../res/io.github.l1br3-io.Airlock.desktop");
 
 /// The files install works with.
 pub struct Locations {
@@ -48,6 +59,10 @@ pub struct Locations {
     pub system_default: PathBuf,
     /// User `custom` shortcuts file, sibling of [`Locations::system_actions`].
     pub custom: PathBuf,
+    /// User-level app icon: [`ICON_SVG`]'s destination.
+    pub icon: PathBuf,
+    /// User-level desktop entry: [`DESKTOP_ENTRY`]'s destination.
+    pub desktop: PathBuf,
 }
 
 /// What uninstall did to the user file.
@@ -92,7 +107,8 @@ pub fn run(uninstall: bool) -> Result<String, String> {
 pub fn run_at(uninstall: bool, locations: &Locations) -> Result<String, String> {
     let actions = manage_system_actions(uninstall, locations)?;
     let custom = manage_custom(uninstall, locations)?;
-    Ok(format!("{actions}\n{custom}"))
+    let assets = manage_assets(uninstall, locations)?;
+    Ok(format!("{actions}\n{custom}\n{assets}"))
 }
 
 /// Installs or uninstalls the `system_actions` takeover at
@@ -116,7 +132,7 @@ fn manage_system_actions(uninstall: bool, locations: &Locations) -> Result<Strin
                 content,
                 best_effort,
             } => {
-                write_atomic(&locations.system_actions, &content)?;
+                write_atomic(&locations.system_actions, content.as_bytes())?;
                 if best_effort {
                     Ok(format!(
                         "restored {} to the system default commands (no airlock backup \
@@ -157,7 +173,7 @@ fn manage_system_actions(uninstall: bool, locations: &Locations) -> Result<Strin
         fs::create_dir_all(dir)
             .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
     }
-    write_atomic(&locations.system_actions, &content)?;
+    write_atomic(&locations.system_actions, content.as_bytes())?;
     let origin = if fresh {
         format!(
             "created {} from the system default",
@@ -189,7 +205,7 @@ fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, Strin
         };
         return match custom_uninstall_content(&current)? {
             CustomUninstall::Restored { content } => {
-                write_atomic(&locations.custom, &content)?;
+                write_atomic(&locations.custom, content.as_bytes())?;
                 Ok(format!(
                     "removed airlock's bindings from {}",
                     locations.custom.display()
@@ -216,7 +232,7 @@ fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, Strin
         fs::create_dir_all(dir)
             .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
     }
-    write_atomic(&locations.custom, &plan.content)?;
+    write_atomic(&locations.custom, plan.content.as_bytes())?;
     let mut report = if plan.in_place.is_empty() {
         format!(
             "custom shortcuts: none installed ({})",
@@ -241,27 +257,67 @@ fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, Strin
     Ok(report)
 }
 
-/// Resolves the real [`Locations`]: `$XDG_CONFIG_HOME` (absolute) or
-/// `$HOME/.config` per the XDG spec, plus the fixed system default path.
+/// Installs or uninstalls the embedded app assets at
+/// [`Locations::icon`] and [`Locations::desktop`]. Install rewrites
+/// them with the embedded bytes (the app-ID namespaced filenames are
+/// airlock's own, like any package's owned files); uninstall removes
+/// each only while its bytes still match — a hand-edited file is kept
+/// and named in the report instead of deleted.
 ///
 /// # Errors
 ///
-/// Returns a diagnostic when neither an absolute `XDG_CONFIG_HOME` nor a
-/// usable `HOME` is set.
-fn default_locations() -> Result<Locations, String> {
-    let config = match std::env::var_os("XDG_CONFIG_HOME") {
-        Some(dir) if !dir.is_empty() && Path::new(&dir).is_absolute() => PathBuf::from(dir),
-        // An empty or relative XDG_CONFIG_HOME is ignored per the XDG spec.
-        _ => {
-            let home = std::env::var_os("HOME")
-                .filter(|home| !home.is_empty())
-                .ok_or_else(|| {
-                    "cannot find the config directory: no absolute XDG_CONFIG_HOME and no HOME"
-                        .to_string()
-                })?;
-            PathBuf::from(home).join(".config")
+/// Returns a human-readable diagnostic when the files can't be read,
+/// written, or removed.
+fn manage_assets(uninstall: bool, locations: &Locations) -> Result<String, String> {
+    let assets = [
+        (locations.icon.clone(), ICON_SVG, "icon"),
+        (locations.desktop.clone(), DESKTOP_ENTRY, "desktop entry"),
+    ];
+    if uninstall {
+        let mut report = Vec::new();
+        for (path, embedded, what) in assets {
+            match fs::read(&path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+                Ok(bytes) if bytes == embedded => {
+                    fs::remove_file(&path)
+                        .map_err(|error| format!("cannot remove {}: {error}", path.display()))?;
+                    report.push(format!("removed {what} {}", path.display()));
+                }
+                Ok(_) => report.push(format!(
+                    "kept {what} {} — it differs from what airlock installs \
+                     (edited by hand?); remove it yourself if you want",
+                    path.display()
+                )),
+            }
         }
-    };
+        if report.is_empty() {
+            return Ok("nothing to uninstall: no airlock assets present".to_string());
+        }
+        return Ok(report.join("\n"));
+    }
+
+    for (path, embedded, _) in assets {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)
+                .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
+        }
+        write_atomic(&path, embedded)?;
+    }
+    Ok(format!(
+        "app assets: icon {} and desktop entry {} (user level)",
+        locations.icon.display(),
+        locations.desktop.display()
+    ))
+}
+///
+/// # Errors
+///
+/// Returns a diagnostic when neither an absolute `XDG_CONFIG_HOME`/`XDG_DATA_HOME`
+/// nor a usable `HOME` is set.
+fn default_locations() -> Result<Locations, String> {
+    let config = xdg_dir("XDG_CONFIG_HOME", ".config")?;
+    let data = xdg_dir("XDG_DATA_HOME", ".local/share")?;
     Ok(Locations {
         system_actions: config
             .join("cosmic/com.system76.CosmicSettings.Shortcuts/v1/system_actions"),
@@ -269,6 +325,28 @@ fn default_locations() -> Result<Locations, String> {
             "/usr/share/cosmic/com.system76.CosmicSettings.Shortcuts/v1/system_actions",
         ),
         custom: config.join("cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom"),
+        icon: data.join("icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg"),
+        desktop: data.join("applications/io.github.l1br3-io.Airlock.desktop"),
+    })
+}
+
+/// Resolves an XDG base directory: `$XDG_<VAR>` when absolute, else
+/// `$HOME/<fallback>`. An empty or relative value is ignored per the
+/// XDG spec.
+///
+/// # Errors
+///
+/// Returns a diagnostic when neither an absolute `$XDG_<VAR>` nor a
+/// usable `HOME` is set.
+fn xdg_dir(var: &str, fallback: &str) -> Result<PathBuf, String> {
+    Ok(match std::env::var_os(var) {
+        Some(dir) if !dir.is_empty() && Path::new(&dir).is_absolute() => PathBuf::from(dir),
+        _ => {
+            let home = std::env::var_os("HOME")
+                .filter(|home| !home.is_empty())
+                .ok_or_else(|| format!("cannot resolve {var}: no absolute ${var} and no HOME"))?;
+            PathBuf::from(home).join(fallback)
+        }
     })
 }
 
@@ -586,7 +664,7 @@ fn decode_marker_value(value: &str) -> Result<String, String> {
 /// # Errors
 ///
 /// Propages I/O errors, cleaning up the temporary best-effort.
-fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
+fn write_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
     let Some(dir) = path.parent() else {
         return Err(format!("no directory to write {} in", path.display()));
     };
@@ -598,7 +676,7 @@ fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
     let written = (|| -> Result<(), std::io::Error> {
         use std::io::Write as _;
         let mut file = fs::File::create(&temp)?;
-        file.write_all(content.as_bytes())?;
+        file.write_all(content)?;
         file.sync_all()?;
         drop(file);
         fs::rename(&temp, path)
