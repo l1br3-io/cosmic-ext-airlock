@@ -67,13 +67,14 @@ overlay is software-rendered — no GPU required.
 
 ```sh
 cargo install cosmic-ext-airlock   # from crates.io → ~/.cargo/bin/airlock
-airlock install                    # take over the Alt+Tab keybind (user level)
+airlock install                    # the complete setup: keybind takeover
+                                    # + app icon & desktop entry (user level)
 ```
 
 Building from a checkout instead: `just install` (checks the build
-prerequisites first). The app icon and desktop entry are optional
-repo-side assets: from a checkout, `just install-assets` places them in
-`~/.local/share` (never `/usr/share`).
+prerequisites first). The assets ride the binary — `airlock install`
+writes the icon and desktop entry into `~/.local/share` (never
+`/usr/share`); no checkout or extra command is needed.
 
 The takeover rewrites only user-level files in
 `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1`:
@@ -89,15 +90,17 @@ automatically.
 ## Uninstall
 
 ```sh
-airlock install --uninstall   # restore the pre-install switcher, byte-exactly
+airlock install --uninstall   # restore the pre-install switcher, byte-exactly,
+                              # and remove the app icon + desktop entry
 cargo uninstall cosmic-ext-airlock   # optional: remove the binary
 ```
 
 `--uninstall` replays the backups Airlock keeps inside the config files,
 so the previous state returns byte-for-byte — a `custom` file install
-created is deleted again. If a takeover was hand-written without
-Airlock's markers, restore falls back to the system default commands
-(best effort).
+created is deleted again — and removes both asset files, unless you
+edited one by hand: yours is kept and named, never silently deleted. If
+a takeover was hand-written without Airlock's markers, restore falls
+back to the system default commands (best effort).
 
 ## Troubleshooting
 

@@ -23,7 +23,10 @@ Initial release.
   **no-overlay quick toggle** (Alt+Esc) to the previous window.
 - **Per-workspace isolation config**: a workspace can opt into the
   global switcher (`isolated = false`) by name or position.
-- **`airlock install`**: claims Alt+Tab at user level with byte-exact
-  uninstall; already-bound keys are skipped and named, never clobbered.
+- **`airlock install`**: the complete setup — claims Alt+Tab at user
+  level and places the app icon and desktop entry in `~/.local/share`;
+  `--uninstall` reverts everything. Already-bound keys are skipped and
+  named, never clobbered; a hand-edited asset file is kept and named,
+  never deleted.
 - Small print: ~8 MB RSS daemon, single-threaded, warm presses in
   single-digit milliseconds.
