@@ -4,3 +4,6 @@ SPEC*.md
 .zcode/plans
 GUIDE-vm-cp4.md
 ROADMAP.md
+
+# rust-review audit output
+.rust-review-results/
