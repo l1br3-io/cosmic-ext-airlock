@@ -581,6 +581,12 @@ impl PointerHandler for App {
                     self.pointer_inputs
                         .push(PointerInput::Hover(self.overlay_row_at(event.position)));
                 }
+                // A leave forgets the row without selecting: the next
+                // entry into a row is a crossing again, so returning to
+                // the row the pointer just left re-asserts intent.
+                PointerEventKind::Leave { .. } => {
+                    self.pointer_inputs.push(PointerInput::Hover(None));
+                }
                 // A press carries the seat's last-known position, so the
                 // click lands where the cursor is. Non-left buttons, and
                 // presses not on any row, mean nothing to the switcher.
@@ -606,8 +612,8 @@ impl PointerHandler for App {
                         }
                     }
                 }
-                // Releases, non-left presses, leaves, and axis stops
-                // carry no switcher meaning.
+                // Releases, non-left presses, and axis stops carry no
+                // switcher meaning.
                 _ => {}
             }
         }

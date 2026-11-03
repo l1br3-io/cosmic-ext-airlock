@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use crate::ipc::{self, Direction, IpcError};
 use crate::settings::{self, ReadError, Reload, SettingsSource};
 use crate::switcher::{self, Handle, Scope, Snapshot, State, Toplevel, WorkspaceId};
-use crate::ui::{Gesture, GestureInput, GestureOutput, PointerInput};
+use crate::ui::{Gesture, GestureInput, GestureOutput, PointerHover, PointerInput};
 use crate::wayland;
 
 /// How long after the last activity the serve loop keeps polling fast.
@@ -343,6 +343,9 @@ pub fn run() -> Result<(), RunError> {
     // means, the session is the selection over the eligible list.
     let mut gesture = Gesture::default();
     let mut open: Option<Switch> = None;
+    // Hover-selection policy for the overlay's pointer inputs, reset
+    // whenever no session is open (see the pointer drain).
+    let mut hover = PointerHover::default();
 
     loop {
         let mut activity = session.poll().map_err(RunError::Session)?;
@@ -406,9 +409,16 @@ pub fn run() -> Result<(), RunError> {
 
         // Pointer input on the overlay, queued during dispatch beside the
         // keyboard's. A click selects the clicked row and commits in one
-        // motion; hover and wheel arrive through the same plumbing and
-        // are consumed here unchanged until hover-select and wheel-step
-        // land.
+        // motion; a hover crossing moves the selection; the wheel steps
+        // it (a later slice of the pointer vocabulary).
+        //
+        // Every overlay end — commit, dismiss, timeout, stale — funnels
+        // through `open = None`, so one reset guard at the drain's top
+        // covers all of them: each session's first pointer contact seeds
+        // the hover baseline instead of selecting.
+        if open.is_none() {
+            hover.reset();
+        }
         for input in session.take_pointer_inputs() {
             activity = true;
             session.overlay_touch();
@@ -432,9 +442,30 @@ pub fn run() -> Result<(), RunError> {
                         gesture.close();
                     }
                 }
-                // Hover moves the selection, the wheel steps it — later
-                // slices of the pointer vocabulary.
-                PointerInput::Hover(_) | PointerInput::Wheel(_) => {}
+                PointerInput::Hover(row) => {
+                    // A crossing yields a row, the on-screen model maps
+                    // it to a handle, and only a handle the frozen ring
+                    // still holds moves the selection (a window opened
+                    // mid-gesture is not hoverable into the session).
+                    // Rows the ring refuses leave the overlay untouched.
+                    if let Some(row) = hover.observe(row)
+                        && let Some(handle) = session.overlay_row_handle(row)
+                        && open
+                            .as_mut()
+                            .is_some_and(|open| open.ring.select(handle).is_some())
+                    {
+                        show_selection(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            &mut icons,
+                        );
+                    }
+                }
+                // The wheel steps the selection — a later slice of the
+                // pointer vocabulary.
+                PointerInput::Wheel(_) => {}
             }
         }
 
@@ -561,10 +592,10 @@ fn commit_session(
 /// already-open session keeps the scope it was built with — a mid-gesture
 /// edit must not swap the list under the user's held Alt.
 ///
-/// Icons are prepared here too, at the session's render scale: every app
-/// already seen by the daemon is a cache hit, and a first-seen app
-/// rasterizes once (~1 ms, benchmarked in `src/icons.rs`) — icon I/O
-/// never lands on the warm-press path twice for the same app.
+/// Icons are prepared in [`show_selection`], at the session's render
+/// scale: every app already seen by the daemon is a cache hit, and a
+/// first-seen app rasterizes once (~1 ms, benchmarked in `src/icons.rs`)
+/// — icon I/O never lands on the warm-press path twice for the same app.
 fn step_and_show(
     session: &mut wayland::Session,
     gesture: &mut Gesture,
@@ -581,7 +612,25 @@ fn step_and_show(
             resolve_scope(snapshot, &settings.settings)
         }
     };
-    let selected = session_step(open, snapshot, step.direction, scope, step.same_app);
+    session_step(open, snapshot, step.direction, scope, step.same_app);
+    show_selection(session, gesture, open, snapshot, icons);
+}
+
+/// Builds and shows the overlay for the open session's current selection
+/// — or closes the session when there is nothing eligible left to show.
+///
+/// Shared by [`step_and_show`] (after a step moved the selection) and the
+/// pointer hover arm (which moves it without stepping): a same-app
+/// session re-filters the fresh snapshot by its frozen anchor, a plain
+/// one lists every eligible window. Icons are already cached, so this is
+/// a rebuild-and-repaint, never new I/O.
+fn show_selection(
+    session: &mut wayland::Session,
+    gesture: &mut Gesture,
+    open: &mut Option<Switch>,
+    snapshot: &Snapshot,
+    icons: &mut crate::icons::Cache,
+) {
     let scale = session.render_scale();
     icons.prepare(
         snapshot
@@ -592,7 +641,7 @@ fn step_and_show(
     );
     let model = open.as_ref().and_then(|current| {
         let model_of = |list: &Snapshot| {
-            selected.and_then(|handle| {
+            current.ring.selected().and_then(|handle| {
                 crate::ui::overlay_model(list, handle, current.scope, icons, scale)
             })
         };
@@ -1102,6 +1151,56 @@ mod tests {
         assert_eq!(open.ring.select(Handle(2)), Some(Handle(2)));
         let closed = snapshot(vec![toplevel(1, &[1], State::default(), 30)], Some(1));
         assert_eq!(commit_target(&open, &closed), None);
+    }
+
+    #[test]
+    fn a_hover_crossing_moves_the_selection_to_the_hovered_row() {
+        // The pure seam the pointer Hover arm composes: crossing →
+        // Ring::select. The cursor seeds on row 2 at map (no steal of
+        // the MRU step target), crosses to row 3, and the selection
+        // follows — a later commit targets the hovered window.
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        let mut open = open.expect("session opened");
+        let mut hover = PointerHover::default();
+        assert_eq!(hover.observe(Some(2)), None, "map-time contact seeds");
+        assert_eq!(hover.observe(Some(3)), Some(3));
+        assert_eq!(open.ring.select(Handle(3)), Some(Handle(3)));
+        assert_eq!(commit_target(&open, &snap), Some(Handle(3)));
+    }
+
+    #[test]
+    fn a_hover_on_a_window_the_ring_never_held_moves_nothing() {
+        // The crossing is observed, but the frozen ring is the session's
+        // truth: a window opened mid-gesture is not hoverable into it,
+        // and the selection stays where the keyboard left it.
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        let mut open = open.expect("session opened");
+        let mut hover = PointerHover::default();
+        assert_eq!(hover.observe(Some(2)), None, "map-time contact seeds");
+        assert_eq!(
+            hover.observe(Some(4)),
+            Some(4),
+            "crossing onto the new window"
+        );
+        assert_eq!(open.ring.select(Handle(4)), None);
+        assert_eq!(open.ring.selected(), Some(Handle(2)));
     }
 
     #[test]

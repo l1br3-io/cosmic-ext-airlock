@@ -679,6 +679,46 @@ pub enum PointerInput {
     Wheel(Direction),
 }
 
+/// Pure hover-selection policy: which [`PointerInput::Hover`]
+/// observations may move the overlay's selection.
+///
+/// Only row *crossings* select — presence alone never steals the
+/// MRU-first selection, because the overlay maps center-screen, often
+/// directly under a resting cursor. The first observation after a
+/// [`reset`](Self::reset) seeds the baseline and selects nothing: a
+/// surface's first pointer event is always the Enter that map-time
+/// contact (or first arrival) produces, and neither expresses crossing
+/// intent. A `None` observation — a gap, or leaving the card — never
+/// selects but forgets the row, so returning to it re-asserts pointer
+/// intent.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PointerHover {
+    /// The row the pointer was last observed over; forgotten by a `None`
+    /// observation.
+    last_row: Option<usize>,
+    /// Whether any observation has arrived since the last reset. The
+    /// first is map-time contact: it seeds `last_row` and selects
+    /// nothing — even when it lands in a gap.
+    entered: bool,
+}
+
+impl PointerHover {
+    /// Applies one observation, returning the row to select — only when
+    /// it is concrete and differs from the last observed row.
+    pub fn observe(&mut self, row: Option<usize>) -> Option<usize> {
+        let crossing = self.entered && row.is_some() && row != self.last_row;
+        self.entered = true;
+        self.last_row = row;
+        if crossing { row } else { None }
+    }
+
+    /// Clears all history so the next overlay session seeds its first
+    /// contact instead of selecting.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// What the daemon should do in response to a [`GestureInput`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GestureOutput {
@@ -2193,5 +2233,67 @@ mod tests {
     fn wheel_notches_on_continuous_scroll_steps_nothing() {
         // Touchpad and other continuous sources report neither field.
         assert_eq!(wheel_notches(0, 0), 0);
+    }
+
+    #[test]
+    fn hover_first_contact_seeds_the_row_without_selecting() {
+        // The overlay maps center-screen, often under a resting cursor,
+        // and a surface's first pointer event is the Enter that contact
+        // produces. It seeds the baseline and selects nothing, so the
+        // MRU step target keeps the selection; jitter inside the row is
+        // no crossing either.
+        let mut hover = PointerHover::default();
+        assert_eq!(
+            hover.observe(Some(3)),
+            None,
+            "map-time Enter selects nothing"
+        );
+        assert_eq!(hover.observe(Some(3)), None, "in-row jitter is no crossing");
+    }
+
+    #[test]
+    fn hover_row_crossings_select_each_time() {
+        let mut hover = PointerHover::default();
+        assert_eq!(hover.observe(Some(1)), None, "first contact seeds");
+        assert_eq!(hover.observe(Some(2)), Some(2));
+        assert_eq!(hover.observe(Some(3)), Some(3));
+        assert_eq!(
+            hover.observe(Some(3)),
+            None,
+            "same row again is no crossing"
+        );
+    }
+
+    #[test]
+    fn hover_none_observation_never_selects_but_forgets_the_row() {
+        // A gap motion and a card leave arrive the same way — a None
+        // observation. Neither selects, but both forget the row, so
+        // returning to it re-asserts pointer intent.
+        let mut hover = PointerHover::default();
+        assert_eq!(hover.observe(Some(2)), None, "first contact seeds");
+        assert_eq!(hover.observe(None), None, "gap or leave selects nothing");
+        assert_eq!(hover.observe(Some(2)), Some(2), "returning re-selects");
+    }
+
+    #[test]
+    fn hover_first_contact_in_a_gap_still_counts_as_contact() {
+        // First contact can land in a gap seam. Counting it as contact
+        // keeps the seed where it belongs — otherwise moving into a row
+        // would read as the map-time Enter and never select.
+        let mut hover = PointerHover::default();
+        assert_eq!(hover.observe(None), None);
+        assert_eq!(hover.observe(Some(3)), Some(3));
+    }
+
+    #[test]
+    fn hover_reset_seeds_the_next_session_from_scratch() {
+        // The daemon resets on every overlay end: the next session's
+        // first contact — the cursor resting right where the new card
+        // maps — seeds again instead of selecting.
+        let mut hover = PointerHover::default();
+        assert_eq!(hover.observe(Some(2)), None, "first contact seeds");
+        assert_eq!(hover.observe(Some(3)), Some(3));
+        hover.reset();
+        assert_eq!(hover.observe(Some(3)), None, "fresh session seeds again");
     }
 }
