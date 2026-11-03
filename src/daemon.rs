@@ -410,7 +410,7 @@ pub fn run() -> Result<(), RunError> {
         // Pointer input on the overlay, queued during dispatch beside the
         // keyboard's. A click selects the clicked row and commits in one
         // motion; a hover crossing moves the selection; the wheel steps
-        // it (a later slice of the pointer vocabulary).
+        // it.
         //
         // Every overlay end — commit, dismiss, timeout, stale — funnels
         // through `open = None`, so one reset guard at the drain's top
@@ -463,9 +463,28 @@ pub fn run() -> Result<(), RunError> {
                         );
                     }
                 }
-                // The wheel steps the selection — a later slice of the
-                // pointer vocabulary.
-                PointerInput::Wheel(_) => {}
+                PointerInput::Wheel(direction) => {
+                    // One notch = one step of the open session's ring,
+                    // exactly the keyboard arrow arm (a ±240 event
+                    // arrives as two inputs, one per notch, from the
+                    // wayland handler). Structurally wheel only arrives
+                    // while the overlay is mapped; the guard keeps that
+                    // honest if delivery ever changes.
+                    if open.is_some() {
+                        step_and_show(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            Step {
+                                direction,
+                                same_app: false,
+                            },
+                            &mut settings,
+                            &mut icons,
+                        );
+                    }
+                }
             }
         }
 
