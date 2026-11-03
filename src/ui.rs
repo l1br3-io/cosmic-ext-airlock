@@ -209,6 +209,9 @@ pub struct RowModel {
     pub title: String,
     pub icon: Option<Rc<IconBitmap>>,
     pub selected: bool,
+    /// The window this row renders — the truth a pointer click selects.
+    /// The renderer ignores it; hit-testing reads it.
+    pub handle: Handle,
 }
 
 /// What the overlay should draw: rows in MRU order plus the logical
@@ -219,6 +222,31 @@ pub struct OverlayModel {
     pub rows: Vec<RowModel>,
     pub width: u32,
     pub height: u32,
+}
+
+impl OverlayModel {
+    /// The row whose band contains the device-pixel point (`x`, `y`) —
+    /// a surface-local logical pointer position × render `scale`. The
+    /// model and its row rhythm are logical; only buffers are device
+    /// pixels, so the point scales down to the model's space. The
+    /// footprint is the full row width (the card itself); gap seams,
+    /// card padding, and points off the card are `None`.
+    pub fn row_at(&self, x: f64, y: f64, scale: u32) -> Option<usize> {
+        let in_card = x >= 0.0
+            && y >= 0.0
+            && x < self.width as f64 * scale as f64
+            && y < self.height as f64 * scale as f64;
+        if !in_card {
+            return None;
+        }
+        let y_px = y / scale as f64 - PAD_Y as f64;
+        let pitch = (ROW_H + ROW_GAP) as f64;
+        if y_px < 0.0 || y_px >= self.rows.len() as f64 * pitch {
+            return None; // card padding above the first row / below the last
+        }
+        let row = (y_px / pitch) as usize;
+        (y_px - row as f64 * pitch < ROW_H as f64).then_some(row) // gap seam
+    }
 }
 
 /// Builds the overlay contents for `snapshot` with `selected` highlighted,
@@ -250,6 +278,7 @@ pub fn overlay_model(
             title,
             icon: icons.bitmap(&toplevel.app_id, scale),
             selected: handle == selected,
+            handle,
         });
     }
     let cols = rows
@@ -634,6 +663,22 @@ pub enum GestureInput {
     FocusLost,
 }
 
+/// Pointer inputs the switcher gesture reacts to, normalized from
+/// wl_pointer events on the overlay surface. `row` indexes the live
+/// overlay model's rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerInput {
+    /// Cursor is over `Some(row)` of the overlay (enter or motion);
+    /// `None` is a gap or off-card movement and never selects.
+    Hover(Option<usize>),
+    /// Left-button press on a row: select and commit in one motion —
+    /// the same outcome as pressing Enter or releasing Alt.
+    Click { row: usize },
+    /// One discrete wheel notch, riding the existing [`Direction`]
+    /// vocabulary.
+    Wheel(Direction),
+}
+
 /// What the daemon should do in response to a [`GestureInput`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GestureOutput {
@@ -751,6 +796,19 @@ pub fn key_input(keysym: Keysym, shift_held: bool) -> GestureInput {
         _ => (GestureKey::Other, shift_held),
     };
     GestureInput::Press { key, shift }
+}
+
+/// One wheel event's logical notches: sign is the direction (positive =
+/// one [`Direction::Next`] step), magnitude the notch count. Each ±120
+/// in `value120` is one notch; the deprecated `discrete` step is the
+/// pre-v120 equivalent and applies only when the compositor sends no
+/// `value120`; continuous (touchpad) scroll reports neither and yields 0.
+pub fn wheel_notches(value120: i32, discrete: i32) -> i32 {
+    if value120 != 0 {
+        value120 / 120
+    } else {
+        discrete
+    }
 }
 
 /// 8x8 bitmap glyphs for printable ASCII U+0020..=U+007E, one `[u8; 8]` per
@@ -1140,6 +1198,119 @@ mod tests {
     }
 
     #[test]
+    fn overlay_model_rows_carry_their_windows_handles() {
+        // The on-screen model is the truth a pointer click selects: every
+        // row must know which window it renders.
+        let snap = snapshot(
+            vec![
+                toplevel(1, "First", "app.a", &[1], switcher::State::ACTIVATED, 30),
+                toplevel(2, "Second", "app.b", &[1], switcher::State::default(), 20),
+            ],
+            Some(1),
+        );
+        let model =
+            build(&snap, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
+        let handles: Vec<Handle> = model.rows.iter().map(|row| row.handle).collect();
+        assert_eq!(handles, vec![Handle(1), Handle(2)]);
+    }
+
+    /// A plain `rows`-row model with the documented card rhythm, for
+    /// hit-testing. Bands run PAD_Y + i·(ROW_H + ROW_GAP) … + ROW_H.
+    fn hit_model(rows: usize) -> OverlayModel {
+        OverlayModel {
+            rows: (0..rows)
+                .map(|index| RowModel {
+                    title: "W".into(),
+                    icon: None,
+                    selected: false,
+                    handle: Handle(index as u64 + 1),
+                })
+                .collect(),
+            width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W,
+            height: 2 * PAD_Y + rows as u32 * ROW_H + (rows as u32 - 1) * ROW_GAP,
+        }
+    }
+
+    #[test]
+    fn row_at_maps_each_row_band_to_its_index() {
+        let model = hit_model(3);
+        let x = model.width as f64 / 2.0;
+        // Mid-band of every row: PAD_Y top inset, ROW_H bands, ROW_GAP
+        // seams — 36/92/148 at the documented rhythm.
+        for (row, mid) in [(0usize, 36.0f64), (1, 92.0), (2, 148.0)] {
+            assert_eq!(model.row_at(x, mid, 1), Some(row), "mid of row {row}");
+        }
+        // The band's own boundaries belong to it: first pixel and last.
+        assert_eq!(model.row_at(x, PAD_Y as f64, 1), Some(0));
+        assert_eq!(
+            model.row_at(x, (PAD_Y + ROW_H - 1) as f64, 1),
+            Some(0),
+            "the last pixel of a band is still that row"
+        );
+    }
+
+    #[test]
+    fn row_at_returns_none_across_gap_seams() {
+        let model = hit_model(3);
+        let x = model.width as f64 / 2.0;
+        // The seam between rows 0 and 1 is [60, 68); between 1 and 2
+        // [116, 124). Selection bands never merge across a seam; neither
+        // does a click land.
+        for y in [60.0f64, 64.0, 67.0, 116.0] {
+            assert_eq!(model.row_at(x, y, 1), None, "seam at y={y}");
+        }
+    }
+
+    #[test]
+    fn row_at_returns_none_in_card_padding_and_off_the_card() {
+        let model = hit_model(3);
+        let x = model.width as f64 / 2.0;
+        // Card padding: above the first row, and below the last band's
+        // end (the bottom mirrors the top).
+        let last_end = (PAD_Y + 3 * ROW_H + 2 * ROW_GAP) as f64;
+        assert_eq!(model.row_at(x, 5.0, 1), None);
+        assert_eq!(model.row_at(x, last_end + 1.0, 1), None);
+        assert_eq!(model.row_at(x, model.height as f64 - 1.0, 1), None);
+        // Off the card entirely.
+        assert_eq!(model.row_at(x, model.height as f64, 1), None);
+        assert_eq!(model.row_at(x, -1.0, 1), None);
+        assert_eq!(model.row_at(-0.5, 36.0, 1), None);
+        assert_eq!(model.row_at(model.width as f64, 36.0, 1), None);
+        // The last pixel columns are still the card.
+        assert_eq!(
+            model.row_at(model.width as f64 - 0.5, 36.0, 1),
+            Some(0),
+            "just inside the right edge still hits"
+        );
+    }
+
+    #[test]
+    fn row_at_agrees_between_scale_1_and_scale_2_device_points() {
+        // Pointer events are surface-local logical; row_at takes device
+        // pixels (logical × render scale). The same on-screen point must
+        // name the same row at both scales — the HiDPI contract, pinned
+        // here at the pure seam the hardware walk re-proves at 200%.
+        let model = hit_model(3);
+        let x = model.width as f64 / 2.0;
+        let probes = [
+            (x, 36.0),  // mid of row 0
+            (x, 92.0),  // mid of row 1
+            (x, 148.0), // mid of row 2
+            (x, 64.0),  // a gap seam
+            (x, 5.0),   // card padding
+            (x, 190.0), // off the card
+            (-1.0, 36.0),
+        ];
+        for (x, y) in probes {
+            assert_eq!(
+                model.row_at(x, y, 1),
+                model.row_at(x * 2.0, y * 2.0, 2),
+                "logical ({x}, {y}) must name one row at both scales"
+            );
+        }
+    }
+
+    #[test]
     fn selection_and_border_colors_are_the_documented_blends() {
         // GNOME's :selected formula — text at 20% over the card — pinned
         // exactly so the token cannot drift by accident.
@@ -1239,6 +1410,7 @@ mod tests {
                 title: "Titled".into(),
                 icon: Some(Rc::new(icon)),
                 selected: false,
+                handle: Handle(1),
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
@@ -1271,6 +1443,7 @@ mod tests {
                 title: String::new(),
                 icon: Some(Rc::new(bogus)),
                 selected: false,
+                handle: Handle(1),
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W,
             height: 2 * PAD_Y + ROW_H,
@@ -1525,6 +1698,7 @@ mod tests {
                         title: "W".repeat(8),
                         icon: None,
                         selected: index == selected,
+                        handle: Handle(index as u64 + 1),
                     })
                     .collect(),
                 width: 2 * PAD_X + ICON + ICON_GAP + 8 * TEXT_W,
@@ -1578,6 +1752,7 @@ mod tests {
                     title: "W".repeat(MAX_COLS as usize),
                     icon: None,
                     selected: i == 0,
+                    handle: Handle(i as u64 + 1),
                 })
                 .collect(),
             width: 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W,
@@ -1994,5 +2169,29 @@ mod tests {
                 shift: true
             }
         );
+    }
+
+    #[test]
+    fn wheel_notches_counts_value120_steps_with_sign() {
+        // Each multiple of ±120 is one notch; positive is one Next step.
+        assert_eq!(wheel_notches(120, 0), 1);
+        assert_eq!(wheel_notches(-120, 0), -1);
+        assert_eq!(wheel_notches(240, 0), 2);
+        assert_eq!(wheel_notches(-240, 0), -2);
+        // A sub-notch accumulation is not a step yet.
+        assert_eq!(wheel_notches(60, 0), 0);
+    }
+
+    #[test]
+    fn wheel_notches_falls_back_to_the_legacy_discrete_step() {
+        // Pre-v120 compositors report whole steps in `discrete` only.
+        assert_eq!(wheel_notches(0, 1), 1);
+        assert_eq!(wheel_notches(0, -2), -2);
+    }
+
+    #[test]
+    fn wheel_notches_on_continuous_scroll_steps_nothing() {
+        // Touchpad and other continuous sources report neither field.
+        assert_eq!(wheel_notches(0, 0), 0);
     }
 }

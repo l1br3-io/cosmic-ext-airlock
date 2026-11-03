@@ -204,6 +204,16 @@ impl Ring {
         self.index = (self.index + delta) % len;
         self.selected()
     }
+
+    /// Moves the selection to `handle` when the ring holds it, returning
+    /// it. A handle the frozen ring does not hold — a window opened after
+    /// the session froze its list — selects nothing and leaves the ring
+    /// exactly as it was; an empty ring selects nothing.
+    pub fn select(&mut self, handle: Handle) -> Option<Handle> {
+        let index = self.handles.iter().position(|&held| held == handle)?;
+        self.index = index;
+        Some(handle)
+    }
 }
 
 #[cfg(test)]
@@ -544,6 +554,33 @@ mod tests {
         let mut ring = Ring::new(vec![Handle(9)]);
         assert_eq!(ring.step(1), Some(Handle(9)));
         assert_eq!(ring.previous(), Some(Handle(9)));
+    }
+
+    #[test]
+    fn select_moves_the_selection_to_a_handle_the_ring_holds() {
+        let mut ring = Ring::new(vec![Handle(1), Handle(2), Handle(3)]);
+        assert_eq!(ring.select(Handle(3)), Some(Handle(3)));
+        assert_eq!(ring.selected(), Some(Handle(3)));
+        // Stepping continues from the moved selection.
+        assert_eq!(ring.step(1), Some(Handle(1)));
+    }
+
+    #[test]
+    fn select_on_a_handle_the_ring_never_held_selects_nothing_and_changes_nothing() {
+        // The ring freezes when the session opens; a window opened after
+        // that is not selectable into the session.
+        let mut ring = Ring::new(vec![Handle(1), Handle(2)]);
+        ring.step(1); // selected Handle(2)
+        assert_eq!(ring.select(Handle(9)), None);
+        assert_eq!(ring.selected(), Some(Handle(2)));
+        assert_eq!(ring.step(1), Some(Handle(1)));
+    }
+
+    #[test]
+    fn select_on_an_empty_ring_selects_nothing() {
+        let mut ring = Ring::new(vec![]);
+        assert_eq!(ring.select(Handle(1)), None);
+        assert_eq!(ring.selected(), None);
     }
 
     #[test]

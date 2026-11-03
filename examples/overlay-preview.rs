@@ -150,6 +150,8 @@ fn row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
         title: title.to_string(),
         icon,
         selected,
+        // Preview scenarios render no real window, so no handle to name.
+        handle: cosmic_ext_airlock::switcher::Handle::default(),
     }
 }
 

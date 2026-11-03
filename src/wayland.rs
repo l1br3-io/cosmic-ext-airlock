@@ -18,6 +18,7 @@ use cctk::sctk::output::{OutputData, OutputHandler, OutputState};
 use cctk::sctk::registry::{ProvidesRegistryState, RegistryState};
 use cctk::sctk::seat::{
     keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
+    pointer::{PointerEvent, PointerEventKind, PointerHandler, BTN_LEFT},
     Capability, SeatHandler, SeatState,
 };
 use cctk::sctk::shell::WaylandSurface;
@@ -34,7 +35,7 @@ use cctk::wayland_client::backend::WaylandError;
 use cctk::wayland_client::globals::registry_queue_init;
 use cctk::wayland_client::protocol::wl_output::WlOutput;
 use cctk::wayland_client::protocol::wl_surface::WlSurface;
-use cctk::wayland_client::protocol::{wl_keyboard, wl_output, wl_seat, wl_shm, wl_surface};
+use cctk::wayland_client::protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface};
 use cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1;
 use cctk::wayland_protocols::ext::workspace::v1::client::ext_workspace_handle_v1::{ExtWorkspaceHandleV1, State as ExtWorkspaceState};
 use cctk::wayland_protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_keyboard_shortcuts_inhibit_manager_v1::{
@@ -45,8 +46,9 @@ use cctk::wayland_protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_ke
 };
 use cctk::workspace::{WorkspaceHandler, WorkspaceState};
 
+use crate::ipc::Direction;
 use crate::switcher::{Handle, Snapshot, Toplevel, Workspace, WorkspaceId};
-use crate::ui::{self, GestureInput, OverlayModel};
+use crate::ui::{self, GestureInput, OverlayModel, PointerInput};
 
 /// A required protocol the compositor does not offer at a sufficient version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,6 +251,7 @@ pub(crate) struct App {
     /// because the seat is also what binds the overlay keyboard.
     seat: Option<wl_seat::WlSeat>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
+    pointer: Option<wl_pointer::WlPointer>,
     /// Last shift state the seat reported, for classifying Tab presses.
     shift_held: bool,
     /// First output seen; hosts the overlay surface.
@@ -257,6 +260,9 @@ pub(crate) struct App {
     /// Gesture inputs queued by keyboard handlers during dispatch; the
     /// daemon's serve loop drains them after each poll.
     gesture_inputs: Vec<GestureInput>,
+    /// Pointer inputs queued by the pointer handler during dispatch;
+    /// drained beside the gesture inputs.
+    pointer_inputs: Vec<PointerInput>,
     /// Identity maps so plain ids stay stable across snapshots for the
     /// daemon's lifetime; first-seen order assigns them.
     workspace_ids: HashMap<ExtWorkspaceHandleV1, WorkspaceId>,
@@ -431,6 +437,10 @@ impl SeatHandler for App {
                 self.keyboard = self.seat_state.get_keyboard(qh, &seat, None).ok();
             }
         }
+        if capability == Capability::Pointer && self.pointer.is_none() {
+            eprintln!("airlock daemon: seat pointer bound");
+            self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
+        }
     }
 
     fn remove_capability(
@@ -444,6 +454,11 @@ impl SeatHandler for App {
             && let Some(keyboard) = self.keyboard.take()
         {
             keyboard.release();
+        }
+        if capability == Capability::Pointer
+            && let Some(pointer) = self.pointer.take()
+        {
+            pointer.release();
         }
     }
 
@@ -536,6 +551,65 @@ impl KeyboardHandler for App {
         if self.overlay.is_some() {
             self.gesture_inputs
                 .push(GestureInput::Modifiers { alt: modifiers.alt });
+        }
+    }
+}
+
+// The pointer vocabulary of the same gesture: wl_pointer events on the
+// overlay surface normalize into pointer inputs here; the daemon's serve
+// loop drains them and applies the outputs, exactly as keysyms do via
+// `key_input`. Events on other surfaces, and every event while no
+// overlay is mapped, are dropped.
+impl PointerHandler for App {
+    fn pointer_frame(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _pointer: &wl_pointer::WlPointer,
+        events: &[PointerEvent],
+    ) {
+        for event in events {
+            if !self
+                .overlay
+                .as_ref()
+                .is_some_and(|overlay| *overlay.wl_surface() == event.surface)
+            {
+                continue;
+            }
+            match event.kind {
+                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
+                    self.pointer_inputs
+                        .push(PointerInput::Hover(self.overlay_row_at(event.position)));
+                }
+                // A press carries the seat's last-known position, so the
+                // click lands where the cursor is. Non-left buttons, and
+                // presses not on any row, mean nothing to the switcher.
+                PointerEventKind::Press { button, .. } if button == BTN_LEFT => {
+                    if let Some(row) = self.overlay_row_at(event.position) {
+                        self.pointer_inputs.push(PointerInput::Click { row });
+                    }
+                }
+                PointerEventKind::Axis { vertical, .. } => {
+                    // One Wheel input per logical notch, the vertical axis
+                    // only: v120 first, the legacy discrete step when the
+                    // compositor sends no v120; continuous touchpad scroll
+                    // reports neither and steps nothing.
+                    let notches = ui::wheel_notches(vertical.value120, vertical.discrete);
+                    if notches != 0 {
+                        let direction = if notches > 0 {
+                            Direction::Next
+                        } else {
+                            Direction::Previous
+                        };
+                        for _ in 0..notches.unsigned_abs() {
+                            self.pointer_inputs.push(PointerInput::Wheel(direction));
+                        }
+                    }
+                }
+                // Releases, non-left presses, leaves, and axis stops
+                // carry no switcher meaning.
+                _ => {}
+            }
         }
     }
 }
@@ -666,12 +740,23 @@ impl App {
             eprintln!("airlock daemon: overlay unmapped ({reason})");
         }
     }
+
+    /// The overlay row under a surface-local logical `position`, or
+    /// `None` off-card, in a gap, or with no overlay mapped. Positions
+    /// are logical; hit-testing takes device pixels (logical × scale).
+    fn overlay_row_at(&self, position: (f64, f64)) -> Option<usize> {
+        let overlay = self.overlay.as_ref()?;
+        let (x, y) = position;
+        let scale = overlay.scale as f64;
+        overlay.model().row_at(x * scale, y * scale, overlay.scale)
+    }
 }
 
 cctk::sctk::delegate_compositor!(App);
 cctk::sctk::delegate_keyboard!(App);
 cctk::sctk::delegate_layer!(App);
 cctk::sctk::delegate_output!(App);
+cctk::sctk::delegate_pointer!(App);
 cctk::sctk::delegate_registry!(App);
 cctk::sctk::delegate_seat!(App);
 cctk::sctk::delegate_shm!(App);
@@ -991,10 +1076,12 @@ impl Session {
             shortcuts_inhibit,
             seat: None,
             keyboard: None,
+            pointer: None,
             shift_held: false,
             first_output: None,
             overlay: None,
             gesture_inputs: Vec::new(),
+            pointer_inputs: Vec::new(),
             registry_state,
             workspace_ids: HashMap::new(),
             next_workspace_id: 0,
@@ -1290,9 +1377,28 @@ impl Session {
         }
     }
 
+    /// The handle of the on-screen model's `row` — the truth a click
+    /// selects; `None` when the overlay is unmapped or `row` is past the
+    /// model's end.
+    pub fn overlay_row_handle(&self, row: usize) -> Option<Handle> {
+        self.app
+            .overlay
+            .as_ref()?
+            .model()
+            .rows
+            .get(row)
+            .map(|row| row.handle)
+    }
+
     /// Drains gesture inputs queued by keyboard handlers during dispatch.
     pub fn take_gesture_inputs(&mut self) -> Vec<GestureInput> {
         std::mem::take(&mut self.app.gesture_inputs)
+    }
+
+    /// Drains pointer inputs queued by the pointer handler during
+    /// dispatch, beside the gesture inputs.
+    pub fn take_pointer_inputs(&mut self) -> Vec<PointerInput> {
+        std::mem::take(&mut self.app.pointer_inputs)
     }
 }
 

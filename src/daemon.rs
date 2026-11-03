@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use crate::ipc::{self, Direction, IpcError};
 use crate::settings::{self, ReadError, Reload, SettingsSource};
 use crate::switcher::{self, Handle, Scope, Snapshot, State, Toplevel, WorkspaceId};
-use crate::ui::{Gesture, GestureInput, GestureOutput};
+use crate::ui::{Gesture, GestureInput, GestureOutput, PointerInput};
 use crate::wayland;
 
 /// How long after the last activity the serve loop keeps polling fast.
@@ -394,20 +394,47 @@ pub fn run() -> Result<(), RunError> {
                     // window may have moved or closed since. Only a
                     // still-eligible selection is activated — anything else
                     // commits as a no-op rather than crossing workspaces.
-                    if let Some(handle) = open
-                        .as_ref()
-                        .and_then(|open| commit_target(open, &snapshot))
-                    {
-                        session.activate(handle).map_err(RunError::Session)?;
-                    }
-                    session.overlay_hide("commit");
-                    open = None;
+                    commit_session(&mut session, &mut open, &snapshot)?;
                 }
                 GestureOutput::Dismiss => {
                     session.overlay_hide("dismissed");
                     open = None;
                 }
                 GestureOutput::Nothing => {}
+            }
+        }
+
+        // Pointer input on the overlay, queued during dispatch beside the
+        // keyboard's. A click selects the clicked row and commits in one
+        // motion; hover and wheel arrive through the same plumbing and
+        // are consumed here unchanged until hover-select and wheel-step
+        // land.
+        for input in session.take_pointer_inputs() {
+            activity = true;
+            session.overlay_touch();
+            match input {
+                PointerInput::Click { row } => {
+                    // The on-screen model is the truth being clicked, and
+                    // the frozen ring must still hold its handle — a
+                    // window opened mid-gesture is not clickable into the
+                    // session. Anything else leaves the session and
+                    // overlay exactly as they are.
+                    if let Some(handle) = session.overlay_row_handle(row)
+                        && open
+                            .as_mut()
+                            .is_some_and(|open| open.ring.select(handle).is_some())
+                    {
+                        commit_session(&mut session, &mut open, &snapshot)?;
+                        // The gesture machine never saw the click; close
+                        // it explicitly so a later Alt-release cannot
+                        // re-commit and a Tab cannot reopen the spent
+                        // session.
+                        gesture.close();
+                    }
+                }
+                // Hover moves the selection, the wheel steps it — later
+                // slices of the pointer vocabulary.
+                PointerInput::Hover(_) | PointerInput::Wheel(_) => {}
             }
         }
 
@@ -497,6 +524,24 @@ pub fn run() -> Result<(), RunError> {
         }
         std::thread::sleep(poll_interval(last_activity.elapsed()));
     }
+}
+
+/// Commits the open session: activate its selection — but only a target
+/// still switchable in `snapshot`, so a window that moved or closed since
+/// the ring was built commits as a no-op rather than crossing workspaces
+/// — then unmap the overlay and end the session. The keyboard Commit arm
+/// and the pointer click path share it.
+fn commit_session(
+    session: &mut wayland::Session,
+    open: &mut Option<Switch>,
+    snapshot: &Snapshot,
+) -> Result<(), RunError> {
+    if let Some(handle) = open.as_ref().and_then(|open| commit_target(open, snapshot)) {
+        session.activate(handle).map_err(RunError::Session)?;
+    }
+    session.overlay_hide("commit");
+    *open = None;
+    Ok(())
 }
 
 /// Applies one `Step`: advance the session ring and refresh the overlay.
@@ -995,6 +1040,68 @@ mod tests {
             Some(1),
         );
         assert_eq!(commit_target(&open, &moved), None);
+    }
+
+    #[test]
+    fn a_click_selects_then_commits_the_clicked_row() {
+        // The pure seam the pointer Click arm composes: on-screen row →
+        // handle, Ring::select, commit_target. Clicking the last row
+        // commits that window — not the selection the keyboard left.
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        let mut open = open.expect("session opened");
+        assert_eq!(open.ring.selected(), Some(Handle(2)));
+        assert_eq!(open.ring.select(Handle(3)), Some(Handle(3)));
+        assert_eq!(commit_target(&open, &snap), Some(Handle(3)));
+    }
+
+    #[test]
+    fn a_click_on_a_window_the_ring_never_held_selects_nothing() {
+        // The frozen ring is the session's truth: a handle it never held
+        // (a window opened mid-gesture) cannot be clicked into the
+        // session, and the flow stops at select — the prior selection is
+        // never committed and the overlay stays.
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        let mut open = open.expect("session opened");
+        assert_eq!(open.ring.select(Handle(4)), None);
+        assert_eq!(open.ring.selected(), Some(Handle(2)));
+    }
+
+    #[test]
+    fn a_click_on_a_window_that_died_after_render_commits_a_no_op_activation() {
+        // Keyboard parity via commit_target: the frozen ring still holds
+        // the handle, live state no longer does, so the commit activates
+        // nothing (the daemon still hides the overlay and ends the
+        // session).
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        let mut open = open.expect("session opened");
+        assert_eq!(open.ring.select(Handle(2)), Some(Handle(2)));
+        let closed = snapshot(vec![toplevel(1, &[1], State::default(), 30)], Some(1));
+        assert_eq!(commit_target(&open, &closed), None);
     }
 
     #[test]
