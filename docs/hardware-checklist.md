@@ -46,6 +46,29 @@ binary.
 - [ ] Regression: a quick Alt+Tab tap still switches, no lingering overlay
 - [ ] Regression: Shift+Tab still walks back
 
+### Pointer select (hover, click, wheel)
+
+- [ ] Rest the cursor where the card will appear, then Alt+Tab — the
+      selection does not jump to the row under it, and jitter inside
+      that row moves nothing either
+- [ ] Crossing rows walks the highlight one row per crossing; parking on
+      a row and releasing Alt focuses it
+- [ ] Leaving the card and returning to the same row re-selects it
+- [ ] Click each row of a 5+-window list mid-hold — the clicked window
+      focuses, the overlay unmaps, and a later Alt release is inert
+- [ ] Repeat the click pass at 200% scale — clicks still land on the
+      clicked row
+- [ ] A click with the cursor off the card changes nothing; Alt release
+      still commits the selection
+- [ ] The wheel steps the list one row per notch, both directions,
+      wrapping at the ends; a same-app overlay wheels within its own
+      filtered list
+- [ ] A slow mouse scan holds the overlay open (no 2 s idle close); the
+      30 s hard close still applies
+- [ ] The cursor stays visible over the card
+- [ ] Regression: Tab / Shift+Tab / arrows / Enter / Escape / Alt
+      release / quick tap behave exactly as before
+
 ### Same-app and quick toggle
 
 - [ ] Alt+grave opens the overlay listing only the current application's
