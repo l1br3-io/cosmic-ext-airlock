@@ -655,11 +655,16 @@ fn step_and_show(
         Some(open) => (open.scope, open.palette),
         None => {
             settings.refresh();
-            // TH2 stub: the system-preference read lands in TH3; `None`
-            // resolves dark, so `auto` paints today's card for now.
+            // `auto` asks the system once per open — two small file reads
+            // at most, and pinned values never touch the disk at all.
+            // `None` (unreadable preference) paints dark, never a broken
+            // switch.
+            let system_prefers_dark = (settings.settings.theme == crate::ui::ThemeSetting::Auto)
+                .then(crate::theme::system_prefers_dark)
+                .flatten();
             (
                 resolve_scope(snapshot, &settings.settings),
-                crate::ui::Palette::resolve(settings.settings.theme, None),
+                crate::ui::Palette::resolve(settings.settings.theme, system_prefers_dark),
             )
         }
     };

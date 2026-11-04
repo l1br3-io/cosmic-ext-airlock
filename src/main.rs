@@ -7,6 +7,7 @@ mod install;
 mod ipc;
 mod settings;
 mod switcher;
+mod theme;
 mod ui;
 mod wayland;
 
