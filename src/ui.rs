@@ -94,11 +94,25 @@ pub const RADIUS: u32 = 12;
 pub const BORDER: u32 = 1;
 
 /// Maximum title columns shown before elision. 64 columns of 8-px text
-/// keeps the card at 596 logical px wide — cosmic-launcher's fixed
+/// keeps the title territory at 596 logical px — cosmic-launcher's fixed
 /// switcher width and the cross-platform consensus cap of ~600 (research
 /// record §2.6, §2.10). The 8-px re-pin spends its savings on more first
-/// words per title, not on a narrower card.
+/// words per title, not on a narrower card; the hint band rides on top
+/// of the cap rather than under it (rev 2's recorded decision: the card
+/// widens by the band, the title budget does not fund it).
 pub const MAX_COLS: u32 = 64;
+
+/// Gap between the title band's right edge and the hint band, logical
+/// px. The hint's territory is its own, never the title's — a
+/// max-columns title still clears it by the full gap. Two 8-grid
+/// steps; judged beside a 64-column title on the preview sheet
+/// (2026-11-04) before freezing.
+pub const HINT_GAP: u32 = 16;
+
+/// Reserved hint columns (the longest label, `Ctrl+9`). Structural:
+/// every card carries the band regardless of row count; only rows 1..9
+/// paint in it.
+pub const HINT_COLS: u32 = 6; // len("Ctrl+9")
 
 /// How long the overlay stays up before closing itself when idle.
 pub const CLOSE_AFTER: Duration = Duration::from_secs(2);
@@ -150,13 +164,14 @@ const _: () = {
     assert!(COLOR_SELECTED_BG >> 24 >= 0xFA);
 };
 
-/// One card polarity: the four colors an overlay render paints with.
-/// `selected_bg` and `border` stay *derived* — the text color at 20% /
-/// 18% over the card ([`COLOR_SELECTED_BG`] / [`COLOR_BORDER`]) — so a
-/// palette is two chosen colors, two computed ones, and the polarity
-/// itself; the blend system is the design system, and no variant can
-/// drift from it. `is_dark` is the icon-tint polarity: symbolic icons
-/// cache per polarity because their tint is the palette's text.
+/// One card polarity: the five colors an overlay render paints with.
+/// `selected_bg`, `border`, and `muted` stay *derived* — the text color
+/// at 20% / 18% / 55% over the card ([`COLOR_SELECTED_BG`] /
+/// [`COLOR_BORDER`] for the dark card) — so a palette is two chosen
+/// colors, three computed ones, and the polarity itself; the blend
+/// system is the design system, and no variant can drift from it.
+/// `is_dark` is the icon-tint polarity: symbolic icons cache per
+/// polarity because their tint is the palette's text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
     /// Card fill ([`COLOR_BACKGROUND`] on the dark card).
@@ -167,6 +182,12 @@ pub struct Palette {
     pub selected_bg: u32,
     /// Card hairline: text at 18% over the card.
     pub border: u32,
+    /// Row hints (`Ctrl+N`): the text color at 55% over the card. Reads
+    /// on both polarities and over the selection band, whose fill shifts
+    /// by the selection's own 20% blend. Mid-band of the judged 50–70
+    /// range; frozen on the preview sheet 2026-11-04, where the tightest
+    /// read was muted-over-selection on the light card.
+    pub muted: u32,
     /// Which polarity this card is — the icon cache's tint key.
     pub is_dark: bool,
 }
@@ -180,6 +201,7 @@ impl Palette {
             text: COLOR_TEXT,
             selected_bg: COLOR_SELECTED_BG,
             border: COLOR_BORDER,
+            muted: blend_over(COLOR_BACKGROUND, COLOR_TEXT, 55),
             is_dark: true,
         }
     }
@@ -203,6 +225,7 @@ impl Palette {
             text: TEXT,
             selected_bg: blend_over(BACKGROUND, TEXT, 20),
             border: blend_over(BACKGROUND, TEXT, 22),
+            muted: blend_over(BACKGROUND, TEXT, 55),
             is_dark: false,
         }
     }
@@ -257,6 +280,7 @@ const _: () = {
     assert!(RADIUS.is_multiple_of(4));
     assert!(ICON.is_multiple_of(8));
     assert!(ICON_GAP.is_multiple_of(4));
+    assert!(HINT_GAP.is_multiple_of(4));
     assert!(ROW_PAD_Y.is_multiple_of(4));
     assert!(ROW_GAP.is_multiple_of(4));
     assert!(PAD_X.is_multiple_of(4));
@@ -382,7 +406,7 @@ pub fn overlay_model(
     let count = rows.len() as u32;
     Some(OverlayModel {
         rows,
-        width: 2 * PAD_X + ICON + ICON_GAP + cols * TEXT_W,
+        width: 2 * PAD_X + ICON + ICON_GAP + cols * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
         // The row gap lives between rows only; the bottom edge mirrors
         // the top.
         height: 2 * PAD_Y + count * ROW_H + (count - 1) * ROW_GAP,
@@ -506,11 +530,15 @@ pub fn render(
                 );
             }
         }
-        // Title: vertically centered against the row.
+        // Title: vertically centered against the row, stopping at the
+        // title band's right edge — the hint's territory is its own, so
+        // even a max-cols title can never touch a hint (the model sizes
+        // for `cols`; this guard is the defense in depth).
         let text_y = top + (ROW_H - TEXT_H) / 2;
+        let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * TEXT_W);
         let mut lx = PAD_X + ICON + ICON_GAP;
         for ch in row.title.chars() {
-            if lx + TEXT_W > lw.saturating_sub(PAD_X) {
+            if lx + TEXT_W > title_edge {
                 break;
             }
             draw_glyph(
@@ -523,6 +551,29 @@ pub fn render(
                 palette.text,
             );
             lx += TEXT_W;
+        }
+        // Hint: the row's Ctrl+N chord, right-aligned in the band the
+        // card always reserves and vertically centered on the titles'
+        // own line. Rows past nine paint nothing — every displayed hint
+        // is a wired key ([`hint_label`] is that truth's single source).
+        if let Some(label) = hint_label(index) {
+            let band_right = lw.saturating_sub(PAD_X);
+            let mut hx = band_right.saturating_sub(label.chars().count() as u32 * TEXT_W);
+            for ch in label.chars() {
+                if hx + TEXT_W > band_right {
+                    break; // a degenerate canvas: never paint past the card
+                }
+                draw_glyph(
+                    canvas,
+                    stride,
+                    glyph(ch),
+                    hx * scale,
+                    text_y * scale,
+                    TEXT_W * scale / GLYPH_W,
+                    palette.muted,
+                );
+                hx += TEXT_W;
+            }
         }
     }
     // Border ring last: inside the card but not fully inside the eroded
@@ -738,6 +789,22 @@ fn truncate_cols(title: String) -> String {
     } else {
         title
     }
+}
+
+/// The chords addressing the first nine rows, in row order — the render
+/// twin of `key_input`'s Ctrl+digit mapping. The pairing is unit-pinned:
+/// a label that outlives its wiring would be a dead key advertised on
+/// the card.
+const HINTS: [&str; 9] = [
+    "Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+6", "Ctrl+7", "Ctrl+8", "Ctrl+9",
+];
+
+/// The chord addressing `row` (0-based). Rows 1..9 are addressable and
+/// hinted; deeper rows return `None` and paint nothing. Every displayed
+/// hint is a wired key — this function is the single source of that
+/// truth, and `key_input`'s `Select` mapping is its input twin.
+fn hint_label(row: usize) -> Option<&'static str> {
+    HINTS.get(row).copied()
 }
 
 /// Keys the switcher gesture reacts to, normalized from keysyms.
@@ -1203,6 +1270,15 @@ mod tests {
         )
     }
 
+    /// The hint band's device pixels for `row`'s band at the rendered()
+    /// scale — where `render` paints a row's `Ctrl+N` chord.
+    fn hint_band_points(row: usize, width: u32) -> impl Iterator<Item = (u32, u32)> {
+        let top = (PAD_Y + row as u32 * (ROW_H + ROW_GAP)) * 2;
+        let x0 = (width - PAD_X - HINT_COLS * TEXT_W) * 2;
+        let x1 = (width - PAD_X) * 2;
+        (x0..x1).flat_map(move |x| (top..top + ROW_H * 2).map(move |y| (x, y)))
+    }
+
     #[test]
     fn overlay_model_lists_eligible_windows_in_mru_order_only() {
         let snap = snapshot(
@@ -1359,7 +1435,10 @@ mod tests {
         );
         let model =
             build(&short, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
-        assert_eq!(model.width, 2 * PAD_X + ICON + ICON_GAP + TEXT_W);
+        assert_eq!(
+            model.width,
+            2 * PAD_X + ICON + ICON_GAP + TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
+        );
         assert_eq!(model.height, 2 * PAD_Y + ROW_H);
 
         let tall = snapshot(
@@ -1372,7 +1451,10 @@ mod tests {
         );
         let model =
             build(&tall, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
-        assert_eq!(model.width, 2 * PAD_X + ICON + ICON_GAP + 7 * TEXT_W);
+        assert_eq!(
+            model.width,
+            2 * PAD_X + ICON + ICON_GAP + 7 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
+        );
         assert_eq!(model.height, 2 * PAD_Y + 3 * ROW_H + 2 * ROW_GAP);
     }
 
@@ -1392,9 +1474,81 @@ mod tests {
         );
         let model =
             build(&snap, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
-        assert_eq!(model.width, 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W);
-        // The research-informed cap: the widest card stays ≤ 600 logical px.
-        assert!(model.width <= 600, "card wider than the 600 px cap");
+        assert_eq!(
+            model.width,
+            2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
+        );
+        // The research-informed cap governs the title territory; rev 2's
+        // recorded decision widens the card by the structural hint band
+        // on top of it rather than taxing the 64-column title budget.
+        assert!(
+            model.width <= 600 + HINT_GAP + HINT_COLS * TEXT_W,
+            "card wider than the 600 px title cap plus the hint band"
+        );
+    }
+
+    #[test]
+    fn hint_label_addresses_exactly_rows_one_through_nine() {
+        // Rows 1..9 are addressable and hinted; row 10 onward paints
+        // nothing — no dead keys on the card (cosmic's own row-10 hint
+        // is an unwired upstream gap Airlock does not copy).
+        let labels = [
+            "Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+6", "Ctrl+7", "Ctrl+8",
+            "Ctrl+9",
+        ];
+        for (row, label) in labels.iter().enumerate() {
+            assert_eq!(hint_label(row), Some(*label), "row {row}");
+        }
+        assert_eq!(hint_label(9), None, "row 10 is not addressable");
+        assert_eq!(hint_label(usize::MAX), None);
+    }
+
+    #[test]
+    fn overlay_width_carries_the_structural_hint_band() {
+        // The band is furniture every card owns: the width formula
+        // reserves HINT_GAP + HINT_COLS whatever the row count — a
+        // one-row card and a fifteen-row card of equal titles are
+        // equally wide, whether or not any row paints a hint.
+        let single = snapshot(
+            vec![toplevel(
+                1,
+                "WWWWWWW",
+                "app.a",
+                &[1],
+                switcher::State::ACTIVATED,
+                2,
+            )],
+            Some(1),
+        );
+        let model =
+            build(&single, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
+        assert_eq!(
+            model.width,
+            2 * PAD_X + ICON + ICON_GAP + 7 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
+        );
+
+        let many: Vec<switcher::Toplevel> = (0..15)
+            .map(|index| {
+                toplevel(
+                    index + 1,
+                    "WWWWWWW",
+                    "app.a",
+                    &[1],
+                    if index == 0 {
+                        switcher::State::ACTIVATED
+                    } else {
+                        switcher::State::default()
+                    },
+                    15 - index,
+                )
+            })
+            .collect();
+        let tall = build(&snapshot(many, Some(1)), Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
+        assert_eq!(
+            tall.width, model.width,
+            "the band never varies with row count"
+        );
     }
 
     #[test]
@@ -1443,7 +1597,7 @@ mod tests {
                     handle: Handle(index as u64 + 1),
                 })
                 .collect(),
-            width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W,
+            width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + rows as u32 * ROW_H + (rows as u32 - 1) * ROW_GAP,
         }
     }
@@ -1546,6 +1700,24 @@ mod tests {
         assert_eq!(light.text, 0xFF_1E_21_26);
         assert_eq!(light.selected_bg, 0xFA_CB_C9_C7);
         assert_eq!(light.border, 0xFA_C7_C5_C3);
+    }
+
+    #[test]
+    fn muted_derives_by_the_blend_formula_on_both_polarities() {
+        // Hints: text at 55% over the card, hand-computed for both
+        // polarities so the derivation cannot drift — the same pin the
+        // selection and border carry. Dark: R 30→146, G 33→149, B 38→153
+        // over (0x1E2126, 0xF2F4F8); light: R 247→127, G 244→127,
+        // B 240→128 over (0xF7F4F0, 0x1E2126).
+        assert_eq!(Palette::dark().muted, 0xFA_92_95_99);
+        assert_eq!(Palette::light().muted, 0xFA_7F_7F_80);
+        for palette in [Palette::dark(), Palette::light()] {
+            assert_eq!(
+                palette.muted,
+                blend_over(palette.background, palette.text, 55),
+                "muted must be the palette's own two chosen colors blended"
+            );
+        }
     }
 
     #[test]
@@ -1671,7 +1843,7 @@ mod tests {
                 selected: false,
                 handle: Handle(1),
             }],
-            width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W,
+            width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
         };
         let (canvas, stride) = rendered(&model, 2);
@@ -1704,7 +1876,7 @@ mod tests {
                 selected: false,
                 handle: Handle(1),
             }],
-            width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W,
+            width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
         };
         let (canvas, stride) = rendered(&model, 2);
@@ -1908,7 +2080,10 @@ mod tests {
             for x in 2 * RADIUS..w - 2 * RADIUS {
                 let p = pixel(&canvas, stride, x, y);
                 assert!(
-                    p == COLOR_BACKGROUND || p == COLOR_SELECTED_BG || p == COLOR_TEXT,
+                    p == COLOR_BACKGROUND
+                        || p == COLOR_SELECTED_BG
+                        || p == COLOR_TEXT
+                        || p == Palette::dark().muted,
                     "interior pixel {p:#010x} at ({x}, {y}) is not a known color"
                 );
             }
@@ -1960,7 +2135,7 @@ mod tests {
                         handle: Handle(index as u64 + 1),
                     })
                     .collect(),
-                width: 2 * PAD_X + ICON + ICON_GAP + 8 * TEXT_W,
+                width: 2 * PAD_X + ICON + ICON_GAP + 8 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
                 height: 2 * PAD_Y + 5 * ROW_H + 4 * ROW_GAP,
             };
             let (canvas, stride) = rendered(&model, 2);
@@ -2001,6 +2176,154 @@ mod tests {
     }
 
     #[test]
+    fn render_paints_hints_on_rows_one_through_nine_only() {
+        // Twelve rows: the first nine carry their chord in the band;
+        // rows ten and deeper stay silent, and the silence is accurate —
+        // nine rows are addressable, nine are hinted.
+        let model = OverlayModel {
+            rows: (0..12)
+                .map(|index| RowModel {
+                    title: format!("Window {index}"),
+                    icon: None,
+                    selected: false,
+                    handle: Handle(index as u64 + 1),
+                })
+                .collect(),
+            width: 2 * PAD_X + ICON + ICON_GAP + 10 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
+            height: 2 * PAD_Y + 12 * ROW_H + 11 * ROW_GAP,
+        };
+        let (canvas, stride) = rendered(&model, 2);
+        let muted = Palette::dark().muted;
+        for row in 0..9 {
+            let hinted = hint_band_points(row, model.width)
+                .any(|(x, y)| pixel(&canvas, stride, x, y) == muted);
+            assert!(hinted, "row {row} shows no hint");
+        }
+        for row in 9..12 {
+            let silent = hint_band_points(row, model.width)
+                .all(|(x, y)| pixel(&canvas, stride, x, y) == COLOR_BACKGROUND);
+            assert!(silent, "row {row} paints in the band beyond the wired nine");
+        }
+    }
+
+    #[test]
+    fn hints_share_the_titles_vertical_centering() {
+        // The chord rides the row's own text line: the same centering
+        // math as the title, never lower or higher.
+        let model = OverlayModel {
+            rows: vec![RowModel {
+                title: "Solo".into(),
+                icon: None,
+                selected: false,
+                handle: Handle(1),
+            }],
+            width: 2 * PAD_X + ICON + ICON_GAP + 4 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
+            height: 2 * PAD_Y + ROW_H,
+        };
+        let (canvas, stride) = rendered(&model, 2);
+        let muted = Palette::dark().muted;
+        let text_top = (PAD_Y + (ROW_H - TEXT_H) / 2) * 2;
+        for (x, y) in hint_band_points(0, model.width) {
+            let p = pixel(&canvas, stride, x, y);
+            if y < text_top || y >= text_top + TEXT_H * 2 {
+                assert_eq!(
+                    p, COLOR_BACKGROUND,
+                    "hint pixel outside the text line at ({x}, {y})"
+                );
+            } else if p != COLOR_BACKGROUND {
+                assert_eq!(p, muted, "a non-fill band pixel must be the hint");
+            }
+        }
+    }
+
+    #[test]
+    fn the_selected_rows_hint_stays_muted() {
+        // The accessory rule: the selection colors the row's fill, never
+        // its hint — over the band the chord reads in the same muted
+        // color as every unselected row's.
+        let model = OverlayModel {
+            rows: vec![
+                RowModel {
+                    title: "Top".into(),
+                    icon: None,
+                    selected: true,
+                    handle: Handle(1),
+                },
+                RowModel {
+                    title: "Bottom".into(),
+                    icon: None,
+                    selected: false,
+                    handle: Handle(2),
+                },
+            ],
+            width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
+            height: 2 * PAD_Y + 2 * ROW_H + ROW_GAP,
+        };
+        let (canvas, stride) = rendered(&model, 2);
+        let muted = Palette::dark().muted;
+        let selected_band: Vec<u32> = hint_band_points(0, model.width)
+            .map(|(x, y)| pixel(&canvas, stride, x, y))
+            .collect();
+        assert!(
+            selected_band.contains(&muted),
+            "the selected row's hint is missing"
+        );
+        assert!(
+            selected_band
+                .iter()
+                .all(|&p| p == muted || p == COLOR_SELECTED_BG),
+            "the selected row's band paints something besides its hint and fill"
+        );
+    }
+
+    #[test]
+    fn render_keeps_a_max_cols_title_a_full_gap_clear_of_its_hint() {
+        // Defense in depth, pixel-proved: the widest title a card can
+        // carry still ends the full HINT_GAP before its hint's first
+        // glyph cell — the strip between them is pure card fill, and the
+        // moved clip guard cost the title nothing.
+        let model = OverlayModel {
+            rows: vec![RowModel {
+                title: "W".repeat(MAX_COLS as usize),
+                icon: None,
+                selected: false,
+                handle: Handle(1),
+            }],
+            width: 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
+            height: 2 * PAD_Y + ROW_H,
+        };
+        let (canvas, stride) = rendered(&model, 2);
+
+        let title_end = (PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W) * 2;
+        let hint_start = (model.width - PAD_X - HINT_COLS * TEXT_W) * 2;
+        assert_eq!(hint_start - title_end, HINT_GAP * 2);
+        for y in PAD_Y * 2..(PAD_Y + ROW_H) * 2 {
+            for x in title_end..hint_start {
+                assert_eq!(
+                    pixel(&canvas, stride, x, y),
+                    COLOR_BACKGROUND,
+                    "the title/hint gap is not pure fill at ({x}, {y})"
+                );
+            }
+        }
+        // The last title glyph still paints (font column 6 of 'W' is
+        // lit) — the guard clips at the title band's edge, not earlier.
+        let last_cell_x = (PAD_X + ICON + ICON_GAP + (MAX_COLS - 1) * TEXT_W) * 2;
+        let text_top = (PAD_Y + (ROW_H - TEXT_H) / 2) * 2;
+        let block = TEXT_W * 2 / GLYPH_W;
+        assert_eq!(
+            pixel(&canvas, stride, last_cell_x + 6 * block, text_top),
+            COLOR_TEXT
+        );
+        // And the hint paints beside it.
+        let muted = Palette::dark().muted;
+        assert!(
+            hint_band_points(0, model.width).any(|(x, y)| pixel(&canvas, stride, x, y) == muted),
+            "no hint beside the max-cols title"
+        );
+    }
+
+    #[test]
     fn render_ten_rows_completes_quickly() {
         // Generous-bound guard for the "imperceptible render" requirement:
         // catches pathological regressions, not millisecond drift. At
@@ -2014,7 +2337,7 @@ mod tests {
                     handle: Handle(i as u64 + 1),
                 })
                 .collect(),
-            width: 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W,
+            width: 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + 10 * ROW_H + 9 * ROW_GAP,
         };
         let (w, h) = (model.width * 2, model.height * 2);
@@ -2629,6 +2952,46 @@ mod tests {
                 shift: false
             }
         );
+    }
+
+    #[test]
+    fn every_displayed_hint_is_a_wired_key() {
+        // The render twin of the input mapping: the label on row N names
+        // the chord that activates row N. The pairing is pinned end to
+        // end so the two tables cannot drift — a hinted-but-unwired row
+        // would be a dead key advertised on the card.
+        let digits = [
+            (Keysym::_1, 0),
+            (Keysym::_2, 1),
+            (Keysym::_3, 2),
+            (Keysym::_4, 3),
+            (Keysym::_5, 4),
+            (Keysym::_6, 5),
+            (Keysym::_7, 6),
+            (Keysym::_8, 7),
+            (Keysym::_9, 8),
+        ];
+        for (keysym, row) in digits {
+            assert_eq!(
+                key_input(keysym, false, true),
+                GestureInput::Press {
+                    key: GestureKey::Select(row),
+                    shift: false
+                },
+                "the chord hinted on row {row} must wire that row"
+            );
+            let chord = format!("Ctrl+{}", row + 1);
+            assert_eq!(
+                hint_label(row),
+                Some(chord.as_str()),
+                "row {row}'s label must name its own chord"
+            );
+        }
+        // The reserved band fits the longest label exactly — nothing
+        // spare to misalign, nothing clipped.
+        let longest = HINTS.iter().map(|label| label.len()).max().unwrap();
+        assert_eq!(HINT_COLS as usize, longest);
+        assert_eq!(HINTS.len(), 9, "nine wired rows, nine labels");
     }
 
     #[test]

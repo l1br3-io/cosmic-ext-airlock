@@ -2,7 +2,9 @@
 //! design-review loop for `overlay-visuals`. Each scenario is drawn twice,
 //! over a dark and a light backdrop, so the card, border, and corners can
 //! be judged on both wallpaper polarities exactly as the design skill's
-//! review step demands. `--light` judges the light palette's card.
+//! review step demands. `--light` judges the light palette's card. Every
+//! row carries the structural `Ctrl+N` hint band (number-select rev 2);
+//! the long list shows rows past nine unhinted.
 //!
 //! ```sh
 //! cargo run --example overlay-preview -- preview.png [--scale 2] [--light]
@@ -206,6 +208,15 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
             ],
             ..single()
         },
+        // Rev 2's no-collision judgment: the widest title a card carries
+        // beside its right-aligned hint, plus a selected hinted row.
+        OverlayModel {
+            rows: vec![
+                row(&elided, icons[8].clone(), false),
+                row("Short title", icons[9].clone(), true),
+            ],
+            ..single()
+        },
         // A long list: what a busy workspace looks like at full height.
         OverlayModel {
             rows: (0..12)
@@ -222,7 +233,8 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
     ]
     .into_iter()
     .map(|mut model| {
-        // Width/height from the widest title, mirroring overlay_model.
+        // Width/height from the widest title, mirroring overlay_model —
+        // hint band included (rev 2).
         let cols = model
             .rows
             .iter()
@@ -230,7 +242,12 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
             .max()
             .unwrap_or(1);
         let count = model.rows.len() as u32;
-        model.width = 2 * ui::PAD_X + ui::ICON + ui::ICON_GAP + cols * ui::TEXT_W;
+        model.width = 2 * ui::PAD_X
+            + ui::ICON
+            + ui::ICON_GAP
+            + cols * ui::TEXT_W
+            + ui::HINT_GAP
+            + ui::HINT_COLS * ui::TEXT_W;
         model.height = 2 * ui::PAD_Y + count * ui::ROW_H + (count - 1) * ui::ROW_GAP;
         model
     })
