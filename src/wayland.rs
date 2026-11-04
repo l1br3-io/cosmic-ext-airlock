@@ -263,6 +263,10 @@ pub(crate) struct App {
     /// Pointer inputs queued by the pointer handler during dispatch;
     /// drained beside the gesture inputs.
     pointer_inputs: Vec<PointerInput>,
+    /// Sub-notch wheel position in `value120` units, carried across
+    /// pointer frames so a notch split over several deltas still steps
+    /// exactly once (see [`ui::wheel_notches`]).
+    wheel_residual: i32,
     /// Identity maps so plain ids stay stable across snapshots for the
     /// daemon's lifetime; first-seen order assigns them.
     workspace_ids: HashMap<ExtWorkspaceHandleV1, WorkspaceId>,
@@ -596,11 +600,19 @@ impl PointerHandler for App {
                     }
                 }
                 PointerEventKind::Axis { vertical, .. } => {
-                    // One Wheel input per logical notch, the vertical axis
-                    // only: v120 first, the legacy discrete step when the
-                    // compositor sends no v120; continuous touchpad scroll
-                    // reports neither and steps nothing.
-                    let notches = ui::wheel_notches(vertical.value120, vertical.discrete);
+                    // One Wheel input per whole notch, the vertical axis
+                    // only. v120 first, its sub-notch remainder carried
+                    // into the next event so a notch split across deltas
+                    // (60+60, a touchpad's stream) steps exactly once;
+                    // the legacy discrete step applies only when the
+                    // compositor sends no v120 and is whole notches
+                    // already.
+                    let (notches, residual) = ui::wheel_notches(
+                        vertical.value120,
+                        vertical.discrete,
+                        self.wheel_residual,
+                    );
+                    self.wheel_residual = residual;
                     if notches != 0 {
                         let direction = if notches > 0 {
                             Direction::Next
@@ -1088,6 +1100,7 @@ impl Session {
             overlay: None,
             gesture_inputs: Vec::new(),
             pointer_inputs: Vec::new(),
+            wheel_residual: 0,
             registry_state,
             workspace_ids: HashMap::new(),
             next_workspace_id: 0,

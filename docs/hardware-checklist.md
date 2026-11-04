@@ -63,6 +63,9 @@ binary.
 - [ ] The wheel steps the list one row per notch, both directions,
       wrapping at the ends; a same-app overlay wheels within its own
       filtered list
+- [ ] A high-resolution wheel or trackpad scroll (deltas split below one
+      notch) advances the selection linearly — total rotation, not per
+      frame speed, decides the steps; slow and flicks agree
 - [ ] A slow mouse scan holds the overlay open (no 2 s idle close); the
       30 s hard close still applies
 - [ ] The cursor stays visible over the card

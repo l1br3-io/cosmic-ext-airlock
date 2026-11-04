@@ -838,16 +838,25 @@ pub fn key_input(keysym: Keysym, shift_held: bool) -> GestureInput {
     GestureInput::Press { key, shift }
 }
 
-/// One wheel event's logical notches: sign is the direction (positive =
-/// one [`Direction::Next`] step), magnitude the notch count. Each ±120
-/// in `value120` is one notch; the deprecated `discrete` step is the
-/// pre-v120 equivalent and applies only when the compositor sends no
-/// `value120`; continuous (touchpad) scroll reports neither and yields 0.
-pub fn wheel_notches(value120: i32, discrete: i32) -> i32 {
+/// One wheel event's whole notches plus the sub-notch `value120` residual
+/// to carry into the next event: the returned notches' sign is the
+/// direction (positive = one [`Direction::Next`] step), its magnitude the
+/// notch count, and the returned residual is what did not reach a whole
+/// ±120. `value120` counts 1/120ths of a notch, so a physical notch may
+/// arrive split across events (60+60, or a touchpad's stream of small
+/// deltas) and only the carried residual keeps the step count linear in
+/// the total rotation — the protocol pins 60+60 = 1 notch and 60−60 = 0
+/// notches, so the residual keeps its sign. The deprecated `discrete`
+/// step is the pre-v120 equivalent, is already whole notches, applies
+/// only when the compositor sends no `value120`, and never touches the
+/// residual; an event reporting neither field steps nothing.
+pub fn wheel_notches(value120: i32, discrete: i32, residual: i32) -> (i32, i32) {
     if value120 != 0 {
-        value120 / 120
+        let total = residual + value120;
+        let notches = total / 120;
+        (notches, total - notches * 120)
     } else {
-        discrete
+        (discrete, residual)
     }
 }
 
@@ -2214,25 +2223,62 @@ mod tests {
     #[test]
     fn wheel_notches_counts_value120_steps_with_sign() {
         // Each multiple of ±120 is one notch; positive is one Next step.
-        assert_eq!(wheel_notches(120, 0), 1);
-        assert_eq!(wheel_notches(-120, 0), -1);
-        assert_eq!(wheel_notches(240, 0), 2);
-        assert_eq!(wheel_notches(-240, 0), -2);
-        // A sub-notch accumulation is not a step yet.
-        assert_eq!(wheel_notches(60, 0), 0);
+        // Exact multiples leave nothing in the residual.
+        assert_eq!(wheel_notches(120, 0, 0), (1, 0));
+        assert_eq!(wheel_notches(-120, 0, 0), (-1, 0));
+        assert_eq!(wheel_notches(240, 0, 0), (2, 0));
+        assert_eq!(wheel_notches(-240, 0, 0), (-2, 0));
+    }
+
+    #[test]
+    fn wheel_notches_accumulates_sub_notch_deltas_linearly() {
+        // v120 counts 1/120ths of a notch, so a physical notch may arrive
+        // split across deltas. The residual carries the sub-notch part
+        // into the next event: the protocol's own examples are 60+60 = 1
+        // notch and 60-60 = 0 notches. Truncating each event on its own
+        // instead dropped split notches entirely — the wheel stepped
+        // non-linearly.
+        assert_eq!(wheel_notches(60, 0, 0), (0, 60));
+        assert_eq!(wheel_notches(60, 0, 60), (1, 0));
+        // Reversing an uncommitted half notch cancels it.
+        assert_eq!(wheel_notches(-60, 0, 60), (0, 0));
+        // A full sequence of split deltas steps exactly once per notch
+        // whatever the split: four 60s are two notches (this sequence
+        // stepped zero times before the residual existed).
+        let mut residual = 0;
+        let mut steps = 0;
+        for _ in 0..4 {
+            let (notches, next) = wheel_notches(60, 0, residual);
+            steps += notches;
+            residual = next;
+        }
+        assert_eq!((steps, residual), (2, 0));
+        // High-resolution deltas (a notch as 40+40+40, a touchpad's
+        // stream of 30s) step per crossed 120, remainder carried: 510
+        // total is four whole notches.
+        let mut residual = 0;
+        let mut steps = 0;
+        for delta in [40, 40, 40, 30, 30, 30, 30, 90, 90, 90] {
+            let (notches, next) = wheel_notches(delta, 0, residual);
+            steps += notches;
+            residual = next;
+        }
+        assert_eq!((steps, residual), (4, 30));
     }
 
     #[test]
     fn wheel_notches_falls_back_to_the_legacy_discrete_step() {
-        // Pre-v120 compositors report whole steps in `discrete` only.
-        assert_eq!(wheel_notches(0, 1), 1);
-        assert_eq!(wheel_notches(0, -2), -2);
+        // Pre-v120 compositors report whole steps in `discrete` only;
+        // whole steps never touch the v120 residual.
+        assert_eq!(wheel_notches(0, 1, 0), (1, 0));
+        assert_eq!(wheel_notches(0, -2, 60), (-2, 60));
     }
 
     #[test]
     fn wheel_notches_on_continuous_scroll_steps_nothing() {
-        // Touchpad and other continuous sources report neither field.
-        assert_eq!(wheel_notches(0, 0), 0);
+        // An event carrying neither field disturbs nothing: the residual
+        // waits for the next v120 delta.
+        assert_eq!(wheel_notches(0, 0, 60), (0, 60));
     }
 
     #[test]
