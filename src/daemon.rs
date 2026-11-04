@@ -91,6 +91,10 @@ pub struct Switch {
     /// snapshots are re-filtered by it, but a mid-gesture press never
     /// re-anchors.
     app: Option<String>,
+    /// The card this session paints, resolved once at open beside the
+    /// scope and frozen for the session's life — a theme edit landing
+    /// mid-gesture never repaints under held Alt (the scope philosophy).
+    palette: crate::ui::Palette,
 }
 
 /// Whether an open session still matches reality: the workspace it was
@@ -134,14 +138,15 @@ pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> 
 /// window — so one step lands on the MRU-second (or wraps to the least
 /// recent). Later presses reuse the same ring instead of rebuilding it:
 /// walking three windows takes three presses, unlike T4's per-press rebuild
-/// which toggled between the front two. `scope` is consumed only when the
-/// session opens; an already-open session keeps the scope it was built
-/// with.
+/// which toggled between the front two. `scope` and `palette` are consumed
+/// only when the session opens; an already-open session keeps the ones it
+/// was built with.
 pub fn ring_step(
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
     direction: Direction,
     scope: Scope,
+    palette: crate::ui::Palette,
 ) -> Option<Handle> {
     if open.is_none() {
         let active = snapshot.active?;
@@ -150,6 +155,7 @@ pub fn ring_step(
             workspace: active,
             scope,
             app: None,
+            palette,
         });
     }
     match direction {
@@ -168,18 +174,21 @@ pub fn ring_step(
 /// selected, and the next press starts fresh. An already-open session steps
 /// its frozen ring whatever key stepped it; a same-app session re-filters
 /// the fresh snapshot by its frozen anchor (see [`step_and_show`]), but the
-/// ring itself never rebuilds — the same freeze philosophy as the scope.
+/// ring itself never rebuilds — the same freeze philosophy as the scope and
+/// the palette, both consumed only when the session opens.
 pub fn session_step(
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
     direction: Direction,
     scope: Scope,
     same_app: bool,
+    palette: crate::ui::Palette,
 ) -> Option<Handle> {
-    // An open session steps its frozen ring; the snapshot and scope only
-    // matter when a session opens. Plain opens go straight through.
+    // An open session steps its frozen ring; the snapshot, scope, and
+    // palette only matter when a session opens. Plain opens go straight
+    // through.
     if open.is_some() || !same_app {
-        return ring_step(open, snapshot, direction, scope);
+        return ring_step(open, snapshot, direction, scope, palette);
     }
     // A new same-app session: anchor, narrow, and hold the two-window
     // floor — one window of the app is nothing to cycle.
@@ -189,7 +198,7 @@ pub fn session_step(
     if view.toplevels.len() < 2 {
         return None;
     }
-    let selected = ring_step(open, &view, direction, scope);
+    let selected = ring_step(open, &view, direction, scope, palette);
     // ring_step stored the session on the filtered ring; freeze the anchor
     // into it so later steps re-filter by it.
     if let Some(session) = open.as_mut() {
@@ -625,8 +634,9 @@ fn activate_row(
 ///
 /// Session open is the only moment settings matter: the config is
 /// stat-checked and re-resolved exactly when a session starts, and an
-/// already-open session keeps the scope it was built with — a mid-gesture
-/// edit must not swap the list under the user's held Alt.
+/// already-open session keeps the scope and palette it was built with — a
+/// mid-gesture edit must not swap the list or the card under the user's
+/// held Alt.
 ///
 /// Icons are prepared in [`show_selection`], at the session's render
 /// scale: every app already seen by the daemon is a cache hit, and a
@@ -641,14 +651,26 @@ fn step_and_show(
     settings: &mut LiveSettings,
     icons: &mut crate::icons::Cache,
 ) {
-    let scope = match open {
-        Some(open) => open.scope,
+    let (scope, palette) = match open {
+        Some(open) => (open.scope, open.palette),
         None => {
             settings.refresh();
-            resolve_scope(snapshot, &settings.settings)
+            // TH2 stub: the system-preference read lands in TH3; `None`
+            // resolves dark, so `auto` paints today's card for now.
+            (
+                resolve_scope(snapshot, &settings.settings),
+                crate::ui::Palette::resolve(settings.settings.theme, None),
+            )
         }
     };
-    session_step(open, snapshot, step.direction, scope, step.same_app);
+    session_step(
+        open,
+        snapshot,
+        step.direction,
+        scope,
+        step.same_app,
+        palette,
+    );
     show_selection(session, gesture, open, snapshot, icons);
 }
 
@@ -667,10 +689,12 @@ fn show_selection(
     snapshot: &Snapshot,
     icons: &mut crate::icons::Cache,
 ) {
-    // The card this session paints. Dark until TH2 freezes a palette on
-    // the open session; every consumer below (icon tint, model, surface)
-    // must draw with the same one.
-    let palette = crate::ui::Palette::dark();
+    // The card this session paints: the palette frozen at open. A closed
+    // session has nothing to paint — dark is the never-drawn default the
+    // icon prepare below runs under.
+    let palette = open
+        .as_ref()
+        .map_or_else(crate::ui::Palette::dark, |session| session.palette);
     let scale = session.render_scale();
     icons.prepare(
         snapshot
@@ -713,7 +737,7 @@ fn fresh_snapshot(session: &mut wayland::Session, mru: &mut Mru) -> Snapshot {
 mod tests {
     use super::*;
     use crate::switcher::WorkspaceId;
-    use crate::ui::GestureKey;
+    use crate::ui::{GestureKey, Palette};
 
     fn toplevel(handle: u64, workspaces: &[u64], state: State, last_activated: u64) -> Toplevel {
         Toplevel {
@@ -851,7 +875,13 @@ mod tests {
         );
         let mut open = None;
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                Palette::dark()
+            ),
             Some(Handle(2))
         );
     }
@@ -872,7 +902,8 @@ mod tests {
                 &mut open,
                 &snap,
                 Direction::Previous,
-                Scope::CurrentWorkspace
+                Scope::CurrentWorkspace,
+                Palette::dark()
             ),
             Some(Handle(3))
         );
@@ -890,15 +921,33 @@ mod tests {
         );
         let mut open = None;
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                Palette::dark()
+            ),
             Some(Handle(2))
         );
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                Palette::dark()
+            ),
             Some(Handle(3))
         );
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                Palette::dark()
+            ),
             Some(Handle(1))
         );
         assert_eq!(
@@ -906,7 +955,8 @@ mod tests {
                 &mut open,
                 &snap,
                 Direction::Previous,
-                Scope::CurrentWorkspace
+                Scope::CurrentWorkspace,
+                Palette::dark()
             ),
             Some(Handle(3))
         );
@@ -927,7 +977,13 @@ mod tests {
         );
         let mut open = None;
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                Palette::dark()
+            ),
             Some(Handle(4))
         );
     }
@@ -937,7 +993,13 @@ mod tests {
         let snap = snapshot(vec![toplevel(1, &[2], State::ACTIVATED, 30)], Some(1));
         let mut open = None;
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                Palette::dark()
+            ),
             None
         );
         assert_eq!(
@@ -945,7 +1007,8 @@ mod tests {
                 &mut open,
                 &snap,
                 Direction::Previous,
-                Scope::CurrentWorkspace
+                Scope::CurrentWorkspace,
+                Palette::dark()
             ),
             None
         );
@@ -956,14 +1019,26 @@ mod tests {
         let snap = snapshot(vec![toplevel(1, &[1], State::ACTIVATED, 30)], None);
         let mut open = None;
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                Palette::dark()
+            ),
             None
         );
         // No ring was cached, so a later snapshot with an active workspace
         // can still open one.
         let snap = snapshot(vec![toplevel(1, &[1], State::ACTIVATED, 30)], Some(1));
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                Palette::dark()
+            ),
             Some(Handle(1))
         );
     }
@@ -978,7 +1053,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let open = open.expect("session opened");
         assert!(session_holds(&open, &snap));
     }
@@ -993,7 +1074,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let open = open.expect("session opened");
 
         // Even a sticky selection — still switchable everywhere — is voided
@@ -1018,7 +1105,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let open = open.expect("session opened");
 
         let closed = snapshot(vec![toplevel(1, &[1], State::default(), 30)], Some(1));
@@ -1035,7 +1128,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let open = open.expect("session opened");
 
         let moved = snapshot(
@@ -1058,7 +1157,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let open = open.expect("session opened");
 
         let minimized = snapshot(
@@ -1082,7 +1187,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let open = open.expect("session opened");
 
         let unstickied = snapshot(
@@ -1105,7 +1216,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let open = open.expect("session opened");
         assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
     }
@@ -1120,7 +1237,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let open = open.expect("session opened");
 
         let moved = snapshot(
@@ -1147,7 +1270,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.selected(), Some(Handle(2)));
         assert_eq!(open.ring.select(Handle(3)), Some(Handle(3)));
@@ -1168,7 +1297,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.select(Handle(4)), None);
         assert_eq!(open.ring.selected(), Some(Handle(2)));
@@ -1188,7 +1323,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.select(Handle(2)), Some(Handle(2)));
         let closed = snapshot(vec![toplevel(1, &[1], State::default(), 30)], Some(1));
@@ -1211,7 +1352,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let mut open = open.expect("session opened");
 
         let mut gesture = Gesture::default();
@@ -1256,7 +1403,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let open = open.expect("session opened");
         assert_eq!(open.ring.selected(), Some(Handle(2)));
 
@@ -1296,7 +1449,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.select(Handle(4)), None);
         assert_eq!(open.ring.selected(), Some(Handle(2)));
@@ -1317,7 +1476,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let mut open = open.expect("session opened");
         let mut hover = PointerHover::default();
         assert_eq!(hover.observe(Some(2)), None, "map-time contact seeds");
@@ -1339,7 +1504,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
         let mut open = open.expect("session opened");
         let mut hover = PointerHover::default();
         assert_eq!(hover.observe(Some(2)), None, "map-time contact seeds");
@@ -1455,7 +1626,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                true
+                true,
+                Palette::dark()
             ),
             Some(Handle(3)),
             "the browser never enters the ring; the app's own MRU-second lands first"
@@ -1475,7 +1647,8 @@ mod tests {
                 &snap,
                 Direction::Previous,
                 Scope::CurrentWorkspace,
-                true
+                true,
+                Palette::dark()
             ),
             Some(Handle(4))
         );
@@ -1493,7 +1666,14 @@ mod tests {
         ];
         for (direction, expected) in steps {
             assert_eq!(
-                session_step(&mut open, &snap, direction, Scope::CurrentWorkspace, true),
+                session_step(
+                    &mut open,
+                    &snap,
+                    direction,
+                    Scope::CurrentWorkspace,
+                    true,
+                    Palette::dark()
+                ),
                 expected
             );
         }
@@ -1515,7 +1695,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                true
+                true,
+                Palette::dark()
             ),
             None
         );
@@ -1538,7 +1719,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                true
+                true,
+                Palette::dark()
             ),
             None
         );
@@ -1555,6 +1737,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             true,
+            Palette::dark(),
         );
 
         // Mid-gesture, focus moves to the browser: the next press must
@@ -1574,7 +1757,8 @@ mod tests {
                 &refocused,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                true
+                true,
+                Palette::dark()
             ),
             Some(Handle(4))
         );
@@ -1596,6 +1780,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             true,
+            Palette::dark(),
         );
         assert_eq!(
             session_step(
@@ -1603,7 +1788,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                false
+                false,
+                Palette::dark()
             ),
             Some(Handle(4))
         );
@@ -1621,7 +1807,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                false
+                false,
+                Palette::dark()
             ),
             Some(Handle(2)),
             "a plain session steps the full ring: the global MRU-second"
@@ -1632,7 +1819,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                true
+                true,
+                Palette::dark()
             ),
             Some(Handle(3)),
             "the frozen plain ring keeps walking; the anchor never applies"
@@ -1653,7 +1841,14 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        session_step(&mut open, &snap, Direction::Next, Scope::All, true);
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::All,
+            true,
+            Palette::dark(),
+        );
         let open = open.expect("same-app session opened");
         assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
     }
@@ -1670,6 +1865,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             true,
+            Palette::dark(),
         );
         let open = open.expect("same-app session opened");
 
@@ -1711,15 +1907,33 @@ mod tests {
         );
         let mut open = None;
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next, Scope::All),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::All,
+                Palette::dark()
+            ),
             Some(Handle(2))
         );
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next, Scope::All),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::All,
+                Palette::dark()
+            ),
             Some(Handle(3))
         );
         assert_eq!(
-            ring_step(&mut open, &snap, Direction::Next, Scope::All),
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::All,
+                Palette::dark()
+            ),
             Some(Handle(1))
         );
     }
@@ -1734,7 +1948,13 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        ring_step(&mut open, &snap, Direction::Next, Scope::All);
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::All,
+            Palette::dark(),
+        );
         let open = open.expect("session opened");
         // The selection lives on workspace 2; under All that is commitable.
         assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
@@ -1746,6 +1966,7 @@ mod tests {
             workspace: WorkspaceId(1),
             scope: Scope::CurrentWorkspace,
             app: None,
+            palette: Palette::dark(),
         };
         assert_eq!(commit_target(&confined, &snap), None);
     }
@@ -1770,7 +1991,7 @@ mod tests {
         );
         for scope in [Scope::CurrentWorkspace, Scope::All] {
             let mut open = None;
-            ring_step(&mut open, &snap, Direction::Next, scope);
+            ring_step(&mut open, &snap, Direction::Next, scope, Palette::dark());
             let open = open.expect("session opened");
             assert!(session_holds(&open, &snap), "holds under {scope:?}");
             assert!(!session_holds(&open, &switched), "voids under {scope:?}");
@@ -1789,6 +2010,7 @@ mod tests {
             active: Some(WorkspaceId(1)),
         };
         let not_isolated = crate::settings::Settings {
+            theme: crate::ui::ThemeSetting::Auto,
             workspaces: vec![crate::settings::WorkspaceRule {
                 reference: crate::settings::WorkspaceRef::Name("browse".to_owned()),
                 isolated: false,
@@ -1887,5 +2109,81 @@ mod tests {
         }];
         live.refresh();
         assert_eq!(live.settings, crate::settings::Settings::default());
+    }
+
+    #[test]
+    fn refresh_adopts_a_theme_change() {
+        // Live apply: editing `theme` takes effect on the refresh a next
+        // invocation performs — no daemon restart.
+        let dir = TempDir::new("theme-flip");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, b"theme = \"dark\"\n").expect("write");
+        let mut live = live_at(path.clone());
+        live.refresh();
+        assert_eq!(live.settings.theme, crate::ui::ThemeSetting::Dark);
+
+        std::fs::write(&path, b"theme = \"light\"\n").expect("rewrite");
+        live.refresh();
+        assert_eq!(live.settings.theme, crate::ui::ThemeSetting::Light);
+    }
+
+    /// The palette twin of the frozen-scope seam: the card is resolved
+    /// once at session open and frozen for the session's life — a theme
+    /// edit landing mid-gesture (here: the palette the next invocation
+    /// would resolve) changes nothing until the session closes and the
+    /// next press starts fresh.
+    #[test]
+    fn an_open_session_keeps_its_frozen_palette_across_a_theme_edit() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            crate::ui::Palette::dark(),
+        );
+        assert_eq!(
+            open.as_ref().expect("session opened").palette,
+            crate::ui::Palette::dark()
+        );
+
+        // The config flips to light between presses; the open session
+        // still paints the card it was opened with.
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            crate::ui::Palette::light(),
+        );
+        assert_eq!(
+            open.as_ref().expect("session still open").palette,
+            crate::ui::Palette::dark(),
+            "a mid-gesture theme edit must not repaint the open session"
+        );
+
+        // The next press after the session ends starts fresh: light.
+        open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            crate::ui::Palette::light(),
+        );
+        assert_eq!(
+            open.as_ref().expect("fresh session opened").palette,
+            crate::ui::Palette::light()
+        );
     }
 }

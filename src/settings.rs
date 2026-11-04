@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::switcher::{Scope, Workspace, WorkspaceId};
+use crate::ui::ThemeSetting;
 
 /// Cap on config size: reloads run at session open, on the gesture path,
 /// so a pathological file must never stall switching.
@@ -47,6 +48,8 @@ pub enum WorkspaceRef {
 /// Parsed settings. An empty one reproduces v1 behavior everywhere.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Settings {
+    /// Which card the overlay paints; missing key = [`ThemeSetting::Auto`].
+    pub theme: ThemeSetting,
     pub workspaces: Vec<WorkspaceRule>,
 }
 
@@ -122,10 +125,32 @@ impl Settings {
     }
 }
 
-/// Walks a parsed document: `[[workspace]]` entries become rules.
+/// Walks a parsed document: the top-level `theme` key becomes the
+/// [`ThemeSetting`], `[[workspace]]` entries become rules.
 fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
+    let theme = match root.get("theme") {
+        None => ThemeSetting::Auto,
+        Some(value) => match value.as_str() {
+            Some("auto") => ThemeSetting::Auto,
+            Some("dark") => ThemeSetting::Dark,
+            Some("light") => ThemeSetting::Light,
+            Some(_) => {
+                return Err(SettingsError::InvalidFile {
+                    problem: "`theme` must be one of \"auto\", \"dark\", or \"light\"",
+                });
+            }
+            None => {
+                return Err(SettingsError::InvalidFile {
+                    problem: "`theme` must be a string",
+                });
+            }
+        },
+    };
     let Some(entries) = root.get("workspace") else {
-        return Ok(Settings::default());
+        return Ok(Settings {
+            theme,
+            ..Settings::default()
+        });
     };
     let Some(entries) = entries.as_array() else {
         return Err(SettingsError::InvalidFile {
@@ -137,7 +162,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         .enumerate()
         .map(|(index, entry)| parse_rule(index + 1, entry))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Settings { workspaces })
+    Ok(Settings { theme, workspaces })
 }
 
 /// Parses one `[[workspace]]` entry; `entry_number` is its 1-based file
@@ -409,6 +434,7 @@ isolated = false
         assert_eq!(
             settings,
             Settings {
+                theme: ThemeSetting::Auto,
                 workspaces: vec![
                     WorkspaceRule {
                         reference: WorkspaceRef::Name("code".to_owned()),
@@ -580,6 +606,61 @@ isolated = false
         );
     }
 
+    // --- Theme ------------------------------------------------------------
+
+    #[test]
+    fn parse_reads_the_theme_key() {
+        for (config, theme) in [
+            (&b"theme = \"auto\"\n"[..], ThemeSetting::Auto),
+            (b"theme = \"dark\"\n", ThemeSetting::Dark),
+            (b"theme = \"light\"\n", ThemeSetting::Light),
+        ] {
+            let settings = Settings::parse(config).expect("valid theme value");
+            assert_eq!(settings.theme, theme);
+        }
+    }
+
+    #[test]
+    fn parse_without_a_theme_key_defaults_to_auto() {
+        // An empty file and a rules-only file alike: no `theme`, Auto.
+        assert_eq!(
+            Settings::parse(b"").expect("empty").theme,
+            ThemeSetting::Auto
+        );
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert_eq!(rules_only.theme, ThemeSetting::Auto);
+    }
+
+    #[test]
+    fn parse_rejects_an_unknown_theme_value() {
+        let error = Settings::parse(b"theme = \"blue\"\n").expect_err("unknown value");
+        assert_eq!(
+            error,
+            SettingsError::InvalidFile {
+                problem: "`theme` must be one of \"auto\", \"dark\", or \"light\""
+            }
+        );
+    }
+
+    #[test]
+    fn parse_rejects_a_non_string_theme() {
+        let error = Settings::parse(b"theme = 3\n").expect_err("numeric theme");
+        assert_eq!(
+            error,
+            SettingsError::InvalidFile {
+                problem: "`theme` must be a string"
+            }
+        );
+    }
+
+    #[test]
+    fn parse_coexists_theme_with_workspace_rules() {
+        let config = b"theme = \"light\"\n\n[[workspace]]\nname = \"code\"\nisolated = false\n";
+        let settings = Settings::parse(config).expect("both keys");
+        assert_eq!(settings.theme, ThemeSetting::Light);
+        assert_eq!(settings.workspaces.len(), 1);
+    }
+
     // --- Resolution ------------------------------------------------------
 
     fn rule(reference: WorkspaceRef, isolated: bool) -> WorkspaceRule {
@@ -592,6 +673,7 @@ isolated = false
     #[test]
     fn scope_for_matches_a_named_workspace_by_name() {
         let settings = Settings {
+            theme: ThemeSetting::Auto,
             workspaces: vec![rule(WorkspaceRef::Name("browse".to_owned()), false)],
         };
         let scope = scope_for(
@@ -607,6 +689,7 @@ isolated = false
     #[test]
     fn scope_for_matches_an_unnamed_workspace_by_position() {
         let settings = Settings {
+            theme: ThemeSetting::Auto,
             workspaces: vec![rule(WorkspaceRef::Position(2), false)],
         };
         let scope = scope_for(
@@ -623,6 +706,7 @@ isolated = false
     fn scope_for_prefers_the_name_rule_for_a_named_workspace() {
         // Both rules point at the same workspace; the name rule wins.
         let settings = Settings {
+            theme: ThemeSetting::Auto,
             workspaces: vec![
                 rule(WorkspaceRef::Position(1), true),
                 rule(WorkspaceRef::Name("code".to_owned()), false),
@@ -641,6 +725,7 @@ isolated = false
     #[test]
     fn scope_for_falls_back_to_the_position_rule_for_a_named_workspace() {
         let settings = Settings {
+            theme: ThemeSetting::Auto,
             workspaces: vec![rule(WorkspaceRef::Position(1), false)],
         };
         let scope = scope_for(
@@ -656,6 +741,7 @@ isolated = false
     #[test]
     fn scope_for_on_an_out_of_range_position_matches_nothing() {
         let settings = Settings {
+            theme: ThemeSetting::Auto,
             workspaces: vec![rule(WorkspaceRef::Position(9), false)],
         };
         let scope = scope_for(
@@ -671,6 +757,7 @@ isolated = false
     #[test]
     fn scope_for_last_duplicate_rule_wins() {
         let settings = Settings {
+            theme: ThemeSetting::Auto,
             workspaces: vec![
                 rule(WorkspaceRef::Name("browse".to_owned()), false),
                 rule(WorkspaceRef::Name("browse".to_owned()), true),
@@ -689,6 +776,7 @@ isolated = false
     #[test]
     fn scope_for_without_a_matching_rule_is_current_workspace() {
         let settings = Settings {
+            theme: ThemeSetting::Auto,
             workspaces: vec![rule(WorkspaceRef::Name("elsewhere".to_owned()), false)],
         };
         let scope = scope_for(
@@ -857,6 +945,7 @@ isolated = false
         assert_eq!(
             settings,
             Settings {
+                theme: ThemeSetting::Auto,
                 workspaces: vec![rule(WorkspaceRef::Name("code".to_owned()), false)]
             }
         );

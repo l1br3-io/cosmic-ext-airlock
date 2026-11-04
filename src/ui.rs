@@ -183,6 +183,57 @@ impl Palette {
             is_dark: true,
         }
     }
+
+    /// The light-mode card: a near-opaque warm-white fill with
+    /// near-black text — the dark palette's inverse, draft values until
+    /// the TH4 design pass finalizes them. Selection and border derive
+    /// by the same 20%/18% blends as the dark card, so both variants
+    /// share one blend system.
+    pub const fn light() -> Palette {
+        const BACKGROUND: u32 = 0xFA_F7_F4_F0;
+        const TEXT: u32 = 0xFF_1E_21_26;
+        Palette {
+            background: BACKGROUND,
+            text: TEXT,
+            selected_bg: blend_over(BACKGROUND, TEXT, 20),
+            border: blend_over(BACKGROUND, TEXT, 18),
+            is_dark: false,
+        }
+    }
+
+    /// The card `setting` paints: a pinned value wins regardless of the
+    /// system; `Auto` follows the system's dark/light answer, and an
+    /// unreadable one (`None`) paints dark — today's look, never a
+    /// broken switch.
+    pub fn resolve(setting: ThemeSetting, system_prefers_dark: Option<bool>) -> Palette {
+        let dark = match setting {
+            ThemeSetting::Dark => true,
+            ThemeSetting::Light => false,
+            ThemeSetting::Auto => system_prefers_dark.unwrap_or(true),
+        };
+        if dark {
+            Palette::dark()
+        } else {
+            Palette::light()
+        }
+    }
+}
+
+/// Which card the overlay paints. `Auto` defers to the COSMIC system
+/// dark/light preference, read per invocation; a missing or unreadable
+/// system answer resolves to dark (today's look). The vocabulary lives
+/// here beside [`Palette`] — the switcher's decision type, parsed by
+/// `settings` from the config's `theme` key (the arrangement `Scope`
+/// already uses: `switcher` owns the type, `settings` reads into it).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ThemeSetting {
+    /// Follow the system dark/light preference (default).
+    #[default]
+    Auto,
+    /// Today's card, pinned regardless of the system preference.
+    Dark,
+    /// The light card, pinned regardless of the system preference.
+    Light,
 }
 
 // Geometry pins. The 8-grid holds for every stepped metric; the row is
@@ -1450,6 +1501,48 @@ mod tests {
         // exactly so the token cannot drift by accident.
         assert_eq!(COLOR_SELECTED_BG, 0xFA_48_4B_50);
         assert_eq!(COLOR_BORDER, 0xFA44464B);
+    }
+
+    #[test]
+    fn light_selection_and_border_derive_by_the_same_blends() {
+        // The light card's band and hairline, hand-computed from the
+        // documented 20%/18% formula over the warm-white card and
+        // near-black text — the light twin of the pin above, so neither
+        // variant can drift from the blend system.
+        let light = Palette::light();
+        assert_eq!(light.background, 0xFA_F7_F4_F0);
+        assert_eq!(light.text, 0xFF_1E_21_26);
+        assert_eq!(light.selected_bg, 0xFA_CB_C9_C7);
+        assert_eq!(light.border, 0xFA_CF_CE_CB);
+    }
+
+    #[test]
+    fn both_cards_stay_near_opaque() {
+        // The compile-time assert, widened to every constructor: the
+        // bleed-through must stay imperceptible whichever card paints.
+        for palette in [Palette::dark(), Palette::light()] {
+            assert!(palette.background >> 24 >= 0xFA);
+            assert!(palette.selected_bg >> 24 >= 0xFA);
+        }
+    }
+
+    #[test]
+    fn resolve_honors_pinned_values_and_auto_follows_the_system() {
+        // Pinned values ignore the system answer entirely; Auto follows
+        // it, and an unreadable answer (None) paints dark — today's look.
+        let dark = Palette::dark();
+        let light = Palette::light();
+        for system in [Some(true), Some(false), None] {
+            assert_eq!(Palette::resolve(ThemeSetting::Dark, system), dark);
+            assert_eq!(Palette::resolve(ThemeSetting::Light, system), light);
+        }
+        assert_eq!(Palette::resolve(ThemeSetting::Auto, Some(true)), dark);
+        assert_eq!(Palette::resolve(ThemeSetting::Auto, Some(false)), light);
+        assert_eq!(
+            Palette::resolve(ThemeSetting::Auto, None),
+            dark,
+            "auto + unreadable system paints today's card"
+        );
     }
 
     #[test]
