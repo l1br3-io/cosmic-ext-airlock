@@ -150,6 +150,41 @@ const _: () = {
     assert!(COLOR_SELECTED_BG >> 24 >= 0xFA);
 };
 
+/// One card polarity: the four colors an overlay render paints with.
+/// `selected_bg` and `border` stay *derived* — the text color at 20% /
+/// 18% over the card ([`COLOR_SELECTED_BG`] / [`COLOR_BORDER`]) — so a
+/// palette is two chosen colors, two computed ones, and the polarity
+/// itself; the blend system is the design system, and no variant can
+/// drift from it. `is_dark` is the icon-tint polarity: symbolic icons
+/// cache per polarity because their tint is the palette's text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Palette {
+    /// Card fill ([`COLOR_BACKGROUND`] on the dark card).
+    pub background: u32,
+    /// Title and glyph color ([`COLOR_TEXT`] on the dark card).
+    pub text: u32,
+    /// Selected-row band: text at 20% over the card.
+    pub selected_bg: u32,
+    /// Card hairline: text at 18% over the card.
+    pub border: u32,
+    /// Which polarity this card is — the icon cache's tint key.
+    pub is_dark: bool,
+}
+
+impl Palette {
+    /// The card Airlock has always painted: the named consts above,
+    /// byte-identical to them.
+    pub const fn dark() -> Palette {
+        Palette {
+            background: COLOR_BACKGROUND,
+            text: COLOR_TEXT,
+            selected_bg: COLOR_SELECTED_BG,
+            border: COLOR_BORDER,
+            is_dark: true,
+        }
+    }
+}
+
 // Geometry pins. The 8-grid holds for every stepped metric; the row is
 // exactly the icon cell plus its breathing; rows stay clear of the
 // corner arcs (PAD_Y ≥ RADIUS), so a selection band can never clip a
@@ -184,10 +219,10 @@ const UNTITLED: &str = "(untitled)";
 pub const GLYPH_SCALE: u32 = 3;
 
 /// Generic window glyph, the icon-cell fallback: an 8×8 frame with a
-/// title-bar divider, drawn in [`COLOR_TEXT`] scaled to `GLYPH_SCALE × 8`
-/// logical px and centered in the cell. One glyph vocabulary for every
-/// fallback row — the icon column belongs to the apps, the glyph to "no
-/// icon".
+/// title-bar divider, drawn in the palette's text color scaled to
+/// `GLYPH_SCALE × 8` logical px and centered in the cell. One glyph
+/// vocabulary for every fallback row — the icon column belongs to the
+/// apps, the glyph to "no icon".
 const WINDOW_GLYPH: [u8; 8] = [0xFF, 0x81, 0x81, 0xFF, 0x81, 0x81, 0x81, 0xFF];
 
 /// Hand-drawn ellipsis for the truncation marker — the one intentional
@@ -251,7 +286,7 @@ impl OverlayModel {
 
 /// Builds the overlay contents for `snapshot` with `selected` highlighted,
 /// listing windows under `scope`, with app icons from `icons` prepared at
-/// `scale`.
+/// `scale` for the card `palette` paints.
 ///
 /// Rows follow [`switcher::eligible`] order (most recently activated
 /// first). Returns `None` when there is nothing to show: no active
@@ -263,6 +298,7 @@ pub fn overlay_model(
     scope: Scope,
     icons: &crate::icons::Cache,
     scale: u32,
+    palette: &Palette,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
     let handles = switcher::eligible(&snapshot.toplevels, active, scope);
@@ -276,7 +312,7 @@ pub fn overlay_model(
         let title = truncate_cols(display_title(&toplevel.title, &toplevel.app_id));
         rows.push(RowModel {
             title,
-            icon: icons.bitmap(&toplevel.app_id, scale),
+            icon: icons.bitmap(&toplevel.app_id, scale, palette),
             selected: handle == selected,
             handle,
         });
@@ -308,7 +344,8 @@ fn edge_spans(ly: u32, lh: u32, lw: u32, reach: u32) -> [(u32, u32); 2] {
 }
 
 /// Renders `model` into `canvas` as ARGB8888 (`stride` bytes per row) at
-/// `scale` device pixels per logical pixel.
+/// `scale` device pixels per logical pixel, in the card colors of
+/// `palette`.
 ///
 /// Paint order, back to front: card fill through the rounded-corner
 /// coverage mask, selection band per selected row, title glyphs, app
@@ -322,6 +359,7 @@ pub fn render(
     height: u32,
     stride: u32,
     scale: u32,
+    palette: &Palette,
 ) {
     // Unreachable in production (render_scale clamps with max(2, ·)),
     // but render is pub: fail loudly in debug, clamp in release, never
@@ -355,9 +393,9 @@ pub fn render(
         let cov_row = &outer[(ly * lw) as usize..(ly * lw + lw) as usize];
         for (lx, cov) in cov_row.iter().enumerate() {
             let argb = if *cov == 255 {
-                COLOR_BACKGROUND
+                palette.background
             } else {
-                coverage_argb(COLOR_BACKGROUND, *cov)
+                coverage_argb(palette.background, *cov)
             };
             let x0 = lx as u32 * scale;
             for dy in 0..scale {
@@ -382,7 +420,7 @@ pub fn render(
                         .skip(SELECT_INSET as usize)
                         .take(band_width)
                     {
-                        let argb = coverage_argb(COLOR_SELECTED_BG, *cov);
+                        let argb = coverage_argb(palette.selected_bg, *cov);
                         let x0 = lx as u32 * scale;
                         for x in x0..x0 + scale {
                             put_pixel(canvas, stride, x, y, argb);
@@ -407,6 +445,7 @@ pub fn render(
                     (PAD_X + (ICON - side) / 2) * scale,
                     (cell_y + (ICON - side) / 2) * scale,
                     GLYPH_SCALE * scale,
+                    palette.text,
                 );
             }
         }
@@ -424,6 +463,7 @@ pub fn render(
                 lx * scale,
                 text_y * scale,
                 TEXT_W * scale / GLYPH_W,
+                palette.text,
             );
             lx += TEXT_W;
         }
@@ -441,7 +481,7 @@ pub fn render(
                 if outer[index] == 0 || inner[index] == 255 {
                     continue;
                 }
-                let argb = coverage_argb(COLOR_BORDER, outer[index]);
+                let argb = coverage_argb(palette.border, outer[index]);
                 for dy in 0..scale {
                     for dx in 0..scale {
                         put_pixel(canvas, stride, lx * scale + dx, ly * scale + dy, argb);
@@ -554,9 +594,17 @@ fn put_pixel(canvas: &mut [u8], stride: u32, x: u32, y: u32, argb: u32) {
     }
 }
 
-/// Draws one 8×8 glyph with `block` device pixels per font pixel at
-/// device coordinates (`x`, `y`).
-fn draw_glyph(canvas: &mut [u8], stride: u32, glyph: [u8; 8], x: u32, y: u32, block: u32) {
+/// Draws one 8×8 glyph in `text` color with `block` device pixels per
+/// font pixel at device coordinates (`x`, `y`).
+fn draw_glyph(
+    canvas: &mut [u8],
+    stride: u32,
+    glyph: [u8; 8],
+    x: u32,
+    y: u32,
+    block: u32,
+    text: u32,
+) {
     for (row, bits) in glyph.iter().enumerate() {
         for col in 0..8 {
             if bits & (1 << col) != 0 {
@@ -567,7 +615,7 @@ fn draw_glyph(canvas: &mut [u8], stride: u32, glyph: [u8; 8], x: u32, y: u32, bl
                             stride,
                             x + col * block + dx,
                             y + row as u32 * block + dy,
-                            COLOR_TEXT,
+                            text,
                         );
                     }
                 }
@@ -1049,16 +1097,17 @@ mod tests {
     }
 
     fn build(snap: &Snapshot, selected: Handle, scope: Scope) -> Option<OverlayModel> {
-        overlay_model(snap, selected, scope, &no_icons(), 2)
+        overlay_model(snap, selected, scope, &no_icons(), 2, &Palette::dark())
     }
 
     /// Renders `model` at `scale` into a fresh canvas; returns it with
-    /// its stride.
+    /// its stride. The dark palette is the behavior TH1 pinned; light
+    /// lands in TH2.
     fn rendered(model: &OverlayModel, scale: u32) -> (Vec<u8>, u32) {
         let (w, h) = (model.width * scale, model.height * scale);
         let stride = w * 4;
         let mut canvas = vec![0u8; (stride * h) as usize];
-        render(model, &mut canvas, w, h, stride, scale);
+        render(model, &mut canvas, w, h, stride, scale, &Palette::dark());
         (canvas, stride)
     }
 
@@ -1759,7 +1808,7 @@ mod tests {
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4 + 64; // padding between rows, like a shared pool
         let mut canvas = vec![0x11; (stride * h) as usize];
-        render(&model, &mut canvas, w, h, stride, 2);
+        render(&model, &mut canvas, w, h, stride, 2, &Palette::dark());
         // The 'A' pixels land at the text origin — font column 2 — not
         // at the row start.
         let block = TEXT_W * 2 / GLYPH_W;
@@ -1850,7 +1899,7 @@ mod tests {
         // 30 iterations at 4× the pre-refresh pixel count ≈ twice the
         // old guard's total work (200 renders of the 8-px card).
         for _ in 0..30 {
-            render(&model, &mut canvas, w, h, stride, 2);
+            render(&model, &mut canvas, w, h, stride, 2, &Palette::dark());
         }
         let elapsed = start.elapsed();
         assert!(

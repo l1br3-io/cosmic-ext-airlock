@@ -52,7 +52,9 @@ fn main() {
         }
     };
 
-    let icons = ui_icons(scale);
+    // The card the daemon paints today; `--light` arrives with TH4.
+    let palette = ui::Palette::dark();
+    let icons = ui_icons(scale, &palette);
     let scenarios = scenarios(&icons);
 
     // Sheet: every scenario twice (dark backdrop, light backdrop), stacked
@@ -81,7 +83,7 @@ fn main() {
     for model in &scenarios {
         let mut card = vec![0u8; (model.width * model.height * 4 * scale * scale) as usize];
         let (cw, ch) = (model.width * scale, model.height * scale);
-        ui::render(model, &mut card, cw, ch, cw * 4, scale);
+        ui::render(model, &mut card, cw, ch, cw * 4, scale, &palette);
         for (dx, backdrop) in [(0, [46u8, 46, 50]), (backdrop_w as i64, [235, 235, 235])] {
             composite(
                 &mut sheet,
@@ -129,17 +131,17 @@ fn synthetic_icon(index: usize, side: u32) -> Rc<IconBitmap> {
 /// Real themed icons when the host can resolve them; the app ids that
 /// miss fall to synthetic tiles. On the dev host this shows the actual
 /// COSMIC/Pop icons the daemon will show.
-fn ui_icons(scale: u32) -> Vec<Option<Rc<IconBitmap>>> {
+fn ui_icons(scale: u32, palette: &ui::Palette) -> Vec<Option<Rc<IconBitmap>>> {
     let mut cache = cosmic_ext_airlock::icons::Cache::new();
-    cache.prepare(APP_IDS.iter().copied(), scale);
+    cache.prepare(APP_IDS.iter().copied(), scale, palette);
     APP_IDS
         .iter()
         .enumerate()
         .map(|(index, id)| {
             cache
-                .bitmap(id, scale)
-                .or_else(|| cache.bitmap("application-x-executable", scale))
-                .or_else(|| cache.bitmap("firefox", scale))
+                .bitmap(id, scale, palette)
+                .or_else(|| cache.bitmap("application-x-executable", scale, palette))
+                .or_else(|| cache.bitmap("firefox", scale, palette))
                 .map_or_else(|| Some(synthetic_icon(index, ui::ICON * scale)), Some)
         })
         .collect()

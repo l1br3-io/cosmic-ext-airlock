@@ -38,7 +38,7 @@ pub const FALLBACK_ICON_NAME: &str = "application-x-executable";
 pub type NameLookup = Box<dyn Fn(&str, u16) -> Option<PathBuf>>;
 
 /// The daemon's icon state: the desktop-entry corpus plus rasterized
-/// icons keyed by (app_id, render scale).
+/// icons keyed by (app_id, render scale, card polarity).
 ///
 /// Single-threaded by design — the daemon is one thread, and so is
 /// every API here.
@@ -48,9 +48,12 @@ pub struct Cache {
     entries: Vec<fde::DesktopEntry>,
     /// Name → themed path; stubbed in tests.
     lookup: NameLookup,
-    /// (app_id, scale) → rasterized icon. `None` = resolved to nothing;
-    /// the row draws the generic window glyph.
-    rasters: HashMap<(String, u32), Option<Rc<IconBitmap>>>,
+    /// (app_id, scale, is_dark) → rasterized icon. `None` = resolved to
+    /// nothing; the row draws the generic window glyph. The polarity key
+    /// exists because symbolic icons are tinted to the palette's text
+    /// color at raster time — a tint cached for one card must never be
+    /// served at the other.
+    rasters: HashMap<(String, u32, bool), Option<Rc<IconBitmap>>>,
 }
 
 /// What a desktop entry's `Icon=` value asked for: a theme name, or a
@@ -98,19 +101,26 @@ impl Cache {
         }
     }
 
-    /// Rasterizes every not-yet-seen (app_id, scale). Idempotent; misses
-    /// are cached too, so each unknown app logs exactly one diagnostic.
-    pub fn prepare(&mut self, app_ids: impl IntoIterator<Item = impl Into<String>>, scale: u32) {
+    /// Rasterizes every not-yet-seen (app_id, scale, polarity) for the
+    /// card `palette` paints, tinting symbolic icons to its text color.
+    /// Idempotent; misses are cached too, so each unknown app logs
+    /// exactly one diagnostic.
+    pub fn prepare(
+        &mut self,
+        app_ids: impl IntoIterator<Item = impl Into<String>>,
+        scale: u32,
+        palette: &ui::Palette,
+    ) {
         for app_id in app_ids {
             let app_id = app_id.into();
             if app_id.trim().is_empty() {
                 continue;
             }
-            let key = (app_id, scale);
+            let key = (app_id, scale, palette.is_dark);
             if self.rasters.contains_key(&key) {
                 continue;
             }
-            let raster = self.rasterize(&key.0, scale);
+            let raster = self.rasterize(&key.0, scale, palette);
             if raster.is_none() {
                 eprintln!(
                     "airlock daemon: no icon for app_id '{}' (row shows the window glyph)",
@@ -121,12 +131,17 @@ impl Cache {
         }
     }
 
-    /// The prepared icon for an (app_id, scale), if any. Unknown keys
-    /// are a plain miss (the glyph) — resolution happens only in
-    /// [`Cache::prepare`], never on the render path.
-    pub fn bitmap(&self, app_id: &str, scale: u32) -> Option<Rc<IconBitmap>> {
+    /// The prepared icon for an (app_id, scale) at `palette`'s polarity,
+    /// if any. Unknown keys are a plain miss (the glyph) — resolution
+    /// happens only in [`Cache::prepare`], never on the render path.
+    pub fn bitmap(
+        &self,
+        app_id: &str,
+        scale: u32,
+        palette: &ui::Palette,
+    ) -> Option<Rc<IconBitmap>> {
         self.rasters
-            .get(&(app_id.to_string(), scale))
+            .get(&(app_id.to_string(), scale, palette.is_dark))
             .cloned()
             .flatten()
     }
@@ -145,9 +160,9 @@ impl Cache {
         }
     }
 
-    /// Resolves and rasterizes one app_id at `scale`; `None` means the
-    /// glyph fallback.
-    fn rasterize(&self, app_id: &str, scale: u32) -> Option<Rc<IconBitmap>> {
+    /// Resolves and rasterizes one app_id at `scale` for `palette`'s
+    /// card; `None` means the glyph fallback.
+    fn rasterize(&self, app_id: &str, scale: u32, palette: &ui::Palette) -> Option<Rc<IconBitmap>> {
         let side = ui::ICON * scale;
         let (path, symbolic) = match self.icon_ref(app_id) {
             IconRef::Path(path) => (Some(path), false),
@@ -167,8 +182,8 @@ impl Cache {
             // Symbolic icons are monochrome shapes that carry their
             // color as `currentColor` or no fill at all; rendered raw
             // they come out black and vanish on the card. Recolor to
-            // the text color, keeping coverage.
-            tint_text_color(&mut bitmap);
+            // the palette's text color, keeping coverage.
+            tint_text_color(&mut bitmap, palette.text);
         }
         Some(Rc::new(bitmap))
     }
@@ -331,11 +346,11 @@ fn overlap(cell: f32, lo: f32, hi: f32) -> u32 {
     ((length.max(0.0) * 256.0) as u32).min(256)
 }
 
-/// Recolors a bitmap to [`ui::COLOR_TEXT`], keeping per-pixel coverage —
-/// symbolic icons carry their shape in alpha only.
-fn tint_text_color(bitmap: &mut IconBitmap) {
+/// Recolors a bitmap to the palette's text `color`, keeping per-pixel
+/// coverage — symbolic icons carry their shape in alpha only.
+fn tint_text_color(bitmap: &mut IconBitmap, color: u32) {
     // 0xAARRGGBB → big-endian bytes are [A, R, G, B].
-    let [_, tr, tg, tb] = ui::COLOR_TEXT.to_be_bytes();
+    let [_, tr, tg, tb] = color.to_be_bytes();
     for p in &mut bitmap.argb {
         let a = *p >> 24;
         *p = (a << 24)
@@ -429,8 +444,10 @@ mod tests {
             )]),
             lookup,
         );
-        cache.prepare(["org.test.app"], 2); // case-insensitive id match
-        let bitmap = cache.bitmap("org.test.app", 2).expect("icon rasterized");
+        cache.prepare(["org.test.app"], 2, &ui::Palette::dark()); // case-insensitive id match
+        let bitmap = cache
+            .bitmap("org.test.app", 2, &ui::Palette::dark())
+            .expect("icon rasterized");
         assert_eq!(bitmap.side, ui::ICON * 2);
         assert_eq!(calls.get(), 1, "exactly one theme lookup");
         // The SVG's left half is opaque red.
@@ -450,8 +467,12 @@ mod tests {
             Some(svg.clone())
         });
         let mut cache = Cache::with_entries(Vec::new(), lookup);
-        cache.prepare(["nothing.matches"], 1);
-        assert!(cache.bitmap("nothing.matches", 1).is_some());
+        cache.prepare(["nothing.matches"], 1, &ui::Palette::dark());
+        assert!(
+            cache
+                .bitmap("nothing.matches", 1, &ui::Palette::dark())
+                .is_some()
+        );
         assert_eq!(calls.get(), 1);
     }
 
@@ -459,8 +480,8 @@ mod tests {
     fn an_unresolvable_name_caches_the_glyph_fallback() {
         let lookup: NameLookup = Box::new(|_name, _size| None);
         let mut cache = Cache::with_entries(Vec::new(), lookup);
-        cache.prepare(["ghost.app"], 1);
-        assert_eq!(cache.bitmap("ghost.app", 1), None);
+        cache.prepare(["ghost.app"], 1, &ui::Palette::dark());
+        assert_eq!(cache.bitmap("ghost.app", 1, &ui::Palette::dark()), None);
     }
 
     #[test]
@@ -474,8 +495,8 @@ mod tests {
             )]),
             lookup,
         );
-        cache.prepare(["bare"], 1);
-        assert!(cache.bitmap("bare", 1).is_some());
+        cache.prepare(["bare"], 1, &ui::Palette::dark());
+        assert!(cache.bitmap("bare", 1, &ui::Palette::dark()).is_some());
     }
 
     #[test]
@@ -495,8 +516,12 @@ mod tests {
             )]),
             lookup,
         );
-        cache.prepare(["org.test.path"], 1);
-        assert!(cache.bitmap("org.test.path", 1).is_some());
+        cache.prepare(["org.test.path"], 1, &ui::Palette::dark());
+        assert!(
+            cache
+                .bitmap("org.test.path", 1, &ui::Palette::dark())
+                .is_some()
+        );
         assert_eq!(calls.get(), 0, "theme never consulted for a path Icon=");
     }
 
@@ -511,8 +536,10 @@ mod tests {
             )]),
             lookup,
         );
-        cache.prepare(["org.test.fancy"], 1);
-        let bitmap = cache.bitmap("org.test.fancy", 1).expect("icon rasterized");
+        cache.prepare(["org.test.fancy"], 1, &ui::Palette::dark());
+        let bitmap = cache
+            .bitmap("org.test.fancy", 1, &ui::Palette::dark())
+            .expect("icon rasterized");
         // Opaque source pixel keeps alpha 255 but wears the text color.
         assert_eq!(argb(bitmap.argb[0])[0], 255);
         assert_eq!(
@@ -520,6 +547,68 @@ mod tests {
             &ui::COLOR_TEXT.to_be_bytes()[1..],
             "symbolic shape recolored to the text color"
         );
+    }
+
+    /// The tint symbolic icons wear is the palette's text color, not a
+    /// module-global: a light card tints its icons near-black, a dark card
+    /// near-white. Proven with a same-polarity palette whose text is red —
+    /// the tint must follow the palette passed in, wherever it came from.
+    #[test]
+    fn symbolic_tint_follows_the_palette_text_color() {
+        let svg = svg_fixture("tint-color.svg");
+        let (lookup, _calls) = stub("org.test.tinty-symbolic", svg);
+        let mut cache = Cache::with_entries(
+            corpus(&[(
+                "org.test.Tinty.desktop",
+                "[Desktop Entry]\nType=Application\nName=Tinty\nIcon=org.test.tinty-symbolic\n",
+            )]),
+            lookup,
+        );
+        let red_text = ui::Palette {
+            text: 0xFF_FF_00_00,
+            ..ui::Palette::dark()
+        };
+        cache.prepare(["org.test.tinty"], 1, &red_text);
+        let bitmap = cache
+            .bitmap("org.test.tinty", 1, &red_text)
+            .expect("icon rasterized");
+        assert_eq!(
+            &argb(bitmap.argb[0])[1..],
+            &[0xFF, 0x00, 0x00],
+            "symbolic shape recolored to the palette's text color"
+        );
+    }
+
+    /// A tint cached for one polarity must never be served at the other:
+    /// near-white glyphs (the dark tint) vanish on a light card. The cache
+    /// key carries polarity, and a first ask at the other polarity is a
+    /// plain miss that resolves fresh under its own key.
+    #[test]
+    fn a_tint_cached_for_one_polarity_is_never_served_at_the_other() {
+        let svg = svg_fixture("polarity-key.svg");
+        let (lookup, calls) = stub("org.test.polar-symbolic", svg);
+        let mut cache = Cache::with_entries(
+            corpus(&[(
+                "org.test.Polar.desktop",
+                "[Desktop Entry]\nType=Application\nName=Polar\nIcon=org.test.polar-symbolic\n",
+            )]),
+            lookup,
+        );
+        let dark = ui::Palette::dark();
+        let light = ui::Palette {
+            is_dark: false,
+            ..dark
+        };
+        cache.prepare(["org.test.polar"], 1, &dark);
+        assert!(cache.bitmap("org.test.polar", 1, &dark).is_some());
+        assert!(
+            cache.bitmap("org.test.polar", 1, &light).is_none(),
+            "a dark-tinted bitmap must not serve a light card"
+        );
+        // The miss resolves fresh, under the light polarity's own key.
+        cache.prepare(["org.test.polar"], 1, &light);
+        assert!(cache.bitmap("org.test.polar", 1, &light).is_some());
+        assert_eq!(calls.get(), 2, "each polarity resolves exactly once");
     }
 
     #[test]
@@ -533,8 +622,10 @@ mod tests {
             )]),
             lookup,
         );
-        cache.prepare(["org.test.png"], 2); // 64 → side 64: 1:1
-        let bitmap = cache.bitmap("org.test.png", 2).expect("icon rasterized");
+        cache.prepare(["org.test.png"], 2, &ui::Palette::dark()); // 64 → side 64: 1:1
+        let bitmap = cache
+            .bitmap("org.test.png", 2, &ui::Palette::dark())
+            .expect("icon rasterized");
         assert_eq!(bitmap.side, 64);
         assert_eq!(argb(bitmap.argb[0]), [255, 0x10, 0x20, 0x30]);
     }
@@ -550,10 +641,10 @@ mod tests {
             )]),
             lookup,
         );
-        cache.prepare(["org.test.again"], 1);
-        cache.prepare(["org.test.again"], 1);
+        cache.prepare(["org.test.again"], 1, &ui::Palette::dark());
+        cache.prepare(["org.test.again"], 1, &ui::Palette::dark());
         assert_eq!(calls.get(), 1, "second prepare is a cache hit");
-        cache.prepare(["org.test.again"], 2);
+        cache.prepare(["org.test.again"], 2, &ui::Palette::dark());
         assert_eq!(calls.get(), 2, "a new scale resolves again");
     }
 
@@ -566,9 +657,9 @@ mod tests {
             None
         });
         let mut cache = Cache::with_entries(Vec::new(), lookup);
-        cache.prepare(["", "  "], 1);
+        cache.prepare(["", "  "], 1, &ui::Palette::dark());
         assert_eq!(calls.get(), 0);
-        assert_eq!(cache.bitmap("", 1), None);
+        assert_eq!(cache.bitmap("", 1, &ui::Palette::dark()), None);
     }
 
     #[test]
@@ -631,7 +722,7 @@ mod tests {
             )]),
             lookup,
         );
-        cache.prepare(["org.test.e2e"], 2);
+        cache.prepare(["org.test.e2e"], 2, &ui::Palette::dark());
 
         let toplevel = switcher::Toplevel {
             handle: Handle(1),
@@ -647,8 +738,15 @@ mod tests {
             active: Some(switcher::WorkspaceId(1)),
         };
 
-        let model = overlay_model(&snap, Handle(1), Scope::CurrentWorkspace, &cache, 2)
-            .expect("eligible windows exist");
+        let model = overlay_model(
+            &snap,
+            Handle(1),
+            Scope::CurrentWorkspace,
+            &cache,
+            2,
+            &ui::Palette::dark(),
+        )
+        .expect("eligible windows exist");
         let bitmap = model.rows[0]
             .icon
             .as_ref()
@@ -656,8 +754,15 @@ mod tests {
         assert_eq!(bitmap.side, ui::ICON * 2);
 
         // An unprepared scale is a plain miss: the row draws the glyph.
-        let model = overlay_model(&snap, Handle(1), Scope::CurrentWorkspace, &cache, 3)
-            .expect("eligible windows exist");
+        let model = overlay_model(
+            &snap,
+            Handle(1),
+            Scope::CurrentWorkspace,
+            &cache,
+            3,
+            &ui::Palette::dark(),
+        )
+        .expect("eligible windows exist");
         assert!(model.rows[0].icon.is_none(), "unprepared scale must miss");
     }
 
@@ -674,9 +779,9 @@ mod tests {
             )]),
             lookup,
         );
-        cache.prepare(["Foo.Bar"], 1);
+        cache.prepare(["Foo.Bar"], 1, &ui::Palette::dark());
         assert!(
-            cache.bitmap("Foo.Bar", 1).is_some(),
+            cache.bitmap("Foo.Bar", 1, &ui::Palette::dark()).is_some(),
             "StartupWMClass must resolve the icon"
         );
     }

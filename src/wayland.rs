@@ -841,6 +841,9 @@ pub struct Overlay {
     layer: LayerSurface,
     pool: SlotPool,
     model: OverlayModel,
+    /// The card colors `model` renders with; swapped with the model so a
+    /// redraw never mixes a new model with the previous palette.
+    palette: ui::Palette,
     /// Device pixels per logical pixel this overlay renders at.
     scale: u32,
     /// Size granted by the compositor; `None` until the first configure.
@@ -864,14 +867,18 @@ pub struct OverlayEnv<'a> {
 }
 
 impl Overlay {
-    /// Creates the overlay surface for `model` (centered on `env.output`,
-    /// overlay layer, exclusive keyboard interactivity) and requests its
-    /// first configure.
+    /// Creates the overlay surface for `model` in the card colors of
+    /// `palette` (centered on `env.output`, overlay layer, exclusive
+    /// keyboard interactivity) and requests its first configure.
     ///
     /// # Errors
     ///
     /// Fails when the shared-memory pool cannot be created.
-    pub fn new(model: OverlayModel, env: OverlayEnv<'_>) -> Result<Self, OverlayError> {
+    pub fn new(
+        model: OverlayModel,
+        palette: ui::Palette,
+        env: OverlayEnv<'_>,
+    ) -> Result<Self, OverlayError> {
         let OverlayEnv {
             compositor,
             layer_shell,
@@ -910,6 +917,7 @@ impl Overlay {
             layer,
             pool,
             model,
+            palette,
             scale,
             size: None,
             close_at: Instant::now() + ui::CLOSE_AFTER,
@@ -917,14 +925,15 @@ impl Overlay {
         })
     }
 
-    /// Swaps in a fresh model. Same-sized redraws happen immediately; a size
-    /// change goes through `set_size` + commit and draws on the next
-    /// configure.
-    pub fn update(&mut self, model: OverlayModel) {
+    /// Swaps in a fresh model and palette. Same-sized redraws happen
+    /// immediately; a size change goes through `set_size` + commit and
+    /// draws on the next configure.
+    pub fn update(&mut self, model: OverlayModel, palette: ui::Palette) {
         let unchanged = self.size == Some((model.width, model.height));
         self.close_at = Instant::now() + ui::CLOSE_AFTER;
         let (width, height) = (model.width, model.height);
         self.model = model;
+        self.palette = palette;
         if unchanged {
             self.draw();
         } else {
@@ -992,7 +1001,15 @@ impl Overlay {
             eprintln!("airlock daemon: overlay buffer allocation failed");
             return;
         };
-        ui::render(&self.model, canvas, bw, bh, stride, self.scale);
+        ui::render(
+            &self.model,
+            canvas,
+            bw,
+            bh,
+            stride,
+            self.scale,
+            &self.palette,
+        );
         let surface = self.layer.wl_surface();
         surface.damage_buffer(0, 0, bw as i32, bh as i32);
         if let Err(err) = buffer.attach_to(surface) {
@@ -1328,12 +1345,13 @@ impl Session {
         u32::try_from(output_scale).unwrap_or(1).max(2)
     }
 
-    /// Maps the switcher overlay with `model`, or refreshes it if it is
-    /// already up. Creation failures are logged, not fatal: a press that
-    /// cannot draw still cycles focus.
-    pub fn overlay_show(&mut self, model: OverlayModel) {
+    /// Maps the switcher overlay with `model` in the card colors of
+    /// `palette`, or refreshes it if it is already up. Creation failures
+    /// are logged, not fatal: a press that cannot draw still cycles
+    /// focus.
+    pub fn overlay_show(&mut self, model: OverlayModel, palette: ui::Palette) {
         if let Some(overlay) = self.app.overlay.as_mut() {
-            overlay.update(model);
+            overlay.update(model, palette);
             let rows = overlay.model().rows.len();
             eprintln!("airlock daemon: overlay updated ({rows} rows)");
             let _ = self.conn.flush();
@@ -1349,6 +1367,7 @@ impl Session {
         let scale = self.render_scale();
         let overlay = Overlay::new(
             model,
+            palette,
             OverlayEnv {
                 compositor: &self.app.compositor,
                 layer_shell: &self.app.layer_shell,

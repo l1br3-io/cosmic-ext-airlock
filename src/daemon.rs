@@ -667,6 +667,10 @@ fn show_selection(
     snapshot: &Snapshot,
     icons: &mut crate::icons::Cache,
 ) {
+    // The card this session paints. Dark until TH2 freezes a palette on
+    // the open session; every consumer below (icon tint, model, surface)
+    // must draw with the same one.
+    let palette = crate::ui::Palette::dark();
     let scale = session.render_scale();
     icons.prepare(
         snapshot
@@ -674,11 +678,12 @@ fn show_selection(
             .iter()
             .map(|toplevel| toplevel.app_id.as_str()),
         scale,
+        &palette,
     );
     let model = open.as_ref().and_then(|current| {
         let model_of = |list: &Snapshot| {
             current.ring.selected().and_then(|handle| {
-                crate::ui::overlay_model(list, handle, current.scope, icons, scale)
+                crate::ui::overlay_model(list, handle, current.scope, icons, scale, &palette)
             })
         };
         match current.app.as_deref() {
@@ -687,7 +692,7 @@ fn show_selection(
         }
     });
     match model {
-        Some(model) => session.overlay_show(model),
+        Some(model) => session.overlay_show(model, palette),
         None => {
             session.overlay_hide("nothing eligible");
             gesture.close();
