@@ -114,6 +114,14 @@ pub const HINT_GAP: u32 = 16;
 /// paint in it.
 pub const HINT_COLS: u32 = 6; // len("Ctrl+9")
 
+/// Rows the card may show at once, content and affordances together. 8
+/// keeps the card at capacity at `2·12 + 8·48 + 7·8 = 464` logical px —
+/// inside a 540-logical (1080p@2x) screen with headroom, and past ~8
+/// rows a glance stops finding the target anyway: this is a switcher,
+/// not a launcher. The ring still walks the full eligible list; only
+/// presentation windows.
+pub const VIEW_ROWS: usize = 8;
+
 /// How long the overlay stays up before closing itself when idle.
 pub const CLOSE_AFTER: Duration = Duration::from_secs(2);
 
@@ -289,6 +297,13 @@ const _: () = {
     assert!(SELECT_INSET.is_multiple_of(4));
     assert!(SELECT_INSET > BORDER);
     assert!(SELECT_INSET < PAD_X);
+    // The card at capacity fits the smallest common logical screen
+    // (1080p at 2× = 540 logical px).
+    assert!(2 * PAD_Y + VIEW_ROWS as u32 * ROW_H + (VIEW_ROWS as u32 - 1) * ROW_GAP <= 540);
+    // With rows hidden at both edges the two outermost slots become
+    // affordances; a window smaller than three could show no content at
+    // all.
+    assert!(VIEW_ROWS >= 3);
 };
 
 /// Placeholder shown when a window has neither title nor app_id.
@@ -362,6 +377,60 @@ impl OverlayModel {
         }
         let row = (y_px / pitch) as usize;
         (y_px - row as f64 * pitch < ROW_H as f64).then_some(row) // gap seam
+    }
+}
+
+/// The slice of a long eligible list one overlay card shows: where the
+/// window starts, how many content rows it holds, and whether a
+/// continuation row replaces the outermost slot at each truncated edge.
+// LV2 wires this into `overlay_model`; until then it is dead in the
+// shipped binary and alive in its property tests — an allow, not an
+// expect, because the test cfg does construct it.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Viewport {
+    /// The list index the window's first slot covers — a continuation
+    /// row when `top`, a content row otherwise.
+    pub start: usize,
+    /// Content rows in the window: its slots that are not continuations.
+    pub content: usize,
+    /// Rows are hidden above the window: its first slot is an `…` row.
+    pub top: bool,
+    /// Rows are hidden below the window: its last slot is an `…` row.
+    pub bottom: bool,
+}
+
+/// The window over a `len`-long eligible list with `sel` selected,
+/// continuing from `prev` — `None` is a fresh session, top-aligned.
+///
+/// The window moves the minimum needed to keep the selection on a
+/// *content* row, never a continuation slot: nothing while the selection
+/// stays interior (the sticky rule — the walking fill keeps its motion
+/// vocabulary), exactly one row when stepping past an edge. The starts
+/// keeping `sel` content-visible form one interval, so the rule is a
+/// clamp of the carried start into it; the interval's upper end widens
+/// at the last window, whose bottom edge hides nothing. A start from a
+/// longer list re-clamps after a mid-gesture shrink.
+// LV2 wires this into `overlay_model`; see the note on `Viewport`.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn visible_window(len: usize, sel: usize, prev: Option<Viewport>) -> Viewport {
+    debug_assert!(sel < len, "the caller's selection indexes the list");
+    let visible = len.min(VIEW_ROWS);
+    let max_start = len - visible;
+    // The smallest and largest starts keeping `sel` on a content row.
+    let lo = sel.saturating_add(2).saturating_sub(visible).min(max_start);
+    let hi = if sel == 0 {
+        0
+    } else {
+        (sel - 1).min(max_start)
+    };
+    let start = prev.map_or(0, |vp| vp.start).min(max_start).clamp(lo, hi);
+    let (top, bottom) = (start > 0, start + visible < len);
+    Viewport {
+        start,
+        content: visible - top as usize - bottom as usize,
+        top,
+        bottom,
     }
 }
 
@@ -1583,6 +1652,206 @@ mod tests {
             build(&snap, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
         let handles: Vec<Handle> = model.rows.iter().map(|row| row.handle).collect();
         assert_eq!(handles, vec![Handle(1), Handle(2)]);
+    }
+
+    /// Every window `visible_window` can produce for a `len`-long list,
+    /// deduplicated: one per selection position.
+    fn reachable_windows(len: usize) -> Vec<Viewport> {
+        let mut out = Vec::new();
+        for sel in 0..len {
+            let vp = visible_window(len, sel, None);
+            if !out.contains(&vp) {
+                out.push(vp);
+            }
+        }
+        out
+    }
+
+    /// Prior windows a session could carry into a `len`-long rebuild:
+    /// every window reachable at `len` plus every window reachable at a
+    /// longer length — the mid-gesture shrink case.
+    fn prior_windows(len: usize) -> Vec<Viewport> {
+        let mut priors = reachable_windows(len);
+        for longer in len + 1..=3 * VIEW_ROWS + 2 {
+            priors.extend(reachable_windows(longer));
+        }
+        priors
+    }
+
+    #[test]
+    fn visible_window_keeps_every_selection_on_a_content_row() {
+        // The fixed point, exhaustive over every (len, sel, prev) the
+        // gesture can produce: the window covers exactly the visible
+        // slots, the flags honestly report what is hidden, and the
+        // selection always lands in the inner content range — never an
+        // affordance slot, never off-window. Any implementation
+        // satisfying this is the contract; the clamping inside is not.
+        for len in 0..=3 * VIEW_ROWS + 2 {
+            for sel in 0..len {
+                for prev in std::iter::once(None).chain(prior_windows(len).into_iter().map(Some)) {
+                    let vp = visible_window(len, sel, prev);
+                    let visible = len.min(VIEW_ROWS);
+                    assert_eq!(
+                        vp.top as usize + vp.content + vp.bottom as usize,
+                        visible,
+                        "len {len} sel {sel} prev {prev:?}: slots must equal the visible cap"
+                    );
+                    assert_eq!(vp.top, vp.start > 0, "len {len} sel {sel}: top flag");
+                    assert_eq!(
+                        vp.bottom,
+                        vp.start + visible < len,
+                        "len {len} sel {sel}: bottom flag"
+                    );
+                    assert!(
+                        vp.start + visible <= len,
+                        "len {len} sel {sel}: window runs past the list"
+                    );
+                    let first = vp.start + vp.top as usize;
+                    assert!(
+                        first <= sel && sel < first + vp.content,
+                        "len {len} sel {sel} prev {prev:?}: selection {sel} not on a content \
+                         row of {vp:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn visible_window_is_sticky_while_the_selection_stays_visible() {
+        // A selection already on a content row of the carried window
+        // must not move it: interior steps keep the walking fill
+        // walking, nothing else.
+        for len in VIEW_ROWS..=3 * VIEW_ROWS + 2 {
+            for prev in reachable_windows(len) {
+                let first = prev.start + prev.top as usize;
+                for sel in first..first + prev.content {
+                    assert_eq!(
+                        visible_window(len, sel, Some(prev)),
+                        prev,
+                        "len {len} sel {sel}: the window moved under a visible selection"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn visible_window_moves_one_row_at_most_and_only_when_it_must() {
+        // One step of the selection moves the window by at most one row,
+        // by zero while the new selection stays content-visible, and by
+        // exactly one when it stepped past an edge.
+        for len in VIEW_ROWS + 1..=3 * VIEW_ROWS + 2 {
+            for prev_sel in 0..len {
+                let prev = visible_window(len, prev_sel, None);
+                for next_sel in [prev_sel + 1, prev_sel.saturating_sub(1)] {
+                    if next_sel >= len {
+                        continue;
+                    }
+                    let next = visible_window(len, next_sel, Some(prev));
+                    let delta = next.start.abs_diff(prev.start);
+                    let still_visible = (prev.start + prev.top as usize
+                        ..prev.start + prev.top as usize + prev.content)
+                        .contains(&next_sel);
+                    let expected = if still_visible { 0 } else { 1 };
+                    assert_eq!(
+                        delta, expected,
+                        "len {len} {prev_sel}→{next_sel}: window moved {delta} rows, expected \
+                         {expected}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_fresh_session_opens_top_aligned() {
+        // The selection at open is the MRU front (row 0), so a fresh
+        // window shows the head of the list — and the rule stays total:
+        // any fresh selection the head window can still show as content
+        // keeps it.
+        assert_eq!(visible_window(VIEW_ROWS + 5, 0, None).start, 0);
+        let head = visible_window(VIEW_ROWS + 5, VIEW_ROWS - 2, None);
+        assert_eq!(head.start, 0);
+        assert!(head.bottom, "a longer list truncates at the bottom only");
+    }
+
+    #[test]
+    fn a_list_at_the_cap_shows_whole() {
+        // The 8-row-exact boundary: at the cap the window is the list —
+        // no affordances, no truncation, today's card exactly.
+        let at_cap = visible_window(VIEW_ROWS, VIEW_ROWS - 1, None);
+        assert_eq!(
+            at_cap,
+            Viewport {
+                start: 0,
+                content: VIEW_ROWS,
+                top: false,
+                bottom: false
+            }
+        );
+        // Below the cap the same holds for any length.
+        let short = visible_window(3, 2, None);
+        assert_eq!(
+            short,
+            Viewport {
+                start: 0,
+                content: 3,
+                top: false,
+                bottom: false
+            }
+        );
+        // One past the cap, both truncations are reachable — the head
+        // window hides a row below, the pulled-down window hides a row
+        // above — but never both at once: only two windows exist.
+        let head = visible_window(VIEW_ROWS + 1, 0, None);
+        assert!(!head.top && head.bottom);
+        let pulled = visible_window(VIEW_ROWS + 1, VIEW_ROWS, None);
+        assert_eq!(pulled.start, 1);
+        assert!(pulled.top && !pulled.bottom);
+        assert_eq!(pulled.content, VIEW_ROWS - 1);
+        // Two past the cap, the interior window carries both dots.
+        let interior = visible_window(VIEW_ROWS + 2, VIEW_ROWS - 1, None);
+        assert!(interior.top && interior.bottom);
+        assert_eq!(interior.content, VIEW_ROWS - 2);
+    }
+
+    #[test]
+    fn a_full_sweep_shifts_the_window_in_single_row_steps() {
+        // Carrying the window through a whole Tab sweep (and back) moves
+        // it from the top window to the bottom window one row at a time,
+        // never jumping — the shift reads as one clean frame per step.
+        for len in [VIEW_ROWS + 1, 2 * VIEW_ROWS, 3 * VIEW_ROWS + 2] {
+            let visible = len.min(VIEW_ROWS);
+            let mut carried = visible_window(len, 0, None);
+            assert_eq!(carried.start, 0, "len {len}: the sweep opens top-aligned");
+            let mut starts = vec![carried.start];
+            for sel in 1..len {
+                carried = visible_window(len, sel, Some(carried));
+                starts.push(carried.start);
+            }
+            assert_eq!(
+                carried.start,
+                len - visible,
+                "len {len}: the sweep must reach the bottom window"
+            );
+            for pair in starts.windows(2) {
+                assert!(
+                    pair[1] - pair[0] <= 1,
+                    "len {len}: the window jumped: {starts:?}"
+                );
+            }
+            // Shift+Tab back up: the same vocabulary in reverse.
+            for sel in (0..len - 1).rev() {
+                let now = visible_window(len, sel, Some(carried));
+                assert!(
+                    carried.start - now.start <= 1,
+                    "len {len} sel {sel}: the window jumped back up"
+                );
+                carried = now;
+            }
+            assert_eq!(carried.start, 0, "len {len}: the return sweep re-tops");
+        }
     }
 
     /// A plain `rows`-row model with the documented card rhythm, for
