@@ -326,7 +326,9 @@ fn single() -> OverlayModel {
 
 /// Straight-alpha composite of one rendered card (its own pixels are
 /// coverage-premultiplied where the corners fade) onto a solid backdrop —
-/// the same arithmetic the compositor performs.
+/// the same arithmetic the compositor performs. The card canvas is
+/// `render`'s ARGB8888 written little-endian, so a pixel's bytes arrive
+/// as B, G, R, A; the sheet is RGBA.
 fn composite(
     sheet: &mut [u8],
     sheet_width: u32,
@@ -348,13 +350,13 @@ fn composite(
             }
             let src = &card[(cy * card_w * 4 + cx * 4) as usize..];
             let a = src[3] as u32;
+            let (b, g, r) = (src[0] as u32, src[1] as u32, src[2] as u32);
             let dst_index = (sy as usize * sheet_width as usize + sx as usize) * 4;
             let dst = &mut sheet[dst_index..dst_index + 4];
             // Card pixels are coverage-premultiplied: src over backdrop.
-            for channel in 0..3 {
-                dst[channel] =
-                    (src[channel] as u32 + backdrop[channel] as u32 * (255 - a) / 255) as u8;
-            }
+            dst[0] = (r + backdrop[0] as u32 * (255 - a) / 255) as u8;
+            dst[1] = (g + backdrop[1] as u32 * (255 - a) / 255) as u8;
+            dst[2] = (b + backdrop[2] as u32 * (255 - a) / 255) as u8;
             dst[3] = 255;
         }
     }
