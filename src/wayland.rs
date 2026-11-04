@@ -1433,8 +1433,9 @@ impl Session {
     }
 
     /// The handle of the on-screen model's `row` — the truth a click
-    /// selects; `None` when the overlay is unmapped or `row` is past the
-    /// model's end.
+    /// selects; `None` when the overlay is unmapped, `row` is past the
+    /// model's end, or the row is a continuation affordance (not
+    /// addressable by any input).
     pub fn overlay_row_handle(&self, row: usize) -> Option<Handle> {
         self.app
             .overlay
@@ -1442,7 +1443,7 @@ impl Session {
             .model()
             .rows
             .get(row)
-            .map(|row| row.handle)
+            .and_then(|row| row.handle)
     }
 
     /// Drains gesture inputs queued by keyboard handlers during dispatch.

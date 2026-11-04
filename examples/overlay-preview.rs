@@ -4,7 +4,9 @@
 //! be judged on both wallpaper polarities exactly as the design skill's
 //! review step demands. `--light` judges the light palette's card. Every
 //! row carries the structural `Ctrl+N` hint band (number-select rev 2);
-//! the long list shows rows past nine unhinted.
+//! long lists window to `VIEW_ROWS` with `…` continuation rows at the
+//! truncated edges (list-viewport), built here exactly as `overlay_model`
+//! builds them.
 //!
 //! ```sh
 //! cargo run --example overlay-preview -- preview.png [--scale 2] [--light]
@@ -17,6 +19,7 @@
 
 use std::rc::Rc;
 
+use cosmic_ext_airlock::switcher::Handle;
 use cosmic_ext_airlock::ui::{self, IconBitmap, OverlayModel, RowModel};
 
 /// Sample app ids spanning themed SVG icons, Flatpak ids, and misses.
@@ -165,15 +168,77 @@ fn row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
         title: title.to_string(),
         icon,
         selected,
-        // Preview scenarios render no real window, so no handle to name.
-        handle: cosmic_ext_airlock::switcher::Handle::default(),
+        // Preview scenarios render no real window, so no handle to name —
+        // but a content row must carry one: a handleless row renders as
+        // the continuation affordance.
+        handle: Some(Handle::default()),
+    }
+}
+
+/// The continuation row at a truncated edge, exactly as `overlay_model`
+/// builds it: no handle, no icon, no title — just its dots.
+fn dots_row() -> RowModel {
+    RowModel {
+        title: String::new(),
+        icon: None,
+        selected: false,
+        handle: None,
+    }
+}
+
+/// A windowed long-list card composed the way the daemon composes it:
+/// `visible_window` over the selection, dots rows at truncated edges,
+/// width from the full list's widest title so the card never breathes
+/// while the window moves.
+fn windowed(
+    count: usize,
+    sel: usize,
+    prev: Option<ui::Viewport>,
+    icons: &[Option<Rc<IconBitmap>>],
+) -> OverlayModel {
+    let titles: Vec<String> = (0..count)
+        .map(|index| format!("Window {index} - the long-list case"))
+        .collect();
+    let viewport = ui::visible_window(count, sel, prev);
+    let mut rows =
+        Vec::with_capacity(viewport.top as usize + viewport.content + viewport.bottom as usize);
+    if viewport.top {
+        rows.push(dots_row());
+    }
+    let first = viewport.start + viewport.top as usize;
+    for index in first..first + viewport.content {
+        rows.push(row(
+            &titles[index],
+            icons[index % icons.len()].clone(),
+            index == sel,
+        ));
+    }
+    if viewport.bottom {
+        rows.push(dots_row());
+    }
+    let cols = titles
+        .iter()
+        .map(|title| title.chars().count() as u32)
+        .max()
+        .unwrap_or(1);
+    let shown = rows.len() as u32;
+    OverlayModel {
+        rows,
+        width: 2 * ui::PAD_X
+            + ui::ICON
+            + ui::ICON_GAP
+            + cols * ui::TEXT_W
+            + ui::HINT_GAP
+            + ui::HINT_COLS * ui::TEXT_W,
+        height: 2 * ui::PAD_Y + shown * ui::ROW_H + (shown - 1) * ui::ROW_GAP,
+        viewport,
     }
 }
 
 fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
     // A long title that elides at MAX_COLS.
     let elided = format!("{}…", "W".repeat(ui::MAX_COLS as usize - 1));
-    vec![
+    let mut sheet = vec![
         OverlayModel {
             rows: vec![row("Solo window", icons[0].clone(), false)],
             ..single()
@@ -217,19 +282,6 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
             ],
             ..single()
         },
-        // A long list: what a busy workspace looks like at full height.
-        OverlayModel {
-            rows: (0..12)
-                .map(|index| {
-                    row(
-                        &format!("Window {index} - the long-list case"),
-                        icons[index % icons.len()].clone(),
-                        index == 7,
-                    )
-                })
-                .collect(),
-            ..single()
-        },
     ]
     .into_iter()
     .map(|mut model| {
@@ -251,7 +303,21 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
         model.height = 2 * ui::PAD_Y + count * ui::ROW_H + (count - 1) * ui::ROW_GAP;
         model
     })
-    .collect()
+    .collect::<Vec<_>>();
+    // The long-list family (list-viewport), each windowed and sized by
+    // `windowed` itself — the map above must not re-derive their width
+    // from the window's titles alone. A fresh 15-row gesture's head
+    // window (dots below only), the same list stepped to an interior
+    // selection (dots at both edges, the fill one row down), its bottom
+    // window (dots above only), and a 30-row list mid-sweep.
+    let head = windowed(15, 0, None, icons);
+    let interior = windowed(15, 7, Some(head.viewport), icons);
+    let bottom = windowed(15, 14, Some(interior.viewport), icons);
+    sheet.push(head);
+    sheet.push(interior);
+    sheet.push(bottom);
+    sheet.push(windowed(30, 15, None, icons));
+    sheet
 }
 
 fn single() -> OverlayModel {

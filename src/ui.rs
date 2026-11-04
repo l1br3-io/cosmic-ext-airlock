@@ -334,18 +334,22 @@ const ELLIPSIS_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x2A, 0x00]
 const MIDDLE_DOT_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00];
 
 /// One rendered row: a title, an optional app icon, and whether it is
-/// the selection. `icon: None` draws the generic window glyph.
+/// the selection. `icon: None` draws the generic window glyph. A
+/// continuation row at a truncated edge is the same shape with `handle:
+/// None` and nothing else — the missing handle is what makes every input
+/// guard (hover, click, Ctrl+N) treat it as inert.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RowModel {
     pub title: String,
     pub icon: Option<Rc<IconBitmap>>,
     pub selected: bool,
     /// The window this row renders — the truth a pointer click selects.
-    /// The renderer ignores it; hit-testing reads it.
-    pub handle: Handle,
+    /// The renderer ignores it; hit-testing reads it. `None` marks a
+    /// continuation row.
+    pub handle: Option<Handle>,
 }
 
-/// What the overlay should draw: rows in MRU order plus the logical
+/// What the overlay should draw: the window's rows plus the logical
 /// pixel size the surface should have (the renderer multiplies by the
 /// render scale for device pixels).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -353,6 +357,10 @@ pub struct OverlayModel {
     pub rows: Vec<RowModel>,
     pub width: u32,
     pub height: u32,
+    /// The window these rows show — what a session carries into the
+    /// next rebuild as [`visible_window`]'s `prev`, keeping the sticky
+    /// rule moving.
+    pub viewport: Viewport,
 }
 
 impl OverlayModel {
@@ -383,11 +391,7 @@ impl OverlayModel {
 /// The slice of a long eligible list one overlay card shows: where the
 /// window starts, how many content rows it holds, and whether a
 /// continuation row replaces the outermost slot at each truncated edge.
-// LV2 wires this into `overlay_model`; until then it is dead in the
-// shipped binary and alive in its property tests — an allow, not an
-// expect, because the test cfg does construct it.
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Viewport {
     /// The list index the window's first slot covers — a continuation
     /// row when `top`, a content row otherwise.
@@ -411,8 +415,6 @@ pub struct Viewport {
 /// clamp of the carried start into it; the interval's upper end widens
 /// at the last window, whose bottom edge hides nothing. A start from a
 /// longer list re-clamps after a mid-gesture shrink.
-// LV2 wires this into `overlay_model`; see the note on `Viewport`.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn visible_window(len: usize, sel: usize, prev: Option<Viewport>) -> Viewport {
     debug_assert!(sel < len, "the caller's selection indexes the list");
     let visible = len.min(VIEW_ROWS);
@@ -436,12 +438,17 @@ pub fn visible_window(len: usize, sel: usize, prev: Option<Viewport>) -> Viewpor
 
 /// Builds the overlay contents for `snapshot` with `selected` highlighted,
 /// listing windows under `scope`, with app icons from `icons` prepared at
-/// `scale` for the card `palette` paints.
+/// `scale` for the card `palette` paints, continuing the sticky `viewport`
+/// a session carries (`None` at open).
 ///
 /// Rows follow [`switcher::eligible`] order (most recently activated
-/// first). Returns `None` when there is nothing to show: no active
-/// workspace, no eligible windows, or a selection that is not in the
-/// eligible set.
+/// first), then window to [`VIEW_ROWS`]: a continuation row replaces the
+/// outermost slot at each truncated edge, and the model reports the
+/// window it computed for the session to carry next. Width still derives
+/// from the *full* eligible set's widest title, so the card never
+/// breathes while the window moves under stepping. Returns `None` when
+/// there is nothing to show: no active workspace, no eligible windows,
+/// or a selection that is not in the eligible set.
 pub fn overlay_model(
     snapshot: &Snapshot,
     selected: Handle,
@@ -449,12 +456,14 @@ pub fn overlay_model(
     icons: &crate::icons::Cache,
     scale: u32,
     palette: &Palette,
+    viewport: Option<Viewport>,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
     let handles = switcher::eligible(&snapshot.toplevels, active, scope);
-    if handles.is_empty() || !handles.contains(&selected) {
+    if handles.is_empty() {
         return None;
     }
+    let sel = handles.iter().position(|&handle| handle == selected)?;
     let mut rows = Vec::with_capacity(handles.len());
     for handle in handles {
         // Unreachable in practice: eligible() draws from this same snapshot.
@@ -464,7 +473,7 @@ pub fn overlay_model(
             title,
             icon: icons.bitmap(&toplevel.app_id, scale, palette),
             selected: handle == selected,
-            handle,
+            handle: Some(handle),
         });
     }
     let cols = rows
@@ -472,14 +481,39 @@ pub fn overlay_model(
         .map(|row| row.title.chars().count() as u32)
         .max()
         .unwrap_or(0);
-    let count = rows.len() as u32;
+    let viewport = visible_window(rows.len(), sel, viewport);
+    let mut windowed =
+        Vec::with_capacity(viewport.top as usize + viewport.content + viewport.bottom as usize);
+    if viewport.top {
+        windowed.push(continuation_row());
+    }
+    let first = viewport.start + viewport.top as usize;
+    windowed.extend(rows.into_iter().skip(first).take(viewport.content));
+    if viewport.bottom {
+        windowed.push(continuation_row());
+    }
+    let count = windowed.len() as u32;
     Some(OverlayModel {
-        rows,
+        rows: windowed,
         width: 2 * PAD_X + ICON + ICON_GAP + cols * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
         // The row gap lives between rows only; the bottom edge mirrors
         // the top.
         height: 2 * PAD_Y + count * ROW_H + (count - 1) * ROW_GAP,
+        viewport,
     })
+}
+
+/// The continuation row at a truncated edge: the `…` affordance in a
+/// full row slot, riding the row rhythm. Not hoverable, not clickable,
+/// not number-addressable, never selected — its missing handle is what
+/// every input guard already reads.
+fn continuation_row() -> RowModel {
+    RowModel {
+        title: String::new(),
+        icon: None,
+        selected: false,
+        handle: None,
+    }
 }
 
 /// The horizontal spans of logical row `ly` that lie within `reach` of a
@@ -558,6 +592,27 @@ pub fn render(
     }
     for (index, row) in model.rows.iter().enumerate() {
         let top = PAD_Y + index as u32 * (ROW_H + ROW_GAP);
+        // Continuation row: the `…` glyph card-centered on the titles'
+        // own line, in the muted derivation — the hint color, quieter
+        // than any title and legible on both card fills and both
+        // wallpaper polarities. Nothing else paints on this row: no
+        // band, no icon, no title, no hint — a row beyond addressability
+        // earns nothing but its dots. Card-centered is the candidate
+        // placement; the preview sheet freezes it (LV3).
+        if row.handle.is_none() {
+            let dots_x = lw.saturating_sub(GLYPH_W) / 2;
+            let dots_y = top + (ROW_H - TEXT_H) / 2;
+            draw_glyph(
+                canvas,
+                stride,
+                ELLIPSIS_GLYPH,
+                dots_x * scale,
+                dots_y * scale,
+                TEXT_W * scale / GLYPH_W,
+                palette.muted,
+            );
+            continue;
+        }
         if row.selected {
             let band_width = lw.saturating_sub(2 * SELECT_INSET) as usize;
             for ly in top..top + ROW_H {
@@ -1316,7 +1371,15 @@ mod tests {
     }
 
     fn build(snap: &Snapshot, selected: Handle, scope: Scope) -> Option<OverlayModel> {
-        overlay_model(snap, selected, scope, &no_icons(), 2, &Palette::dark())
+        overlay_model(
+            snap,
+            selected,
+            scope,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            None,
+        )
     }
 
     /// Renders `model` at `scale` into a fresh canvas; returns it with
@@ -1650,8 +1713,8 @@ mod tests {
         );
         let model =
             build(&snap, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
-        let handles: Vec<Handle> = model.rows.iter().map(|row| row.handle).collect();
-        assert_eq!(handles, vec![Handle(1), Handle(2)]);
+        let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
+        assert_eq!(handles, vec![Some(Handle(1)), Some(Handle(2))]);
     }
 
     /// Every window `visible_window` can produce for a `len`-long list,
@@ -1854,6 +1917,297 @@ mod tests {
         }
     }
 
+    // --- list-viewport: the windowed card (LV2) --------------------------
+
+    /// A `count`-window snapshot on one workspace, MRU-ordered so handle
+    /// `n` sits at list index `n − 1`; fixed-width titles keep width
+    /// assertions readable.
+    fn long_snapshot(count: u64) -> Snapshot {
+        let toplevels = (1..=count)
+            .map(|handle| {
+                toplevel(
+                    handle,
+                    &format!("W{handle:02}"),
+                    "app.a",
+                    &[1],
+                    if handle == 1 {
+                        switcher::State::ACTIVATED
+                    } else {
+                        switcher::State::default()
+                    },
+                    count + 1 - handle,
+                )
+            })
+            .collect();
+        snapshot(toplevels, Some(1))
+    }
+
+    fn build_windowed(
+        snap: &Snapshot,
+        selected: Handle,
+        prev: Option<Viewport>,
+    ) -> Option<OverlayModel> {
+        overlay_model(
+            snap,
+            selected,
+            Scope::CurrentWorkspace,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            prev,
+        )
+    }
+
+    #[test]
+    fn a_list_at_the_cap_renders_whole_and_unchanged() {
+        // The no-regression boundary, exactly at the cap: no affordance
+        // rows, every handle present, and today's geometry formulas
+        // verbatim — a ≤ 8-window gesture is byte-identical to the
+        // pre-module card.
+        let snap = long_snapshot(VIEW_ROWS as u64);
+        let model = build_windowed(&snap, Handle(1), None).expect("eligible windows exist");
+        assert_eq!(model.rows.len(), VIEW_ROWS);
+        assert!(
+            model.rows.iter().all(|row| row.handle.is_some()),
+            "no affordance rows at the cap"
+        );
+        assert_eq!(
+            model.viewport,
+            Viewport {
+                start: 0,
+                content: VIEW_ROWS,
+                top: false,
+                bottom: false
+            }
+        );
+        assert_eq!(
+            model.width,
+            2 * PAD_X + ICON + ICON_GAP + 3 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
+        );
+        assert_eq!(
+            model.height,
+            2 * PAD_Y + VIEW_ROWS as u32 * ROW_H + (VIEW_ROWS as u32 - 1) * ROW_GAP
+        );
+    }
+
+    #[test]
+    fn a_long_lists_head_window_truncates_only_below() {
+        let snap = long_snapshot(15);
+        let model = build_windowed(&snap, Handle(1), None).expect("eligible windows exist");
+        assert_eq!(model.rows.len(), VIEW_ROWS);
+        assert_eq!(
+            model.viewport,
+            Viewport {
+                start: 0,
+                content: VIEW_ROWS - 1,
+                top: false,
+                bottom: true
+            }
+        );
+        let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
+        let expected: Vec<Option<Handle>> = (1..=7)
+            .map(|handle| Some(Handle(handle)))
+            .chain([None])
+            .collect();
+        assert_eq!(handles, expected, "seven content rows, dots at the bottom");
+    }
+
+    #[test]
+    fn an_interior_selection_windows_both_edges() {
+        let snap = long_snapshot(15);
+        // Carrying the head window while selecting list index 7 (handle
+        // 8) shifts it by one row: dots above and below, the selection on
+        // the last content row.
+        let model = build_windowed(
+            &snap,
+            Handle(8),
+            Some(Viewport {
+                start: 0,
+                content: VIEW_ROWS - 1,
+                top: false,
+                bottom: true,
+            }),
+        )
+        .expect("eligible windows exist");
+        assert_eq!(
+            model.viewport,
+            Viewport {
+                start: 1,
+                content: VIEW_ROWS - 2,
+                top: true,
+                bottom: true
+            }
+        );
+        let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
+        let expected: Vec<Option<Handle>> = [None]
+            .into_iter()
+            .chain((3..=8).map(|handle| Some(Handle(handle))))
+            .chain([None])
+            .collect();
+        assert_eq!(handles, expected);
+        assert_eq!(
+            model.height,
+            2 * PAD_Y + VIEW_ROWS as u32 * ROW_H + (VIEW_ROWS as u32 - 1) * ROW_GAP,
+            "the card at capacity stays bounded"
+        );
+    }
+
+    #[test]
+    fn the_card_never_breathes_while_the_window_moves() {
+        // Width derives from the FULL eligible set: a max-cols title deep
+        // in the list widens the head window that hides it, and every
+        // step of a full sweep renders the same width.
+        let toplevels: Vec<switcher::Toplevel> = (1..=15)
+            .map(|handle| {
+                let title = if handle == 13 {
+                    "M".repeat(MAX_COLS as usize)
+                } else {
+                    format!("W{handle:02}")
+                };
+                toplevel(
+                    handle,
+                    &title,
+                    "app.a",
+                    &[1],
+                    if handle == 1 {
+                        switcher::State::ACTIVATED
+                    } else {
+                        switcher::State::default()
+                    },
+                    16 - handle,
+                )
+            })
+            .collect();
+        let snap = snapshot(toplevels, Some(1));
+
+        let mut prev = None;
+        let mut widths = Vec::new();
+        for handle in 1..=15 {
+            let model =
+                build_windowed(&snap, Handle(handle), prev).expect("eligible windows exist");
+            widths.push(model.width);
+            prev = Some(model.viewport);
+        }
+        widths.dedup();
+        assert_eq!(widths.len(), 1, "the card breathed across the sweep");
+        assert_eq!(
+            widths[0],
+            2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
+            "the hidden max-cols title must still fund the width"
+        );
+    }
+
+    #[test]
+    fn a_full_tab_sweep_keeps_the_selection_on_a_content_row() {
+        let snap = long_snapshot(30);
+        let mut prev = None;
+        for handle in 1..=30 {
+            let model =
+                build_windowed(&snap, Handle(handle), prev).expect("eligible windows exist");
+            assert!(
+                model.rows.len() <= VIEW_ROWS,
+                "handle {handle}: card over cap"
+            );
+            let selected: Vec<&RowModel> = model.rows.iter().filter(|row| row.selected).collect();
+            assert_eq!(selected.len(), 1, "handle {handle}: one selection");
+            assert_eq!(
+                selected[0].handle,
+                Some(Handle(handle)),
+                "handle {handle}: the selection must be a content row"
+            );
+            prev = Some(model.viewport);
+        }
+    }
+
+    /// The device-pixel points of `slot`'s row interior — the band a
+    /// selection would fill, clear of the border's edge reach.
+    fn row_band_points(slot: usize, width: u32) -> impl Iterator<Item = (u32, u32)> {
+        let top = (PAD_Y + slot as u32 * (ROW_H + ROW_GAP)) * 2;
+        let x0 = SELECT_INSET * 2;
+        let x1 = (width - SELECT_INSET) * 2;
+        (x0..x1).flat_map(move |x| (top..top + ROW_H * 2).map(move |y| (x, y)))
+    }
+
+    #[test]
+    fn render_draws_the_continuation_dots_and_never_a_band_on_them() {
+        let snap = long_snapshot(15);
+        let model = build_windowed(
+            &snap,
+            Handle(8),
+            Some(Viewport {
+                start: 0,
+                content: VIEW_ROWS - 1,
+                top: false,
+                bottom: true,
+            }),
+        )
+        .expect("eligible windows exist");
+        for palette in [Palette::dark(), Palette::light()] {
+            let (w, h) = (model.width * 2, model.height * 2);
+            let stride = w * 4;
+            let mut canvas = vec![0u8; (stride * h) as usize];
+            render(&model, &mut canvas, w, h, stride, 2, &palette);
+            for slot in [0, 7] {
+                let mut paints = 0;
+                let mut muted = 0;
+                for (x, y) in row_band_points(slot, model.width) {
+                    let argb = pixel(&canvas, stride, x, y);
+                    assert_ne!(
+                        argb, palette.selected_bg,
+                        "a selection band intersected the dots row at slot {slot}"
+                    );
+                    if argb == palette.muted {
+                        muted += 1;
+                    }
+                    if argb != palette.background {
+                        paints += 1;
+                    }
+                }
+                assert!(muted > 0, "slot {slot}: the dots paint in the muted color");
+                assert!(
+                    paints < row_band_points(slot, model.width).count(),
+                    "slot {slot}: the dots row must stay card fill, not a band"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn affordance_rows_paint_no_hint() {
+        // A dots row is not number-addressable, so it must not advertise
+        // a chord — the content row beside it still does.
+        let snap = long_snapshot(15);
+        let model = build_windowed(
+            &snap,
+            Handle(8),
+            Some(Viewport {
+                start: 0,
+                content: VIEW_ROWS - 1,
+                top: false,
+                bottom: true,
+            }),
+        )
+        .expect("eligible windows exist");
+        let (canvas, stride) = rendered(&model, 2);
+        let palette = Palette::dark();
+        for slot in [0, 7] {
+            for (x, y) in hint_band_points(slot, model.width) {
+                assert_eq!(
+                    pixel(&canvas, stride, x, y),
+                    palette.background,
+                    "slot {slot} painted hint pixels"
+                );
+            }
+        }
+        let mut muted = 0;
+        for (x, y) in hint_band_points(1, model.width) {
+            if pixel(&canvas, stride, x, y) == palette.muted {
+                muted += 1;
+            }
+        }
+        assert!(muted > 0, "the content row beside the dots keeps its hint");
+    }
+
     /// A plain `rows`-row model with the documented card rhythm, for
     /// hit-testing. Bands run PAD_Y + i·(ROW_H + ROW_GAP) … + ROW_H.
     fn hit_model(rows: usize) -> OverlayModel {
@@ -1863,11 +2217,12 @@ mod tests {
                     title: "W".into(),
                     icon: None,
                     selected: false,
-                    handle: Handle(index as u64 + 1),
+                    handle: Some(Handle(index as u64 + 1)),
                 })
                 .collect(),
             width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + rows as u32 * ROW_H + (rows as u32 - 1) * ROW_GAP,
+            viewport: visible_window(rows, 0, None),
         }
     }
 
@@ -2110,10 +2465,11 @@ mod tests {
                 title: "Titled".into(),
                 icon: Some(Rc::new(icon)),
                 selected: false,
-                handle: Handle(1),
+                handle: Some(Handle(1)),
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
+            viewport: visible_window(1, 0, None),
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -2143,10 +2499,11 @@ mod tests {
                 title: String::new(),
                 icon: Some(Rc::new(bogus)),
                 selected: false,
-                handle: Handle(1),
+                handle: Some(Handle(1)),
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
+            viewport: visible_window(1, 0, None),
         };
         let (canvas, stride) = rendered(&model, 2);
         let glyph_x = (PAD_X + (ICON - GLYPH_W * GLYPH_SCALE) / 2) * 2;
@@ -2401,11 +2758,12 @@ mod tests {
                         title: "W".repeat(8),
                         icon: None,
                         selected: index == selected,
-                        handle: Handle(index as u64 + 1),
+                        handle: Some(Handle(index as u64 + 1)),
                     })
                     .collect(),
                 width: 2 * PAD_X + ICON + ICON_GAP + 8 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
                 height: 2 * PAD_Y + 5 * ROW_H + 4 * ROW_GAP,
+                viewport: visible_window(5, 0, None),
             };
             let (canvas, stride) = rendered(&model, 2);
             // A probe column inside the band's horizontal extent, in the
@@ -2455,11 +2813,14 @@ mod tests {
                     title: format!("Window {index}"),
                     icon: None,
                     selected: false,
-                    handle: Handle(index as u64 + 1),
+                    handle: Some(Handle(index as u64 + 1)),
                 })
                 .collect(),
             width: 2 * PAD_X + ICON + ICON_GAP + 10 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + 12 * ROW_H + 11 * ROW_GAP,
+            // Hand-built past the cap on purpose (hint-silence rows past
+            // nine); render is row-count agnostic and never reads the viewport.
+            viewport: visible_window(12, 0, None),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -2484,10 +2845,11 @@ mod tests {
                 title: "Solo".into(),
                 icon: None,
                 selected: false,
-                handle: Handle(1),
+                handle: Some(Handle(1)),
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + 4 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
+            viewport: visible_window(1, 0, None),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -2516,17 +2878,18 @@ mod tests {
                     title: "Top".into(),
                     icon: None,
                     selected: true,
-                    handle: Handle(1),
+                    handle: Some(Handle(1)),
                 },
                 RowModel {
                     title: "Bottom".into(),
                     icon: None,
                     selected: false,
-                    handle: Handle(2),
+                    handle: Some(Handle(2)),
                 },
             ],
             width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + 2 * ROW_H + ROW_GAP,
+            viewport: visible_window(2, 0, None),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -2556,10 +2919,11 @@ mod tests {
                 title: "W".repeat(MAX_COLS as usize),
                 icon: None,
                 selected: false,
-                handle: Handle(1),
+                handle: Some(Handle(1)),
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
+            viewport: visible_window(1, 0, None),
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -2603,11 +2967,14 @@ mod tests {
                     title: "W".repeat(MAX_COLS as usize),
                     icon: None,
                     selected: i == 0,
-                    handle: Handle(i as u64 + 1),
+                    handle: Some(Handle(i as u64 + 1)),
                 })
                 .collect(),
             width: 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + 10 * ROW_H + 9 * ROW_GAP,
+            // Hand-built past the cap on purpose (render work, not a real
+            // card shape); render never reads the viewport.
+            viewport: visible_window(10, 0, None),
         };
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4;

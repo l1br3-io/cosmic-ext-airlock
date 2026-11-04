@@ -95,6 +95,11 @@ pub struct Switch {
     /// scope and frozen for the session's life — a theme edit landing
     /// mid-gesture never repaints under held Alt (the scope philosophy).
     palette: crate::ui::Palette,
+    /// The window the card is showing over the session's list — derived
+    /// state carried between rebuilds so the sticky rule can continue
+    /// it, never persisted across gestures: sessions are built fresh
+    /// with `None`, and every open starts top-aligned on the MRU head.
+    viewport: Option<crate::ui::Viewport>,
 }
 
 /// Whether an open session still matches reality: the workspace it was
@@ -156,6 +161,7 @@ pub fn ring_step(
             scope,
             app: None,
             palette,
+            viewport: None,
         });
     }
     match direction {
@@ -712,7 +718,15 @@ fn show_selection(
     let model = open.as_ref().and_then(|current| {
         let model_of = |list: &Snapshot| {
             current.ring.selected().and_then(|handle| {
-                crate::ui::overlay_model(list, handle, current.scope, icons, scale, &palette)
+                crate::ui::overlay_model(
+                    list,
+                    handle,
+                    current.scope,
+                    icons,
+                    scale,
+                    &palette,
+                    current.viewport,
+                )
             })
         };
         match current.app.as_deref() {
@@ -721,7 +735,15 @@ fn show_selection(
         }
     });
     match model {
-        Some(model) => session.overlay_show(model, palette),
+        Some(model) => {
+            // Carry the window this model computed into the next rebuild
+            // — every path through this funnel (step, hover, same-app)
+            // continues the sticky rule for free.
+            if let Some(session) = open.as_mut() {
+                session.viewport = Some(model.viewport);
+            }
+            session.overlay_show(model, palette)
+        }
         None => {
             session.overlay_hide("nothing eligible");
             gesture.close();
@@ -1972,8 +1994,35 @@ mod tests {
             scope: Scope::CurrentWorkspace,
             app: None,
             palette: Palette::dark(),
+            viewport: None,
         };
         assert_eq!(commit_target(&confined, &snap), None);
+    }
+
+    #[test]
+    fn a_session_opens_with_no_carried_window() {
+        // The sticky window is gesture-scoped state: sessions are built
+        // fresh with `viewport: None`, so every gesture opens
+        // top-aligned on the MRU head and never inherits the previous
+        // gesture's window.
+        let snap = snapshot(
+            (1..=15)
+                .map(|handle| toplevel(handle, &[1], State::default(), 16 - handle))
+                .collect(),
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::All,
+            Palette::dark(),
+        );
+        assert!(
+            open.as_ref().is_some_and(|open| open.viewport.is_none()),
+            "a fresh session must open unwindowed"
+        );
     }
 
     #[test]
