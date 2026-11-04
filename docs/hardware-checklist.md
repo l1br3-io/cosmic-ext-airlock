@@ -103,6 +103,31 @@ binary.
 - [ ] A 48+-character title truncates with `…`; an untitled window shows
       `(untitled)`
 
+### Theme (card color)
+
+- [ ] `theme = "light"` on a dark-mode desktop: the next Alt+Tab paints
+      the light card; `theme = "dark"` paints the dark card on a
+      light-mode desktop
+- [ ] `theme = "auto"` follows the desktop: flipping COSMIC's dark mode
+      (Settings or a schedule) shows on the next Alt+Tab, both
+      directions; a flip mid-gesture does not repaint the open card
+- [ ] The light card reads on a light and a dark wallpaper: border,
+      corners, and selection legible on both (screenshot each); repeat
+      at 200% scale
+- [ ] The dark card is unchanged from pre-theming builds (visual compare
+      against an older screenshot)
+- [ ] With `theme = "auto"`, rename
+      `~/.config/cosmic/com.system76.CosmicTheme.Mode/v1/is_dark` — the
+      next Alt+Tab paints dark and the daemon log carries one
+      diagnostic; restore the file
+- [ ] Edit `theme` while the daemon runs: the next press reflects it, no
+      restart
+- [ ] Regression: Tab / Shift+Tab / arrows / Enter / Escape / pointer
+      input / Alt release behave exactly as before; no added latency on
+      open
+- [ ] Re-measure daemon RSS (section 7) — unchanged from the reference
+      row
+
 ## 4. Takeover and restore
 
 - [ ] `airlock install` redirects Alt+Tab / Shift+Alt+Tab to Airlock at user

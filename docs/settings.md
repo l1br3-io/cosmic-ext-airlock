@@ -3,7 +3,9 @@
 By default, Airlock seals Alt+Tab to the current workspace. A config file
 can opt individual workspaces out: there the switcher lists every
 non-minimized window across **all** workspaces, most-recently-used first,
-while workspaces without an entry stay isolated exactly as before.
+while workspaces without an entry stay isolated exactly as before. The
+same file also picks the switcher's card color — light, dark, or
+following the desktop.
 
 Airlock reads the file; you write it. Airlock never creates, renames, or
 rearranges workspaces — names and positions come from COSMIC itself.
@@ -24,6 +26,8 @@ default behavior, nothing to configure.
 ```toml
 # ~/.config/airlock/config.toml — Airlock reads, you write.
 # Workspaces without an entry keep the default: isolated.
+
+theme = "auto"         # match the desktop's dark/light mode (the default)
 
 [[workspace]]
 name = "code"          # matches a workspace COSMIC reports as named "code"
@@ -47,6 +51,9 @@ flag:
 
 An entry needs `name` or `index` — never both.
 
+The one top-level key, `theme`, picks the card — see
+[Theme](#theme).
+
 ## Referencing workspaces
 
 - **Name-first.** A named workspace matches `name` rules before `index`
@@ -67,6 +74,29 @@ An entry needs `name` or `index` — never both.
   error.
 - **No match at all** → the workspace stays isolated. An entry can only
   opt out, never opt others in.
+
+## Theme
+
+`theme` picks the card the switcher paints — the near-opaque panel the
+window list sits on. Three values:
+
+- **`"auto"` (default)** — follow the COSMIC system dark/light
+  preference: a dark-mode desktop paints the dark card, a light-mode
+  desktop the light one. The preference is checked each time a gesture
+  starts, so flipping dark mode — in COSMIC Settings or on a schedule —
+  shows up on the next Alt+Tab. No daemon restart.
+- **`"dark"`** — always the dark card, whatever the desktop prefers.
+  The escape hatch for the previous always-dark behavior.
+- **`"light"`** — always the light card.
+
+Theme can never break switching. An unreadable system preference paints
+the dark card (today's look) with one diagnostic in the daemon log; a
+malformed `theme` value rides the same last-good fallback as every
+other config error.
+
+And like every setting, `theme` is read when a gesture starts. An edit
+mid-gesture changes nothing until the next press — a session keeps the
+card it was opened with until Alt is released.
 
 ## What `isolated = false` changes
 
@@ -100,6 +130,9 @@ A bad config never breaks switching:
 - **`[workspace]` with single brackets** is rejected: entries must be
   `[[workspace]]` (an array of tables). One `[workspace]` table cannot
   carry several rules anyway.
+- **A bad `theme` value** — a wrong type (`theme = 3`) or an unknown
+  string (`theme = "blue"`) — is named in a diagnostic and the
+  last-good settings apply, like any malformed edit.
 - **Unknown keys are ignored** — extra keys inside an entry cost nothing.
 - **Size cap** — files over 1 MiB are ignored entirely (defaults apply);
   the read runs on the gesture path and must stay cheap.
@@ -107,8 +140,12 @@ A bad config never breaks switching:
 ## Verifying it
 
 - Edit the config while the daemon runs; the next Alt+Tab reflects it
-- Rename a matched workspace in COSMIC; the entry follows the name on
-  the next press
+- Rename a matched workspace in COSMIC; the entry follows the name on the
+  next press
 - On an `isolated = false` workspace, Alt+Tab walks every non-minimized
   window in MRU order, and committing one parked elsewhere switches to
   it
+- Set `theme = "light"` on a dark-mode desktop; the next Alt+Tab paints
+  the light card (`"dark"` paints the dark card on a light-mode desktop)
+- With `theme = "auto"`, flip COSMIC's dark mode; the next Alt+Tab
+  already matches
