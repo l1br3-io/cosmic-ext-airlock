@@ -644,6 +644,9 @@ pub enum GestureKey {
     Commit,
     /// A directional step: Up/Left previous, Down/Right next.
     Arrow(Direction),
+    /// Ctrl+1..9 (or keypad 1..9): select and activate row `n` (0-based,
+    /// top row = 0) in one motion — the keyboard twin of a pointer click.
+    Select(usize),
     Escape,
     Other,
 }
@@ -727,6 +730,13 @@ pub enum GestureOutput {
     Step(Direction),
     /// Activate the selection and unmap the overlay.
     Commit,
+    /// Select and activate overlay `row` in one motion. The gesture
+    /// session survives the output: the daemon closes it only when the
+    /// activation actually happens, so an out-of-range row leaves the
+    /// gesture fully intact.
+    Activate {
+        row: usize,
+    },
     /// Unmap the overlay without switching.
     Dismiss,
     Nothing,
@@ -768,6 +778,11 @@ impl Gesture {
                     GestureOutput::Commit
                 }
                 GestureKey::Arrow(direction) => GestureOutput::Step(direction),
+                // Select-and-activate in one motion; the session stays
+                // open — the daemon closes it via `close()` only when
+                // the activation actually happens, so an out-of-range
+                // row leaves the gesture fully intact.
+                GestureKey::Select(row) => GestureOutput::Activate { row },
                 GestureKey::Escape => {
                     self.showing = false;
                     GestureOutput::Dismiss
@@ -823,9 +838,10 @@ impl Gesture {
 /// Normalizes a grabbed key press into gesture input.
 ///
 /// Shift+Tab arrives as ISO_Left_Tab on most layouts and as Tab plus the
-/// shift modifier on others: both step backwards. `shift_held` is the
-/// seat's last reported shift state.
-pub fn key_input(keysym: Keysym, shift_held: bool) -> GestureInput {
+/// shift modifier on others: both step backwards. `shift_held` and
+/// `ctrl_held` are the seat's last reported modifier states — Ctrl
+/// classifies digit presses, exactly as shift classifies Tab.
+pub fn key_input(keysym: Keysym, shift_held: bool, ctrl_held: bool) -> GestureInput {
     let (key, shift) = match keysym {
         Keysym::ISO_Left_Tab => (GestureKey::Tab, true),
         Keysym::Tab => (GestureKey::Tab, shift_held),
@@ -833,9 +849,29 @@ pub fn key_input(keysym: Keysym, shift_held: bool) -> GestureInput {
         Keysym::Up | Keysym::Left => (GestureKey::Arrow(Direction::Previous), false),
         Keysym::Down | Keysym::Right => (GestureKey::Arrow(Direction::Next), false),
         Keysym::Escape => (GestureKey::Escape, shift_held),
+        // Ctrl+digits map with or without shift held; without Ctrl the
+        // number row stays Other — it must never surprise-activate.
+        _ if ctrl_held && let Some(row) = digit_row(keysym) => {
+            (GestureKey::Select(row), shift_held)
+        }
         _ => (GestureKey::Other, shift_held),
     };
     GestureInput::Press { key, shift }
+}
+
+/// The 0-based overlay row a digit keysym addresses: top-row `1..=9`
+/// (0x31..=0x39) and keypad `KP_1..KP_9` (0xffb1..=0xffb9) are row
+/// `digit - 1`. Everything else — `0` included (no Ctrl+0-as-10) — is
+/// not number-addressable. Matching rides the raw codes because a
+/// range pattern over the named consts is not something xkeysym's
+/// associated constants promise to compile.
+fn digit_row(keysym: Keysym) -> Option<usize> {
+    let code = keysym.raw();
+    match code {
+        0x31..=0x39 => Some((code - 0x31) as usize),
+        0xffb1..=0xffb9 => Some((code - 0xffb1) as usize),
+        _ => None,
+    }
 }
 
 /// One wheel event's whole notches plus the sub-notch `value120` residual
@@ -2135,9 +2171,71 @@ mod tests {
     }
 
     #[test]
+    fn a_number_selection_activates_row_n_and_keeps_the_session_open() {
+        // Ctrl+N is select-and-activate in one motion, but the session
+        // survives the output: the daemon closes it via `close()` only
+        // when the activation actually happens, so an out-of-range
+        // Ctrl+N leaves the session fully intact.
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Select(2),
+                shift: false
+            }),
+            GestureOutput::Activate { row: 2 }
+        );
+        assert!(
+            gesture.showing(),
+            "the session stays open for the daemon to close"
+        );
+    }
+
+    #[test]
+    fn a_number_selection_between_sessions_is_nothing() {
+        // The dead-arm contract every press shares: no overlay, no output.
+        let mut gesture = Gesture::default();
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Select(0),
+                shift: false
+            }),
+            GestureOutput::Nothing
+        );
+    }
+
+    #[test]
+    fn a_repeated_number_press_after_the_daemon_closes_is_inert() {
+        // Key auto-repeat after a successful activation hits the dead
+        // arm: the daemon closed the spent session, so the repeat cannot
+        // double-activate.
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Select(1),
+                shift: false
+            }),
+            GestureOutput::Activate { row: 1 }
+        );
+        gesture.close();
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Select(1),
+                shift: false
+            }),
+            GestureOutput::Nothing
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::Modifiers { alt: false }),
+            GestureOutput::Nothing
+        );
+    }
+
+    #[test]
     fn key_input_maps_tab_escape_and_backtab() {
         assert_eq!(
-            key_input(Keysym::Tab, false),
+            key_input(Keysym::Tab, false, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: false
@@ -2145,7 +2243,7 @@ mod tests {
         );
         // Shift held at the seat steers a plain Tab backwards.
         assert_eq!(
-            key_input(Keysym::Tab, true),
+            key_input(Keysym::Tab, true, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: true
@@ -2153,21 +2251,21 @@ mod tests {
         );
         // ISO_Left_Tab is Shift+Tab by another name.
         assert_eq!(
-            key_input(Keysym::ISO_Left_Tab, false),
+            key_input(Keysym::ISO_Left_Tab, false, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: true
             }
         );
         assert_eq!(
-            key_input(Keysym::Escape, false),
+            key_input(Keysym::Escape, false, false),
             GestureInput::Press {
                 key: GestureKey::Escape,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Return, false),
+            key_input(Keysym::Return, false, false),
             GestureInput::Press {
                 key: GestureKey::Commit,
                 shift: false
@@ -2180,7 +2278,7 @@ mod tests {
         // Return, KP_Enter, and ISO_Enter are one key by three names.
         for keysym in [Keysym::Return, Keysym::KP_Enter, Keysym::ISO_Enter] {
             assert_eq!(
-                key_input(keysym, false),
+                key_input(keysym, false, false),
                 GestureInput::Press {
                     key: GestureKey::Commit,
                     shift: false
@@ -2200,7 +2298,7 @@ mod tests {
             (Keysym::Right, Direction::Next),
         ] {
             assert_eq!(
-                key_input(keysym, true),
+                key_input(keysym, true, false),
                 GestureInput::Press {
                     key: GestureKey::Arrow(direction),
                     shift: false
@@ -2212,10 +2310,149 @@ mod tests {
     #[test]
     fn key_input_leaves_unknown_keysyms_alone() {
         assert_eq!(
-            key_input(Keysym::Delete, true),
+            key_input(Keysym::Delete, true, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: true
+            }
+        );
+    }
+
+    #[test]
+    fn key_input_maps_ctrl_top_row_digits_to_row_selects() {
+        // Ctrl+1..9 addresses rows 0..=8 in one motion; the digit's
+        // value picks the row.
+        let digits = [
+            (Keysym::_1, 0),
+            (Keysym::_2, 1),
+            (Keysym::_3, 2),
+            (Keysym::_4, 3),
+            (Keysym::_5, 4),
+            (Keysym::_6, 5),
+            (Keysym::_7, 6),
+            (Keysym::_8, 7),
+            (Keysym::_9, 8),
+        ];
+        for (keysym, row) in digits {
+            assert_eq!(
+                key_input(keysym, false, true),
+                GestureInput::Press {
+                    key: GestureKey::Select(row),
+                    shift: false
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn key_input_maps_ctrl_keypad_digits_to_row_selects() {
+        // A keypad digit is the same intent as a top-row digit — the
+        // Enter family already accepts the keypad's Enter.
+        let digits = [
+            (Keysym::KP_1, 0),
+            (Keysym::KP_2, 1),
+            (Keysym::KP_3, 2),
+            (Keysym::KP_4, 3),
+            (Keysym::KP_5, 4),
+            (Keysym::KP_6, 5),
+            (Keysym::KP_7, 6),
+            (Keysym::KP_8, 7),
+            (Keysym::KP_9, 8),
+        ];
+        for (keysym, row) in digits {
+            assert_eq!(
+                key_input(keysym, false, true),
+                GestureInput::Press {
+                    key: GestureKey::Select(row),
+                    shift: false
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn key_input_leaves_digits_without_ctrl_inert() {
+        // The number row must never surprise-activate: without Ctrl held
+        // a digit is just an unknown key, top row and keypad alike.
+        assert_eq!(
+            key_input(Keysym::_3, false, false),
+            GestureInput::Press {
+                key: GestureKey::Other,
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::KP_5, false, false),
+            GestureInput::Press {
+                key: GestureKey::Other,
+                shift: false
+            }
+        );
+    }
+
+    #[test]
+    fn key_input_maps_shift_ctrl_digits_too() {
+        // Shift is ignored for digits: the chord still selects, and the
+        // seat's shift state is carried as-is.
+        assert_eq!(
+            key_input(Keysym::_4, true, true),
+            GestureInput::Press {
+                key: GestureKey::Select(3),
+                shift: true
+            }
+        );
+    }
+
+    #[test]
+    fn key_input_leaves_ctrl_zero_and_ctrl_non_digits_alone() {
+        // No Ctrl+0-as-10 (OQ 2), and Ctrl on a non-digit key is not a
+        // selection.
+        assert_eq!(
+            key_input(Keysym::_0, false, true),
+            GestureInput::Press {
+                key: GestureKey::Other,
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::KP_0, false, true),
+            GestureInput::Press {
+                key: GestureKey::Other,
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Delete, false, true),
+            GestureInput::Press {
+                key: GestureKey::Other,
+                shift: false
+            }
+        );
+    }
+
+    #[test]
+    fn key_input_leaves_gesture_keys_unchanged_under_ctrl() {
+        // Existing key semantics are byte-identical whatever Ctrl does:
+        // the digit arm never swallows another gesture key.
+        assert_eq!(
+            key_input(Keysym::Tab, false, true),
+            GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Escape, false, true),
+            GestureInput::Press {
+                key: GestureKey::Escape,
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Return, false, true),
+            GestureInput::Press {
+                key: GestureKey::Commit,
+                shift: false
             }
         );
     }

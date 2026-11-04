@@ -254,6 +254,8 @@ pub(crate) struct App {
     pointer: Option<wl_pointer::WlPointer>,
     /// Last shift state the seat reported, for classifying Tab presses.
     shift_held: bool,
+    /// Last Ctrl state the seat reported, for classifying digit presses.
+    ctrl_held: bool,
     /// First output seen; hosts the overlay surface.
     first_output: Option<wl_output::WlOutput>,
     overlay: Option<Overlay>,
@@ -516,7 +518,7 @@ impl KeyboardHandler for App {
         event: KeyEvent,
     ) {
         if self.overlay.is_some() {
-            let input = ui::key_input(event.keysym, self.shift_held);
+            let input = ui::key_input(event.keysym, self.shift_held, self.ctrl_held);
             self.gesture_inputs.push(input);
         }
     }
@@ -552,6 +554,7 @@ impl KeyboardHandler for App {
         _layout: u32,
     ) {
         self.shift_held = modifiers.shift;
+        self.ctrl_held = modifiers.ctrl;
         if self.overlay.is_some() {
             self.gesture_inputs
                 .push(GestureInput::Modifiers { alt: modifiers.alt });
@@ -1096,6 +1099,7 @@ impl Session {
             keyboard: None,
             pointer: None,
             shift_held: false,
+            ctrl_held: false,
             first_output: None,
             overlay: None,
             gesture_inputs: Vec::new(),

@@ -403,6 +403,11 @@ pub fn run() -> Result<(), RunError> {
                     session.overlay_hide("dismissed");
                     open = None;
                 }
+                GestureOutput::Activate { row } => {
+                    // Ctrl+1..9: select row N and commit in one motion,
+                    // the same flow a pointer click takes.
+                    activate_row(&mut session, &mut gesture, &mut open, &snapshot, row)?;
+                }
                 GestureOutput::Nothing => {}
             }
         }
@@ -424,23 +429,7 @@ pub fn run() -> Result<(), RunError> {
             session.overlay_touch();
             match input {
                 PointerInput::Click { row } => {
-                    // The on-screen model is the truth being clicked, and
-                    // the frozen ring must still hold its handle — a
-                    // window opened mid-gesture is not clickable into the
-                    // session. Anything else leaves the session and
-                    // overlay exactly as they are.
-                    if let Some(handle) = session.overlay_row_handle(row)
-                        && open
-                            .as_mut()
-                            .is_some_and(|open| open.ring.select(handle).is_some())
-                    {
-                        commit_session(&mut session, &mut open, &snapshot)?;
-                        // The gesture machine never saw the click; close
-                        // it explicitly so a later Alt-release cannot
-                        // re-commit and a Tab cannot reopen the spent
-                        // session.
-                        gesture.close();
-                    }
+                    activate_row(&mut session, &mut gesture, &mut open, &snapshot, row)?;
                 }
                 PointerInput::Hover(row) => {
                     // A crossing yields a row, the on-screen model maps
@@ -594,6 +583,34 @@ fn commit_session(
     Ok(())
 }
 
+/// Selects `row`'s window and commits the session in one motion — the
+/// flow a pointer click and a Ctrl+N activation share. The on-screen
+/// model is the truth being addressed, and the frozen ring must still
+/// hold its handle — a window opened mid-gesture is not addressable
+/// into the session. Anything else leaves the session and overlay
+/// exactly as they are. On success the gesture session is closed
+/// explicitly: a click never reached the gesture machine, and a Ctrl+N
+/// deliberately left it open (an out-of-range row must not spend it) —
+/// either way a later Alt-release cannot re-commit and a Tab cannot
+/// reopen the spent session.
+fn activate_row(
+    session: &mut wayland::Session,
+    gesture: &mut Gesture,
+    open: &mut Option<Switch>,
+    snapshot: &Snapshot,
+    row: usize,
+) -> Result<(), RunError> {
+    if let Some(handle) = session.overlay_row_handle(row)
+        && open
+            .as_mut()
+            .is_some_and(|open| open.ring.select(handle).is_some())
+    {
+        commit_session(session, open, snapshot)?;
+        gesture.close();
+    }
+    Ok(())
+}
+
 /// Applies one `Step`: advance the session ring and refresh the overlay.
 ///
 /// `same_app` decides which ring a *new* session opens (see
@@ -691,6 +708,7 @@ fn fresh_snapshot(session: &mut wayland::Session, mru: &mut Mru) -> Snapshot {
 mod tests {
     use super::*;
     use crate::switcher::WorkspaceId;
+    use crate::ui::GestureKey;
 
     fn toplevel(handle: u64, workspaces: &[u64], state: State, last_activated: u64) -> Toplevel {
         Toplevel {
@@ -1170,6 +1188,113 @@ mod tests {
         assert_eq!(open.ring.select(Handle(2)), Some(Handle(2)));
         let closed = snapshot(vec![toplevel(1, &[1], State::default(), 30)], Some(1));
         assert_eq!(commit_target(&open, &closed), None);
+    }
+
+    #[test]
+    fn a_number_activation_commits_that_row_and_spends_the_session() {
+        // The seam the Ctrl+N `Activate` arm composes through the same
+        // flow a pointer click takes: the machine yields the row, the
+        // on-screen model maps row 2 to its handle, Ring::select takes
+        // it, commit_target honors it — and the daemon-side close()
+        // leaves a later Alt-release and Tab inert.
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        let mut open = open.expect("session opened");
+
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Select(2),
+                shift: false
+            }),
+            GestureOutput::Activate { row: 2 }
+        );
+        // Daemon side: row 2 is Handle(3) on screen; select, then commit.
+        assert_eq!(open.ring.select(Handle(3)), Some(Handle(3)));
+        assert_eq!(commit_target(&open, &snap), Some(Handle(3)));
+        gesture.close();
+        assert_eq!(
+            gesture.feed(GestureInput::Modifiers { alt: false }),
+            GestureOutput::Nothing,
+            "a later Alt-release cannot re-commit"
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: false
+            }),
+            GestureOutput::Nothing,
+            "a later Tab cannot reopen the spent session"
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_number_activation_leaves_the_session_steppable() {
+        // Ctrl+7 with two rows on screen: the model has no row 6, so
+        // the shared activate_row guard (overlay_row_handle) stops the
+        // flow exactly as an off-model click stops — the selection and
+        // the session are untouched, and a following Tab still steps.
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        let open = open.expect("session opened");
+        assert_eq!(open.ring.selected(), Some(Handle(2)));
+
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Select(6),
+                shift: false
+            }),
+            GestureOutput::Activate { row: 6 }
+        );
+        // Row 6 maps to no handle, so nothing was selected: the frozen
+        // selection stands and the session is still open for a Tab.
+        assert_eq!(open.ring.selected(), Some(Handle(2)));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: false
+            }),
+            GestureOutput::Step(Direction::Next)
+        );
+    }
+
+    #[test]
+    fn a_number_activation_on_a_row_the_ring_never_held_selects_nothing() {
+        // A window opened mid-gesture can render onto the model but
+        // never enters the frozen ring: Ctrl+N addressing its row stops
+        // at Ring::select — the prior selection is never committed and
+        // the overlay stays (the session-freeze philosophy, shared with
+        // the click path).
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(&mut open, &snap, Direction::Next, Scope::CurrentWorkspace);
+        let mut open = open.expect("session opened");
+        assert_eq!(open.ring.select(Handle(4)), None);
+        assert_eq!(open.ring.selected(), Some(Handle(2)));
     }
 
     #[test]
