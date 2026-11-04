@@ -185,10 +185,16 @@ impl Palette {
     }
 
     /// The light-mode card: a near-opaque warm-white fill with
-    /// near-black text — the dark palette's inverse, draft values until
-    /// the TH4 design pass finalizes them. Selection and border derive
-    /// by the same 20%/18% blends as the dark card, so both variants
-    /// share one blend system.
+    /// near-black text — the dark palette's inverse. Selection derives
+    /// by the same 20% blend as the dark card; the border is 22%, two
+    /// points *past* the band where the dark border sits two points
+    /// *before* it (band minus one step on either polarity, the same
+    /// 4-RGB-point gap so the two never read as one). One preview
+    /// review round strengthened it from the symmetric 18%: against
+    /// light wallpapers the card is only ~12 RGB points brighter than
+    /// the backdrop, and the 18% hairline let the card's edges nearly
+    /// dissolve — without a shadow, the stroke is the only separation
+    /// this renderer has.
     pub const fn light() -> Palette {
         const BACKGROUND: u32 = 0xFA_F7_F4_F0;
         const TEXT: u32 = 0xFF_1E_21_26;
@@ -196,7 +202,7 @@ impl Palette {
             background: BACKGROUND,
             text: TEXT,
             selected_bg: blend_over(BACKGROUND, TEXT, 20),
-            border: blend_over(BACKGROUND, TEXT, 18),
+            border: blend_over(BACKGROUND, TEXT, 22),
             is_dark: false,
         }
     }
@@ -1504,16 +1510,16 @@ mod tests {
     }
 
     #[test]
-    fn light_selection_and_border_derive_by_the_same_blends() {
+    fn light_selection_and_border_derive_by_the_blend_formula() {
         // The light card's band and hairline, hand-computed from the
-        // documented 20%/18% formula over the warm-white card and
+        // documented 20%/22% formula over the warm-white card and
         // near-black text — the light twin of the pin above, so neither
         // variant can drift from the blend system.
         let light = Palette::light();
         assert_eq!(light.background, 0xFA_F7_F4_F0);
         assert_eq!(light.text, 0xFF_1E_21_26);
         assert_eq!(light.selected_bg, 0xFA_CB_C9_C7);
-        assert_eq!(light.border, 0xFA_CF_CE_CB);
+        assert_eq!(light.border, 0xFA_C7_C5_C3);
     }
 
     #[test]

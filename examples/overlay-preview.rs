@@ -2,10 +2,10 @@
 //! design-review loop for `overlay-visuals`. Each scenario is drawn twice,
 //! over a dark and a light backdrop, so the card, border, and corners can
 //! be judged on both wallpaper polarities exactly as the design skill's
-//! review step demands.
+//! review step demands. `--light` judges the light palette's card.
 //!
 //! ```sh
-//! cargo run --example overlay-preview -- preview.png [--scale 2]
+//! cargo run --example overlay-preview -- preview.png [--scale 2] [--light]
 //! ```
 //!
 //! Icons come from the real pipeline (`src/icons.rs`) against the host's
@@ -36,24 +36,35 @@ const APP_IDS: &[&str] = &[
 fn main() {
     let mut args = std::env::args().skip(1);
     let Some(path) = args.next().map(std::path::PathBuf::from) else {
-        eprintln!("usage: overlay-preview <out.png> [--scale N]");
+        eprintln!("usage: overlay-preview <out.png> [--scale N] [--light]");
         std::process::exit(2);
     };
-    let scale = match args.next().as_deref() {
-        None => 2,
-        Some("--scale") => args
-            .next()
-            .and_then(|n| n.parse().ok())
-            .filter(|n| (1..=4).contains(n))
-            .unwrap_or(2),
-        Some(other) => {
-            eprintln!("unknown argument {other}; expected --scale N");
-            std::process::exit(2);
+    let mut scale = 2;
+    let mut light = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--scale" => {
+                scale = args
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .filter(|n| (1..=4).contains(n))
+                    .unwrap_or(scale);
+            }
+            "--light" => light = true,
+            other => {
+                eprintln!("unknown argument {other}; expected --scale N or --light");
+                std::process::exit(2);
+            }
         }
-    };
+    }
 
-    // The card the daemon paints today; `--light` arrives with TH4.
-    let palette = ui::Palette::dark();
+    // The card being judged: the dark card the daemon paints today, or
+    // the light palette's card under review.
+    let palette = if light {
+        ui::Palette::light()
+    } else {
+        ui::Palette::dark()
+    };
     let icons = ui_icons(scale, &palette);
     let scenarios = scenarios(&icons);
 
