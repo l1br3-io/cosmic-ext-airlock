@@ -269,6 +269,11 @@ pub(crate) struct App {
     /// pointer frames so a notch split over several deltas still steps
     /// exactly once (see [`ui::wheel_notches`]).
     wheel_residual: i32,
+    /// The last accepted wheel notch's direction and axis-event time, so
+    /// a machine-made echo of it — same direction within
+    /// [`ui::ECHO_WINDOW_MS`], as virtualized mouse relays deliver — can
+    /// be dropped instead of double-stepping (see [`ui::notch_is_echo`]).
+    last_notch: Option<(Direction, u32)>,
     /// Identity maps so plain ids stay stable across snapshots for the
     /// daemon's lifetime; first-seen order assigns them.
     workspace_ids: HashMap<ExtWorkspaceHandleV1, WorkspaceId>,
@@ -602,14 +607,18 @@ impl PointerHandler for App {
                         self.pointer_inputs.push(PointerInput::Click { row });
                     }
                 }
-                PointerEventKind::Axis { vertical, .. } => {
+                PointerEventKind::Axis { time, vertical, .. } => {
                     // One Wheel input per whole notch, the vertical axis
                     // only. v120 first, its sub-notch remainder carried
                     // into the next event so a notch split across deltas
                     // (60+60, a touchpad's stream) steps exactly once;
                     // the legacy discrete step applies only when the
                     // compositor sends no v120 and is whole notches
-                    // already.
+                    // already. A whole notch that only echoes the last
+                    // accepted one — same direction inside the echo
+                    // window, as virtualized mouse relays deliver a
+                    // detent twice — steps nothing: it is machine-made,
+                    // not a second detent.
                     let (notches, residual) = ui::wheel_notches(
                         vertical.value120,
                         vertical.discrete,
@@ -622,8 +631,11 @@ impl PointerHandler for App {
                         } else {
                             Direction::Previous
                         };
-                        for _ in 0..notches.unsigned_abs() {
-                            self.pointer_inputs.push(PointerInput::Wheel(direction));
+                        if !ui::notch_is_echo(direction, time, self.last_notch) {
+                            self.last_notch = Some((direction, time));
+                            for _ in 0..notches.unsigned_abs() {
+                                self.pointer_inputs.push(PointerInput::Wheel(direction));
+                            }
                         }
                     }
                 }
@@ -1122,6 +1134,7 @@ impl Session {
             gesture_inputs: Vec::new(),
             pointer_inputs: Vec::new(),
             wheel_residual: 0,
+            last_notch: None,
             registry_state,
             workspace_ids: HashMap::new(),
             next_workspace_id: 0,

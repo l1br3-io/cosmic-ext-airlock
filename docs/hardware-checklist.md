@@ -63,6 +63,10 @@ binary.
 - [ ] The wheel steps the list one row per notch, both directions,
       wrapping at the ends; a same-app overlay wheels within its own
       filtered list
+- [ ] Rapid multi-notch flicks land exactly one row per detent — a
+      detent's machine-made echo (virtualized mice in the COSMIC VM were
+      observed delivering one click twice, 1 ms apart) steps nothing,
+      while real repeats tens of ms apart all step
 - [ ] A high-resolution wheel or trackpad scroll (deltas split below one
       notch) advances the selection linearly — total rotation, not per
       frame speed, decides the steps; slow and flicks agree

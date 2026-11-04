@@ -1001,6 +1001,32 @@ pub fn wheel_notches(value120: i32, discrete: i32, residual: i32) -> (i32, i32) 
     }
 }
 
+/// How close together two same-direction wheel notches may arrive and
+/// still be one physical detent's machine-made echo: virtualized input
+/// relays (a QEMU/spice mouse, seen in the COSMIC VM) have been observed
+/// delivering a detent's click twice, 1 ms apart. No mechanical wheel
+/// produces two detents in under ~18 ms even at full spin, so 8 ms
+/// separates every echo from every real repeat with margin both ways.
+pub const ECHO_WINDOW_MS: u32 = 8;
+
+/// Whether this whole-notch wheel step is an echo of the last accepted
+/// one — same direction, arriving within [`ECHO_WINDOW_MS`] of it — and
+/// so should be dropped instead of stepping again.
+///
+/// `time_ms` is the axis event's own millisecond timestamp; a timestamp
+/// that jumps backwards (clock skew in a relay) is never an echo, so a
+/// glitch can only ever cost the suppression, never a real notch.
+pub fn notch_is_echo(direction: Direction, time_ms: u32, last: Option<(Direction, u32)>) -> bool {
+    match last {
+        Some((prior_direction, prior_time)) => {
+            prior_direction == direction
+                && time_ms >= prior_time
+                && time_ms - prior_time <= ECHO_WINDOW_MS
+        }
+        None => false,
+    }
+}
+
 /// 8x8 bitmap glyphs for printable ASCII U+0020..=U+007E, one `[u8; 8]` per
 /// glyph (a row per byte); bit `(1 << col)` is the pixel at column `col`, so
 /// the least-significant bit is the leftmost pixel.
@@ -2664,6 +2690,88 @@ mod tests {
         // An event carrying neither field disturbs nothing: the residual
         // waits for the next v120 delta.
         assert_eq!(wheel_notches(0, 0, 60), (0, 60));
+    }
+
+    #[test]
+    fn notch_is_echo_collapses_the_vm_relay_double_click() {
+        // A virtualized mouse relay was observed delivering one detent
+        // twice, 1 ms apart (probe capture, COSMIC VM): the second notch
+        // is machine-made and must not step. Before echo suppression
+        // existed, every such pair skipped an item.
+        assert!(!notch_is_echo(Direction::Next, 3_820_000, None));
+        assert!(notch_is_echo(
+            Direction::Next,
+            3_820_001,
+            Some((Direction::Next, 3_820_000))
+        ));
+    }
+
+    #[test]
+    fn notch_is_echo_keeps_real_fast_repeats() {
+        // Detents a fast real flick produces (tens of ms apart) always
+        // step, both directions, and a direction reversal is never an
+        // echo even back-to-back.
+        assert!(!notch_is_echo(
+            Direction::Next,
+            3_820_056,
+            Some((Direction::Next, 3_820_000))
+        ));
+        assert!(!notch_is_echo(
+            Direction::Previous,
+            3_820_001,
+            Some((Direction::Next, 3_820_000))
+        ));
+        // The window edge itself is still an echo; one past it is not.
+        assert!(notch_is_echo(
+            Direction::Next,
+            3_820_008,
+            Some((Direction::Next, 3_820_000))
+        ));
+        assert!(!notch_is_echo(
+            Direction::Next,
+            3_820_009,
+            Some((Direction::Next, 3_820_000))
+        ));
+    }
+
+    #[test]
+    fn notch_is_echo_ignores_clock_skew_between_notches() {
+        // A relay that delivers timestamps out of order must not eat a
+        // real notch as a "negative gap" echo; only same-direction
+        // forward gaps within the window count.
+        assert!(!notch_is_echo(
+            Direction::Next,
+            3_819_000,
+            Some((Direction::Next, 3_820_000))
+        ));
+    }
+
+    #[test]
+    fn notch_echo_pipeline_steps_three_for_the_captured_sequence() {
+        // The probe capture end to end: four -120 events whose middle
+        // pair is 1 ms apart are three steps, not four. Each whole-notch
+        // event consults the last accepted notch.
+        let events = [
+            (3_819_760i32, -1),
+            (3_820_000, -1),
+            (3_820_001, -1),
+            (3_820_056, -1),
+        ];
+        let mut last = None;
+        let mut steps = 0;
+        for (time, sign) in events {
+            let (notches, _) = wheel_notches(sign * 120, 0, 0);
+            let direction = if notches > 0 {
+                Direction::Next
+            } else {
+                Direction::Previous
+            };
+            if notches != 0 && !notch_is_echo(direction, time as u32, last) {
+                steps += notches;
+                last = Some((direction, time as u32));
+            }
+        }
+        assert_eq!(steps, -3);
     }
 
     #[test]
