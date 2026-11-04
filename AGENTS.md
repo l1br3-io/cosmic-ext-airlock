@@ -17,7 +17,7 @@ This project uses the [addyosmani/agent-skills](https://github.com/addyosmani/ag
 - Follow the skill workflow strictly — do not partially apply it.
 - Never skip required steps (spec, plan, test) a skill demands.
 - Every change clears the project-wide Definition of Done in `.agents/references/definition-of-done.md`.
-- Commands are silent on success and announce on failure: slash commands give a concise result on success and surface failures prominently instead of burying them.
+- Commands are silent on success and announce on failure: justfile recipes echo nothing on success (see `set quiet` and the `quietly` helper in the justfile) and fail loudly; slash commands give a concise result on success and surface failures prominently instead of burying them.
 
 ## Intent → skill mapping
 

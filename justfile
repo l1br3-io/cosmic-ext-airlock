@@ -1,5 +1,29 @@
 # Airlock build recipes. Verification gate: `just test`; quality gates:
 # `just check` (clippy -D warnings) and `just fmt-check`.
+#
+# Recipes are silent on success and announce only on failure (AGENTS.md):
+# `set quiet` stops just from echoing each recipe line, and agent-facing
+# gates route through `quietly` below so a green run costs zero output
+# tokens while a red one replays the full log with its exit code.
+set quiet
+
+# Run a command via the shell, printing its combined output only when it
+# fails.
+[private]
+quietly command:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	out="$(mktemp)"
+	set +e
+	bash -c '{{command}}' >"$out" 2>&1
+	status=$?
+	set -e
+	if [ "$status" -ne 0 ]; then
+		cat "$out"
+		rm -f "$out"
+		exit "$status"
+	fi
+	rm -f "$out"
 
 # A rustup bootstrapped by `deps` must be usable by `install` (and any
 # cargo recipe) in the same invocation — each recipe runs its own
@@ -11,16 +35,13 @@ default:
 	@just --list
 
 # Development build.
-build:
-    cargo build
+build: (quietly "cargo build")
 
 # Release build (COSMIC justfile convention).
-release:
-    cargo build --release
+release: (quietly "cargo build --release")
 
 # Quality gate: clippy with warnings denied.
-check:
-    cargo clippy --all-targets --all-features --locked -- -D warnings
+check: (quietly "cargo clippy --all-targets --all-features --locked -- -D warnings")
 
 # Write formatting.
 fmt:
@@ -31,8 +52,7 @@ fmt-check:
     cargo fmt --all -- --check
 
 # Verification gate: full test suite.
-test:
-    cargo test --all-targets --all-features
+test: (quietly "cargo test --all-targets --all-features")
 
 # Dev loop: build and run the daemon from the dev tree (foreground). Only
 # one daemon can run at a time — if the installed daemon is serving, stop
@@ -59,8 +79,11 @@ stop:
 # root-owned toolchain into /root. With everything present the gate is a
 # silent no-op that touches neither sudo nor the network.
 deps:
-	#!/usr/bin/env sh
-	set -eu
+	#!/usr/bin/env bash
+	# pipefail: the rustup bootstrap is a `curl | sh` pipeline — without
+	# it, a dead curl hands sh an EOF, sh exits 0, and deps reports
+	# success with cargo never installed.
+	set -euo pipefail
 
 	missing=""
 	if command -v pkg-config >/dev/null 2>&1; then
@@ -133,7 +156,7 @@ deps:
 # installed copy is self-contained — the spawn stub re-executes the
 # daemon from its own path, so daily use never touches the dev tree.
 install: deps
-	cargo install --path .
+	{{just_executable()}} quietly 'cargo install --path .'
 
 # --- CP4 VM rehearsal plumbing (delegates to scripts/vm.sh) ---
 # Guest-side actions ride the QEMU guest agent: install it in the VM once
