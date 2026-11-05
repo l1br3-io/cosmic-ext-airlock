@@ -23,13 +23,19 @@
   <url type="homepage">https://github.com/l1br3-io/cosmic-ext-airlock</url>
   <url type="bugtracker">https://github.com/l1br3-io/cosmic-ext-airlock/issues</url>
   <releases>
-    <release version="0.1.0" date="2026-11-02">
+    <release version="0.1.0" date="2026-11-05">
       <description>
         <ul>
           <li>Workspace-isolated Alt+Tab overlay with application icons,
               MRU ordering, arrow keys, Enter commit, Escape dismiss.</li>
           <li>Same-application cycling (Alt+grave) and no-overlay quick
               toggle (Alt+Esc).</li>
+          <li>Pointer input on the overlay — hover moves the selection,
+              click activates, the wheel steps — and direct Ctrl+1..9 row
+              selection, with each row's key shown beside it.</li>
+          <li>Long lists show a fixed eight-row window with continuation
+              marks; a theme setting (dark/light/auto, default auto)
+              follows the desktop's dark/light preference.</li>
           <li>Per-workspace isolation config; installer-managed keybind
               takeover with byte-exact uninstall.</li>
         </ul>
