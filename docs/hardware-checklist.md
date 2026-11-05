@@ -53,6 +53,8 @@ binary.
       that row moves nothing either
 - [ ] Crossing rows walks the highlight one row per crossing; parking on
       a row and releasing Alt focuses it
+- [ ] Hover a row, then press Tab — the step continues from the hovered
+      selection, not from wherever the keyboard left it
 - [ ] Leaving the card and returning to the same row re-selects it
 - [ ] Click each row of a 5+-window list mid-hold — the clicked window
       focuses, the overlay unmaps, and a later Alt release is inert
