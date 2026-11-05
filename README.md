@@ -30,10 +30,13 @@ the pointer nor the wheel can reach it mid-gesture.
 Each row shows the window's application icon — resolved through the same
 desktop-entry and icon-theme pipeline the COSMIC launcher uses — next to
 its title; an application with no themed icon falls back to a generic
-window glyph. The card is a dark rounded rectangle with a hairline border,
-at most 600 px wide, with the selected row highlighted; text renders at
+window glyph. The card is a rounded rectangle with a hairline border, at
+most 660 px wide, with the selected row highlighted; text renders at
 8 px and stays sharp on HiDPI displays (the overlay renders at the
-output's scale). To preview the look without a COSMIC session:
+output's scale). The `theme` setting picks the card — `auto` (the
+default) follows the desktop's dark/light preference; see
+[Settings](docs/settings.md#theme). To preview the look without a COSMIC
+session:
 
 ```sh
 cargo run --example overlay-preview -- preview.png
@@ -126,7 +129,7 @@ other path returns your exact bytes.
 ## Troubleshooting
 
 - **Alt+Tab does nothing.** Press again — the first press may still be
-  starting the daemon (~300 ms cold). If it persists, run `airlock list`:
+  starting the daemon (~340 ms cold). If it persists, run `airlock list`:
   a missing-protocol diagnostic names what the compositor lacks. Make sure
   `~/.cargo/bin` is on your `PATH` inside the session.
 - **Only one program can own WindowSwitcher.** The user-level override is a
@@ -149,14 +152,14 @@ for the full pass that every release build goes through.
 
 ## Performance
 
-Measured on hardware (2026-10-25, see the
+Measured on hardware (2026-11-02, see the
 [checklist](docs/hardware-checklist.md) for how to reproduce):
 
 | Measurement | Target | Airlock |
 |---|---|---|
-| Daemon RSS / threads | < 30 MB | **4.0 MB / 1 thread** |
-| Warm press round-trip | < 50 ms | **3–4 ms** |
-| Cold press (respawn + settle) | — | ~300 ms |
+| Daemon RSS / threads | < 30 MB | **8.0 MB / 1 thread** |
+| Warm press round-trip | < 50 ms | **< 10 ms** |
+| Cold press (respawn + settle) | — | ~340 ms |
 
 For scale, the switcher path this replaces (cosmic-launcher's
 cosmic-switch-less) measures ≈ 170 MB RSS.
@@ -164,13 +167,17 @@ cosmic-switch-less) measures ≈ 170 MB RSS.
 ## Packaging
 
 Published to [crates.io](https://crates.io/crates/cosmic-ext-airlock) as
-`cosmic-ext-airlock`. App ID: `io.github.l1br3-io.Airlock` — it names
-the icon, the desktop entry, and the AppStream metainfo under `res/`
-(AppStream warns about the hyphen in `l1br3-io`; the ID deliberately
-matches the GitHub org, and hyphenated `io.github.<org>` IDs are
-widespread). Flathub is out of scope for v1: a sandboxed global-keybind
-daemon fights the Flatpak model — the takeover rewrites
-`~/.config/cosmic/…`, outside the sandbox. Revisit only on demand.
+`cosmic-ext-airlock`;
+[GitHub Releases](https://github.com/l1br3-io/cosmic-ext-airlock/releases)
+carries the tags and release notes. App ID: `io.github.l1br3-io.Airlock`
+— it names the icon, the desktop entry, and the AppStream metainfo
+under `res/` (AppStream warns about the hyphen in `l1br3-io`; the ID
+deliberately matches the GitHub org, and hyphenated `io.github.<org>`
+IDs are widespread). A Launchpad PPA and Flathub are on the roadmap
+without dates — Flathub only after re-opening the research verdict that
+a sandboxed daemon cannot take over the keybind (the takeover rewrites
+`~/.config/cosmic/…`, outside the sandbox); see the
+[research index](docs/research/README.md).
 
 ## Development
 
