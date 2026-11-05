@@ -1195,6 +1195,14 @@ fn digit_row(keysym: Keysym) -> Option<usize> {
     }
 }
 
+/// Saturating accumulate, bounded per event: no compositor value —
+/// however buggy or hostile — can panic (debug) or enqueue an unbounded
+/// step burst (release). ±32 notches in one event is far past any
+/// physical device (a full-spin flick delivers a handful) and far below
+/// the freeze regime; rotation outside the clamp is dropped, not
+/// carried.
+pub const WHEEL_MAX_NOTCHES_PER_EVENT: i32 = 32;
+
 /// One wheel event's whole notches plus the sub-notch `value120` residual
 /// to carry into the next event: the returned notches' sign is the
 /// direction (positive = one [`Direction::Next`] step), its magnitude the
@@ -1207,13 +1215,26 @@ fn digit_row(keysym: Keysym) -> Option<usize> {
 /// step is the pre-v120 equivalent, is already whole notches, applies
 /// only when the compositor sends no `value120`, and never touches the
 /// residual; an event reporting neither field steps nothing.
+///
+/// Both branches are bounded per event at
+/// [`WHEEL_MAX_NOTCHES_PER_EVENT`]: the v120 branch saturates before
+/// the add and clamps before the divide, the legacy discrete count
+/// clamps symmetrically — an axis value at the i32 rails steps at most
+/// ±32 notches instead of panicking or freezing the enqueue loop, and
+/// rotation beyond the clamp is dropped, not carried.
 pub fn wheel_notches(value120: i32, discrete: i32, residual: i32) -> (i32, i32) {
     if value120 != 0 {
-        let total = residual + value120;
+        let total = residual.saturating_add(value120).clamp(
+            -WHEEL_MAX_NOTCHES_PER_EVENT * 120,
+            WHEEL_MAX_NOTCHES_PER_EVENT * 120,
+        );
         let notches = total / 120;
         (notches, total - notches * 120)
     } else {
-        (discrete, residual)
+        (
+            discrete.clamp(-WHEEL_MAX_NOTCHES_PER_EVENT, WHEEL_MAX_NOTCHES_PER_EVENT),
+            residual,
+        )
     }
 }
 
@@ -3748,6 +3769,55 @@ mod tests {
         // An event carrying neither field disturbs nothing: the residual
         // waits for the next v120 delta.
         assert_eq!(wheel_notches(0, 0, 60), (0, 60));
+    }
+
+    #[test]
+    fn wheel_notches_survives_a_hostile_value120_bounded_per_event() {
+        // A glitching or hostile compositor can deliver an axis value at
+        // the i32 rails — plain `residual + value120` panics a debug
+        // daemon there, and a release daemon freezes enqueueing
+        // millions of steps. The contract: no panic, at most ±32 notches
+        // per event, residual always sub-notch, and rotation beyond the
+        // clamp dropped (not carried into the residual).
+        for value120 in [i32::MAX, i32::MIN] {
+            for residual in [0, 60, -60, 119, -119] {
+                let (notches, carried) = wheel_notches(value120, 0, residual);
+                assert!(
+                    notches.abs() <= WHEEL_MAX_NOTCHES_PER_EVENT,
+                    "notches bounded per event: {notches} (v120 {value120}, residual {residual})"
+                );
+                assert!(
+                    carried.abs() < 120,
+                    "residual stays sub-notch: {carried} (v120 {value120}, residual {residual})"
+                );
+            }
+        }
+        // The bound itself: exactly 32 notches passes through; one notch
+        // past it clamps, and the excess is dropped, not carried.
+        assert_eq!(
+            wheel_notches(WHEEL_MAX_NOTCHES_PER_EVENT * 120, 0, 0),
+            (32, 0)
+        );
+        assert_eq!(
+            wheel_notches((WHEEL_MAX_NOTCHES_PER_EVENT + 1) * 120, 0, 0),
+            (32, 0)
+        );
+    }
+
+    #[test]
+    fn wheel_notches_prefers_value120_over_the_legacy_discrete_step() {
+        // An event reporting both fields is a v120 event: the discrete
+        // step is ignored, and the residual is untouched by it.
+        assert_eq!(wheel_notches(120, -1, 0), (1, 0));
+    }
+
+    #[test]
+    fn wheel_notches_clamps_the_legacy_discrete_step_to_the_same_bound() {
+        // Uniform contract: a garbage discrete count is as bounded as a
+        // garbage v120 — the enqueue loop's `unsigned_abs()` never
+        // meets a freeze-regime count.
+        assert_eq!(wheel_notches(0, i32::MIN, 60), (-32, 60));
+        assert_eq!(wheel_notches(0, i32::MAX, -60), (32, -60));
     }
 
     #[test]
