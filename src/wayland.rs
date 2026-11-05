@@ -590,21 +590,27 @@ impl PointerHandler for App {
             }
             match event.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
+                    let (row, handle) = self.overlay_row_handle_at(event.position);
                     self.pointer_inputs
-                        .push(PointerInput::Hover(self.overlay_row_at(event.position)));
+                        .push(PointerInput::Hover { row, handle });
                 }
                 // A leave forgets the row without selecting: the next
                 // entry into a row is a crossing again, so returning to
                 // the row the pointer just left re-asserts intent.
                 PointerEventKind::Leave { .. } => {
-                    self.pointer_inputs.push(PointerInput::Hover(None));
+                    self.pointer_inputs.push(PointerInput::Hover {
+                        row: None,
+                        handle: None,
+                    });
                 }
                 // A press carries the seat's last-known position, so the
-                // click lands where the cursor is. Non-left buttons, and
-                // presses not on any row, mean nothing to the switcher.
+                // click lands where the cursor is, addressing the handle
+                // captured at the press. Non-left buttons, presses not
+                // on any row, and presses on continuation rows (no
+                // handle) mean nothing to the switcher.
                 PointerEventKind::Press { button, .. } if button == BTN_LEFT => {
-                    if let Some(row) = self.overlay_row_at(event.position) {
-                        self.pointer_inputs.push(PointerInput::Click { row });
+                    if let (_, Some(handle)) = self.overlay_row_handle_at(event.position) {
+                        self.pointer_inputs.push(PointerInput::Click { handle });
                     }
                 }
                 PointerEventKind::Axis { time, vertical, .. } => {
@@ -774,14 +780,24 @@ impl App {
         }
     }
 
-    /// The overlay row under a surface-local logical `position`, or
-    /// `None` off-card, in a gap, or with no overlay mapped. Positions
-    /// are logical; hit-testing takes device pixels (logical × scale).
-    fn overlay_row_at(&self, position: (f64, f64)) -> Option<usize> {
-        let overlay = self.overlay.as_ref()?;
+    /// The overlay row under a surface-local logical `position` and the
+    /// window that row shows, resolved together against the live model
+    /// at event receipt — the only place the live model is reachable, so
+    /// the handle crossing the queue is the one the user saw, whatever a
+    /// same-batch drain does to the model afterwards. `(None, None)` is
+    /// off-card, in a gap, or with no overlay mapped; a continuation row
+    /// yields `(Some(row), None)` — addressable for the crossing policy,
+    /// inert as a selection target. Positions are logical; hit-testing
+    /// takes device pixels (logical × scale).
+    fn overlay_row_handle_at(&self, position: (f64, f64)) -> (Option<usize>, Option<Handle>) {
+        let Some(overlay) = self.overlay.as_ref() else {
+            return (None, None);
+        };
         let (x, y) = position;
         let scale = overlay.scale as f64;
-        overlay.model().row_at(x * scale, y * scale, overlay.scale)
+        let row = overlay.model().row_at(x * scale, y * scale, overlay.scale);
+        let handle = row.and_then(|row| overlay.model().rows.get(row).and_then(|row| row.handle));
+        (row, handle)
     }
 }
 

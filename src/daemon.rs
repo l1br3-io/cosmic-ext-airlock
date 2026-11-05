@@ -420,8 +420,12 @@ pub fn run() -> Result<(), RunError> {
                 }
                 GestureOutput::Activate { row } => {
                     // Ctrl+1..9: select row N and commit in one motion,
-                    // the same flow a pointer click takes.
-                    activate_row(&mut session, &mut gesture, &mut open, &snapshot, row)?;
+                    // the same flow a pointer click takes. The row still
+                    // resolves here (against the live model) until the
+                    // keyboard twin carries its event-time handle.
+                    if let Some(handle) = session.overlay_row_handle(row) {
+                        activate_row(&mut session, &mut gesture, &mut open, &snapshot, handle)?;
+                    }
                 }
                 GestureOutput::Nothing => {}
             }
@@ -443,17 +447,21 @@ pub fn run() -> Result<(), RunError> {
             activity = true;
             session.overlay_touch();
             match input {
-                PointerInput::Click { row } => {
-                    activate_row(&mut session, &mut gesture, &mut open, &snapshot, row)?;
+                PointerInput::Click { handle } => {
+                    activate_row(&mut session, &mut gesture, &mut open, &snapshot, handle)?;
                 }
-                PointerInput::Hover(row) => {
-                    // A crossing yields a row, the on-screen model maps
-                    // it to a handle, and only a handle the frozen ring
-                    // still holds moves the selection (a window opened
-                    // mid-gesture is not hoverable into the session).
-                    // Rows the ring refuses leave the overlay untouched.
-                    if let Some(row) = hover.observe(row)
-                        && let Some(handle) = session.overlay_row_handle(row)
+                PointerInput::Hover { row, handle } => {
+                    // A crossing selects by the event-time target — the
+                    // handle captured against the model the user saw —
+                    // and only a handle the frozen ring still holds moves
+                    // the selection (a window opened mid-gesture is not
+                    // hoverable into the session). A continuation-row
+                    // crossing (handle `None`) still counts as a row
+                    // observation for the crossing policy and selects
+                    // nothing; rows the ring refuses leave the overlay
+                    // untouched.
+                    if hover.observe(row).is_some()
+                        && let Some(handle) = handle
                         && open
                             .as_mut()
                             .is_some_and(|open| open.ring.select(handle).is_some())
@@ -598,27 +606,26 @@ fn commit_session(
     Ok(())
 }
 
-/// Selects `row`'s window and commits the session in one motion — the
-/// flow a pointer click and a Ctrl+N activation share. The on-screen
-/// model is the truth being addressed, and the frozen ring must still
-/// hold its handle — a window opened mid-gesture is not addressable
-/// into the session. Anything else leaves the session and overlay
-/// exactly as they are. On success the gesture session is closed
-/// explicitly: a click never reached the gesture machine, and a Ctrl+N
-/// deliberately left it open (an out-of-range row must not spend it) —
-/// either way a later Alt-release cannot re-commit and a Tab cannot
-/// reopen the spent session.
+/// Selects `handle`'s window and commits the session in one motion —
+/// the flow a pointer click and a Ctrl+N activation share. The handle
+/// was captured at event receipt against the model the user saw; the
+/// frozen ring must still hold it — a window opened mid-gesture is not
+/// addressable into the session. Anything else leaves the session and
+/// overlay exactly as they are. On success the gesture session is
+/// closed explicitly: a click never reached the gesture machine, and a
+/// Ctrl+N deliberately left it open (an unaddressable row must not
+/// spend it) — either way a later Alt-release cannot re-commit and a
+/// Tab cannot reopen the spent session.
 fn activate_row(
     session: &mut wayland::Session,
     gesture: &mut Gesture,
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
-    row: usize,
+    handle: Handle,
 ) -> Result<(), RunError> {
-    if let Some(handle) = session.overlay_row_handle(row)
-        && open
-            .as_mut()
-            .is_some_and(|open| open.ring.select(handle).is_some())
+    if open
+        .as_mut()
+        .is_some_and(|open| open.ring.select(handle).is_some())
     {
         commit_session(session, open, snapshot)?;
         gesture.close();
@@ -764,7 +771,7 @@ fn fresh_snapshot(session: &mut wayland::Session, mru: &mut Mru) -> Snapshot {
 mod tests {
     use super::*;
     use crate::switcher::WorkspaceId;
-    use crate::ui::{GestureKey, Palette};
+    use crate::ui::{GestureKey, OverlayModel, Palette, RowModel};
 
     fn toplevel(handle: u64, workspaces: &[u64], state: State, last_activated: u64) -> Toplevel {
         Toplevel {
@@ -782,6 +789,22 @@ mod tests {
             toplevels,
             workspaces: Vec::new(),
             active: active.map(WorkspaceId),
+        }
+    }
+
+    /// An overlay model whose rows carry `handles` in order — titles and
+    /// geometry are default; only the row→window addressing matters at
+    /// this seam.
+    fn overlay_model(handles: &[u64]) -> OverlayModel {
+        OverlayModel {
+            rows: handles
+                .iter()
+                .map(|&handle| RowModel {
+                    handle: Some(Handle(handle)),
+                    ..RowModel::default()
+                })
+                .collect(),
+            ..OverlayModel::default()
         }
     }
 
@@ -1285,9 +1308,10 @@ mod tests {
 
     #[test]
     fn a_click_selects_then_commits_the_clicked_row() {
-        // The pure seam the pointer Click arm composes: on-screen row →
-        // handle, Ring::select, commit_target. Clicking the last row
-        // commits that window — not the selection the keyboard left.
+        // The pure seam the pointer Click arm composes: the boundary's
+        // captured handle → Ring::select, commit_target. Clicking the
+        // last row commits that window — not the selection the keyboard
+        // left.
         let snap = snapshot(
             vec![
                 toplevel(1, &[1], State::ACTIVATED, 30),
@@ -1361,6 +1385,191 @@ mod tests {
         assert_eq!(open.ring.select(Handle(2)), Some(Handle(2)));
         let closed = snapshot(vec![toplevel(1, &[1], State::default(), 30)], Some(1));
         assert_eq!(commit_target(&open, &closed), None);
+    }
+
+    #[test]
+    fn a_click_captured_on_model_a_activates_as_window_across_a_same_batch_model_swap() {
+        // The /ship NO-GO race, pinned at this seam. The press arrives
+        // while the overlay shows model A; an input drained earlier in
+        // the same batch (a Tab, a wheel notch) rebuilds the card as
+        // model B — the same eligible list, shifted one row — before the
+        // click drains. The user clicked A's row 0, Handle(1); whatever
+        // the model has become by drain time, Handle(1) is the window
+        // that must activate. (Run red against the row-addressed drain:
+        // resolving row 0 against B selected Handle(9).)
+        let snap = snapshot(
+            vec![
+                toplevel(9, &[1], State::default(), 40),
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
+        let mut open = open.expect("session opened");
+
+        // Event receipt against model A: the boundary resolves the press
+        // to A's row 0 and captures its handle — Click { handle } — the
+        // target fixed against the model the user saw.
+        let model_a = overlay_model(&[1, 2, 3]);
+        let click = model_a
+            .rows
+            .first()
+            .and_then(|row| row.handle)
+            .expect("content row");
+        assert_eq!(click, Handle(1));
+
+        // The same-batch swap happened: B's row 0 is Handle(9), the
+        // window the user never chose. The captured handle crosses the
+        // queue untouched — the drain never consults the model — and the
+        // ring takes Handle(1) wherever B put it.
+        let model_b = overlay_model(&[9, 1, 2]);
+        assert_eq!(
+            model_b.rows.first().and_then(|row| row.handle),
+            Some(Handle(9))
+        );
+        assert_eq!(
+            open.ring.select(click),
+            Some(Handle(1)),
+            "the click's target is fixed at event receipt; a same-batch model shift must not retarget it"
+        );
+        assert_eq!(commit_target(&open, &snap), Some(Handle(1)));
+    }
+
+    #[test]
+    fn a_hover_crossing_captured_before_a_model_shift_selects_the_pre_shift_window() {
+        // The hover door of the same race: the crossing is observed
+        // while the overlay shows model A, an earlier-drained input has
+        // already shifted the model to B, and a later Alt release
+        // commits. The selection target is the handle captured at the
+        // observation — A's row — never B's row under the cursor.
+        let snap = snapshot(
+            vec![
+                toplevel(9, &[1], State::default(), 40),
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
+        let mut open = open.expect("session opened");
+
+        let model_a = overlay_model(&[1, 2, 3]);
+        let model_b = overlay_model(&[9, 1, 2]);
+        let mut hover = PointerHover::default();
+        // Map-time contact seeds on A's row 2 without selecting; the
+        // crossing onto A's row 0 captures Handle(1) — the event-time
+        // input, exactly as the boundary queues it.
+        assert_eq!(hover.observe(Some(2)), None, "map-time contact seeds");
+        let PointerInput::Hover { row, handle } = (PointerInput::Hover {
+            row: Some(0),
+            handle: model_a.rows.first().and_then(|row| row.handle),
+        }) else {
+            unreachable!("constructed as a Hover")
+        };
+        // Drain after the shift: the crossing fires, and the selection
+        // follows the captured handle — B's row 0 (Handle(9)) is
+        // irrelevant.
+        assert_eq!(
+            model_b.rows.first().and_then(|row| row.handle),
+            Some(Handle(9))
+        );
+        assert_eq!(
+            hover.observe(row),
+            Some(0),
+            "crossing onto A's row 0 fires the policy"
+        );
+        let handle = handle.expect("a content row captures its handle");
+        assert_eq!(open.ring.select(handle), Some(Handle(1)));
+        assert_eq!(commit_target(&open, &snap), Some(Handle(1)));
+    }
+
+    #[test]
+    fn a_hover_crossing_onto_a_continuation_row_observes_but_selects_nothing() {
+        // A continuation row (handle `None`) is a real row for the
+        // crossing policy — last_row moves, so a later crossing onto a
+        // content row still selects — but it never selects itself.
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
+        let mut open = open.expect("session opened");
+        assert_eq!(open.ring.selected(), Some(Handle(3)));
+
+        // Rows [h1, …, h3]: the middle slot is a continuation affordance.
+        let model = OverlayModel {
+            rows: vec![
+                RowModel {
+                    handle: Some(Handle(1)),
+                    ..RowModel::default()
+                },
+                RowModel::default(),
+                RowModel {
+                    handle: Some(Handle(3)),
+                    ..RowModel::default()
+                },
+            ],
+            ..OverlayModel::default()
+        };
+        let mut hover = PointerHover::default();
+        assert_eq!(hover.observe(Some(2)), None, "map-time contact seeds");
+        // The crossing onto the continuation row is observed — the
+        // policy registers the row — but its missing handle selects
+        // nothing, exactly as the drain's guard runs.
+        let PointerInput::Hover { row, handle } = (PointerInput::Hover {
+            row: Some(1),
+            handle: model.rows.get(1).and_then(|row| row.handle),
+        }) else {
+            unreachable!("constructed as a Hover")
+        };
+        assert_eq!(hover.observe(row), Some(1), "crossing is observed");
+        assert!(handle.is_none(), "continuation rows carry no handle");
+        assert_eq!(
+            open.ring.selected(),
+            Some(Handle(3)),
+            "selection stands where the keyboard left it"
+        );
+        // The observation counted: crossing back onto a content row
+        // selects it.
+        let PointerInput::Hover { row, handle } = (PointerInput::Hover {
+            row: Some(0),
+            handle: model.rows.first().and_then(|row| row.handle),
+        }) else {
+            unreachable!("constructed as a Hover")
+        };
+        assert_eq!(hover.observe(row), Some(0));
+        assert_eq!(
+            open.ring.select(handle.expect("content row")),
+            Some(Handle(1))
+        );
+        assert_eq!(commit_target(&open, &snap), Some(Handle(1)));
     }
 
     #[test]

@@ -963,16 +963,23 @@ pub enum GestureInput {
 }
 
 /// Pointer inputs the switcher gesture reacts to, normalized from
-/// wl_pointer events on the overlay surface. `row` indexes the live
-/// overlay model's rows.
+/// wl_pointer events on the overlay surface. The selection target is
+/// captured at event-receipt time — the handle of the row the user saw —
+/// so nothing draining earlier in the same batch can retarget it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PointerInput {
-    /// Cursor is over `Some(row)` of the overlay (enter or motion);
-    /// `None` is a gap or off-card movement and never selects.
-    Hover(Option<usize>),
-    /// Left-button press on a row: select and commit in one motion —
-    /// the same outcome as pressing Enter or releasing Alt.
-    Click { row: usize },
+    /// Cursor over a row (enter or motion) or gone (leave / gap /
+    /// off-card). `row` drives the pure crossing policy only; `handle`
+    /// is the event-time selection target — `None` on continuation
+    /// rows, gaps, and leaves, and those never select.
+    Hover {
+        row: Option<usize>,
+        handle: Option<Handle>,
+    },
+    /// Left-button press on a content row: select and commit in one
+    /// motion, addressing the handle captured at the press. Presses on
+    /// continuation rows queue nothing.
+    Click { handle: Handle },
     /// One discrete wheel notch, riding the existing [`Direction`]
     /// vocabulary.
     Wheel(Direction),
