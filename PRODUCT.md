@@ -60,7 +60,8 @@ same-application cycling gesture the platform default does not offer.
 - Per-workspace isolation is configurable (`isolated = false` widens a
   workspace to global scope).
 - Overlay visuals (2026-11-01): themed app icons via the pop-launcher
-  pipeline (SVG-first), 16-px text, ≤600-px card, exact-AA corners,
+  pipeline (SVG-first), 16-px text, ≤660-px card (measured; widened by
+  the Ctrl+N hint band), exact-AA corners,
   HiDPI buffer scale; previewable headless via
   `cargo run --example overlay-preview -- out.png`.
 - Constraints, durable: RSS < 30 MB and warm press < 50 ms are product
@@ -71,8 +72,11 @@ same-application cycling gesture the platform default does not offer.
   animation).
 - Product commitments (owner-confirmed 2026-11-01): keyboard-only is
   final (pointer interaction deliberately out of scope, matching the
-  platform consensus); non-ASCII titles rendering as `?` is accepted,
-  documented degradation (a real font would be a deliberate future
+  platform consensus) — superseded 2026-11-05, retroactive to the
+  2026-11-03 `pointer-select` approval: pointer interaction is in
+  scope and shipped (hover moves the selection, click activates the
+  row, the wheel steps the list); non-ASCII titles rendering as `?` is
+  accepted, documented degradation (a real font would be a deliberate future
   decision); glance legibility on both wallpaper polarities is a floor,
   not a preference.
 - Decided (2026-11-02): app ID **`io.github.l1br3-io.Airlock`** (the
@@ -122,9 +126,12 @@ same-application cycling gesture the platform default does not offer.
 
 ## Accessibility & Inclusion
 
-- Keyboard-only by design (owner-confirmed commitment): the overlay is
-  operated entirely by keys, and pointer pass-through matches the
-  platform's own switchers.
+- Keyboard operation is complete, and pointer input is equivalent:
+  crossing rows moves the selection, a click or Ctrl+N activates the
+  row (the same outcome as releasing Alt), the wheel steps the list
+  (re-decided 2026-11-05, retroactive to the 2026-11-03
+  `pointer-select` approval; the 2026-11-01 commitment read
+  "keyboard-only, with pointer pass-through").
 - Glance legibility floor: both wallpaper polarities, 16-px text,
   icon-shape recognition (airlock-design skill, pinned).
 - Non-ASCII titles render as `?` — accepted degradation, documented in
