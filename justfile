@@ -158,6 +158,143 @@ deps:
 install: deps
 	{{just_executable()}} quietly 'cargo install --path .'
 
+# --- Release runbook (release-pipeline module; owner-run) ---
+# release-check is the gate: green means the tree is releasable. The
+# other four are the public steps, invoked by the owner in order after
+# CP-RP1 and the CP-PK walk — never by the agent, and nothing here
+# pushes or publishes except those owner-run recipes (plus the publish
+# dry-run inside the gate).
+
+# Release gate: quality gates + one-version coherence + package
+# preview. Coherence: Cargo.toml version == the CHANGELOG's top
+# section == the metainfo <release>, and the two dates agree; a
+# v<version> tag may be absent, at HEAD, or awaiting release-tag's
+# documented re-cut force-move — all pass, because the gate runs
+# before the move and release-tag refuses a version the tree does not
+# carry. The metainfo must validate with nothing beyond the one
+# documented hyphen warning (README Packaging: the app ID matches the
+# GitHub org). Ends with the crate file list and a full publish
+# rehearsal (--locked, --dry-run). Green = releasable.
+[group('release')]
+release-check:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	justbin="{{just_executable()}}"
+
+	fail() { echo "release-check: $*" >&2; exit 1; }
+
+	# One version story across Cargo.toml, CHANGELOG, and metainfo.
+	cargo_ver="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+	[ -n "$cargo_ver" ] || fail "no version line found in Cargo.toml"
+
+	cl_header="$(grep -m1 '^## \[' CHANGELOG.md)"
+	cl_ver="$(printf '%s\n' "$cl_header" | sed -n 's/^## \[\([^]]*\)\].*/\1/p')"
+	cl_date="$(printf '%s\n' "$cl_header" | sed -n 's/^## \[[^]]*\] — *\([^ ]*\).*/\1/p')"
+	[ -n "$cl_ver" ] && [ -n "$cl_date" ] \
+		|| fail "CHANGELOG top section not parseable: '$cl_header'"
+
+	mi_header="$(grep -m1 '<release ' res/io.github.l1br3-io.Airlock.metainfo.xml)"
+	mi_ver="$(printf '%s\n' "$mi_header" | sed -n 's/.*version="\([^"]*\)".*/\1/p')"
+	mi_date="$(printf '%s\n' "$mi_header" | sed -n 's/.*date="\([^"]*\)".*/\1/p')"
+	[ -n "$mi_ver" ] && [ -n "$mi_date" ] \
+		|| fail "metainfo <release> line not parseable: '$mi_header'"
+
+	[ "$cl_ver" = "$cargo_ver" ] \
+		|| fail "Cargo.toml version $cargo_ver ≠ CHANGELOG top version $cl_ver"
+	[ "$mi_ver" = "$cargo_ver" ] \
+		|| fail "Cargo.toml version $cargo_ver ≠ metainfo release version $mi_ver"
+	[ "$cl_date" = "$mi_date" ] \
+		|| fail "CHANGELOG date $cl_date ≠ metainfo date $mi_date"
+
+	# Metainfo validation: appstreamcli exits 3 on any warning, so judge
+	# the findings, not the code — everything but the documented hyphen
+	# cid warning is a failure.
+	command -v appstreamcli >/dev/null 2>&1 \
+		|| fail "appstreamcli not found (Debian package: appstream)"
+	as_out="$(appstreamcli validate res/io.github.l1br3-io.Airlock.metainfo.xml 2>&1 || true)"
+	unexpected="$(printf '%s\n' "$as_out" | grep '^[EWP]: ' | grep -v 'cid-rdns-contains-hyphen' || true)"
+	[ -z "$unexpected" ] || fail "appstreamcli: $unexpected"
+
+	# Gates, then the crate preview and a full publish rehearsal.
+	"$justbin" test
+	"$justbin" check
+	"$justbin" fmt-check
+	cargo package --list --locked >/dev/null
+	out="$(mktemp)"
+	if ! cargo publish --dry-run --locked >"$out" 2>&1; then
+		tail -n 40 "$out" >&2
+		rm -f "$out"
+		fail "cargo publish --dry-run failed"
+	fi
+	rm -f "$out"
+
+# Extract one version's CHANGELOG section (sans its header) to
+# target/release-notes-<ver>.md — the text release-gh attaches to the
+# GitHub Release verbatim. CP-RP1 approves this text; the extraction
+# is mechanical so the approved words are the published words.
+[group('release')]
+release-notes ver:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	notes="target/release-notes-{{ver}}.md"
+	mkdir -p target
+	awk -v section='## [{{ver}}]' '
+		index($0, section) == 1 { in_section = 1; next }
+		in_section && /^## \[/ { exit }
+		in_section { print }
+	' CHANGELOG.md >"$notes"
+	if [ ! -s "$notes" ]; then
+		rm -f "$notes"
+		echo "release-notes: no [{{ver}}] section in CHANGELOG.md" >&2
+		exit 1
+	fi
+
+# Annotated tag v<ver> at HEAD, then push. Re-cut mode: an existing
+# tag is force-moved (OQ3 — accepted; the version was never on
+# crates.io, and the GitHub Release follows the tag ref). Owner-run,
+# after release-check: the tag and the tree must carry one version.
+[group('release')]
+release-tag ver:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cargo_ver="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+	if [ "{{ver}}" != "$cargo_ver" ]; then
+		echo "release-tag: Cargo.toml carries $cargo_ver, asked for {{ver}}" >&2
+		exit 1
+	fi
+	if git rev-parse -q --verify "v{{ver}}^{commit}" >/dev/null; then
+		echo "release-tag: v{{ver}} exists at $(git rev-parse --short "v{{ver}}^{commit}") — force-moving to HEAD (re-cut)" >&2
+	fi
+	git tag -fa "v{{ver}}" -m "Release {{ver}}"
+	git push origin "v{{ver}}" --force
+
+# Point the GitHub Release for v<ver> at the extracted notes. Re-cut
+# mode edits the existing release object in place so its URL survives;
+# after release-tag's force-push the release follows the moved tag.
+# Requires release-notes <ver> to have run (the notes file is the
+# CP-RP1-approved text).
+[group('release')]
+release-gh ver:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	notes="target/release-notes-{{ver}}.md"
+	if [ ! -s "$notes" ]; then
+		echo "release-gh: $notes missing or empty — run: just release-notes {{ver}}" >&2
+		exit 1
+	fi
+	if gh release view "v{{ver}}" >/dev/null 2>&1; then
+		gh release edit "v{{ver}}" --notes-file "$notes" --title "Airlock {{ver}}" --latest
+	else
+		gh release create "v{{ver}}" --notes-file "$notes" --title "Airlock {{ver}}" --latest
+	fi
+
+# Publish the crate to crates.io, built exactly as the committed
+# Cargo.lock pins it. Owner-run only — the invocation is the consent,
+# tokens never live in this repo, and crates.io versions are
+# immutable: this is the one unretractable step of the runbook.
+[group('release')]
+release-publish: (quietly "cargo publish --locked")
+
 # --- CP4 VM rehearsal plumbing (delegates to scripts/vm.sh) ---
 # Guest-side actions ride the QEMU guest agent: install it in the VM once
 # with `sudo apt install qemu-guest-agent`. The keypress rehearsal itself
