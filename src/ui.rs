@@ -941,8 +941,18 @@ pub enum GestureKey {
     /// A directional step: Up/Left previous, Down/Right next.
     Arrow(Direction),
     /// Ctrl+1..9 (or keypad 1..9): select and activate row `n` (0-based,
-    /// top row = 0) in one motion — the keyboard twin of a pointer click.
+    /// top row = 0) in one motion — the keyboard twin of a pointer
+    /// click. Produced by the pure [`key_input`]; the wayland boundary
+    /// rewrites it to [`GestureKey::SelectHandle`] — the row resolved
+    /// against the event-time model — before queueing, so no bare row
+    /// ever crosses the queue as an activation target.
     Select(usize),
+    /// The handle-carrying twin of [`GestureKey::Select`], produced only
+    /// by the wayland boundary at event receipt: the window of the row
+    /// the user addressed. `None` — a continuation row, or a row past
+    /// the model's end — flows through and no-ops at the daemon,
+    /// leaving the session intact.
+    SelectHandle(Option<Handle>),
     Escape,
     Other,
 }
@@ -1033,12 +1043,14 @@ pub enum GestureOutput {
     Step(Direction),
     /// Activate the selection and unmap the overlay.
     Commit,
-    /// Select and activate overlay `row` in one motion. The gesture
-    /// session survives the output: the daemon closes it only when the
-    /// activation actually happens, so an out-of-range row leaves the
-    /// gesture fully intact.
+    /// Select and activate the captured window in one motion — the
+    /// handle was fixed at event receipt against the model the user
+    /// saw. The gesture session survives the output: the daemon closes
+    /// it only when the activation actually happens, so a `None`
+    /// handle (a continuation or out-of-range row) leaves the gesture
+    /// fully intact.
     Activate {
-        row: usize,
+        handle: Option<Handle>,
     },
     /// Unmap the overlay without switching.
     Dismiss,
@@ -1081,11 +1093,17 @@ impl Gesture {
                     GestureOutput::Commit
                 }
                 GestureKey::Arrow(direction) => GestureOutput::Step(direction),
-                // Select-and-activate in one motion; the session stays
-                // open — the daemon closes it via `close()` only when
-                // the activation actually happens, so an out-of-range
-                // row leaves the gesture fully intact.
-                GestureKey::Select(row) => GestureOutput::Activate { row },
+                // Select-and-activate in one motion, addressing the
+                // event-time handle; the session stays open — the daemon
+                // closes it via `close()` only when the activation
+                // actually happens, so an unaddressable row (`None`)
+                // leaves the gesture fully intact.
+                GestureKey::SelectHandle(handle) => GestureOutput::Activate { handle },
+                // A bare row is the pure translation's shape, never the
+                // queue's: the boundary rewrites it to its
+                // [`GestureKey::SelectHandle`] twin before queueing, so
+                // the machine never activates off a row index.
+                GestureKey::Select(_) => GestureOutput::Nothing,
                 GestureKey::Escape => {
                     self.showing = false;
                     GestureOutput::Dismiss
@@ -3311,19 +3329,21 @@ mod tests {
     }
 
     #[test]
-    fn a_number_selection_activates_row_n_and_keeps_the_session_open() {
+    fn a_number_selection_activates_its_captured_handle_and_keeps_the_session_open() {
         // Ctrl+N is select-and-activate in one motion, but the session
         // survives the output: the daemon closes it via `close()` only
-        // when the activation actually happens, so an out-of-range
+        // when the activation actually happens, so an unaddressable
         // Ctrl+N leaves the session fully intact.
         let mut gesture = Gesture::default();
         gesture.feed(GestureInput::Invoke(Direction::Next));
         assert_eq!(
             gesture.feed(GestureInput::Press {
-                key: GestureKey::Select(2),
+                key: GestureKey::SelectHandle(Some(Handle(2))),
                 shift: false
             }),
-            GestureOutput::Activate { row: 2 }
+            GestureOutput::Activate {
+                handle: Some(Handle(2))
+            }
         );
         assert!(
             gesture.showing(),
@@ -3333,14 +3353,44 @@ mod tests {
 
     #[test]
     fn a_number_selection_between_sessions_is_nothing() {
-        // The dead-arm contract every press shares: no overlay, no output.
+        // The dead-arm contract every press shares: no overlay, no
+        // output — for the queueable twin and for the pure translation's
+        // bare row alike.
         let mut gesture = Gesture::default();
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::SelectHandle(Some(Handle(0))),
+                shift: false
+            }),
+            GestureOutput::Nothing
+        );
         assert_eq!(
             gesture.feed(GestureInput::Press {
                 key: GestureKey::Select(0),
                 shift: false
             }),
             GestureOutput::Nothing
+        );
+    }
+
+    #[test]
+    fn a_bare_select_row_means_nothing_to_the_machine() {
+        // The invariant's machine side: a row index is not an activation
+        // target. Only the boundary-produced SelectHandle twin activates;
+        // the pure translation's Select never reaches the queue.
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Select(2),
+                shift: false
+            }),
+            GestureOutput::Nothing,
+            "the machine consumes handles, never rows"
+        );
+        assert!(
+            gesture.showing(),
+            "a bare row spends nothing — the session stands"
         );
     }
 
@@ -3353,15 +3403,17 @@ mod tests {
         gesture.feed(GestureInput::Invoke(Direction::Next));
         assert_eq!(
             gesture.feed(GestureInput::Press {
-                key: GestureKey::Select(1),
+                key: GestureKey::SelectHandle(Some(Handle(1))),
                 shift: false
             }),
-            GestureOutput::Activate { row: 1 }
+            GestureOutput::Activate {
+                handle: Some(Handle(1))
+            }
         );
         gesture.close();
         assert_eq!(
             gesture.feed(GestureInput::Press {
-                key: GestureKey::Select(1),
+                key: GestureKey::SelectHandle(Some(Handle(1))),
                 shift: false
             }),
             GestureOutput::Nothing

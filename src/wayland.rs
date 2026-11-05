@@ -48,7 +48,7 @@ use cctk::workspace::{WorkspaceHandler, WorkspaceState};
 
 use crate::ipc::Direction;
 use crate::switcher::{Handle, Snapshot, Toplevel, Workspace, WorkspaceId};
-use crate::ui::{self, GestureInput, OverlayModel, PointerInput};
+use crate::ui::{self, GestureInput, GestureKey, OverlayModel, PointerInput};
 
 /// A required protocol the compositor does not offer at a sufficient version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -524,6 +524,21 @@ impl KeyboardHandler for App {
     ) {
         if self.overlay.is_some() {
             let input = ui::key_input(event.keysym, self.shift_held, self.ctrl_held);
+            // The Select twin: `key_input` stays pure (a keysym → row
+            // translation), and the row resolves to its window here, at
+            // event receipt against the live model — the keyboard twin
+            // of the pointer boundary's capture. Everything else queues
+            // unchanged.
+            let input = match input {
+                GestureInput::Press {
+                    key: GestureKey::Select(row),
+                    shift,
+                } => GestureInput::Press {
+                    key: GestureKey::SelectHandle(self.overlay_row_handle(row)),
+                    shift,
+                },
+                other => other,
+            };
             self.gesture_inputs.push(input);
         }
     }
@@ -796,8 +811,20 @@ impl App {
         let (x, y) = position;
         let scale = overlay.scale as f64;
         let row = overlay.model().row_at(x * scale, y * scale, overlay.scale);
-        let handle = row.and_then(|row| overlay.model().rows.get(row).and_then(|row| row.handle));
-        (row, handle)
+        (row, row.and_then(|row| self.overlay_row_handle(row)))
+    }
+
+    /// The window the live model's `row` shows — the event-time
+    /// resolution a Ctrl+N digit press addresses — or `None` when no
+    /// overlay is mapped, `row` is past the model's end, or the row is
+    /// a continuation affordance (not addressable by any input).
+    fn overlay_row_handle(&self, row: usize) -> Option<Handle> {
+        self.overlay
+            .as_ref()?
+            .model()
+            .rows
+            .get(row)
+            .and_then(|row| row.handle)
     }
 }
 
@@ -1446,20 +1473,6 @@ impl Session {
         if let Some(overlay) = self.app.overlay.as_mut() {
             overlay.touch();
         }
-    }
-
-    /// The handle of the on-screen model's `row` — the truth a click
-    /// selects; `None` when the overlay is unmapped, `row` is past the
-    /// model's end, or the row is a continuation affordance (not
-    /// addressable by any input).
-    pub fn overlay_row_handle(&self, row: usize) -> Option<Handle> {
-        self.app
-            .overlay
-            .as_ref()?
-            .model()
-            .rows
-            .get(row)
-            .and_then(|row| row.handle)
     }
 
     /// Drains gesture inputs queued by keyboard handlers during dispatch.

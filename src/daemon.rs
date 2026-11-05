@@ -418,12 +418,13 @@ pub fn run() -> Result<(), RunError> {
                     session.overlay_hide("dismissed");
                     open = None;
                 }
-                GestureOutput::Activate { row } => {
-                    // Ctrl+1..9: select row N and commit in one motion,
-                    // the same flow a pointer click takes. The row still
-                    // resolves here (against the live model) until the
-                    // keyboard twin carries its event-time handle.
-                    if let Some(handle) = session.overlay_row_handle(row) {
+                GestureOutput::Activate { handle } => {
+                    // Ctrl+1..9: select and commit in one motion, the
+                    // same flow a pointer click takes — addressing the
+                    // handle the boundary captured at the key press. A
+                    // `None` handle (a continuation or out-of-range row)
+                    // no-ops with the session and gesture untouched.
+                    if let Some(handle) = handle {
                         activate_row(&mut session, &mut gesture, &mut open, &snapshot, handle)?;
                     }
                 }
@@ -1573,12 +1574,77 @@ mod tests {
     }
 
     #[test]
+    fn a_number_selection_captured_on_model_a_activates_as_window_across_a_same_batch_model_swap() {
+        // The keyboard twin of the click race, pinned at this seam. The
+        // digit press arrives while the overlay shows model A; a wheel
+        // notch drained earlier in the same batch rebuilds the card as
+        // model B before the key press drains. The user addressed A's
+        // row 2 (Handle(3)); whatever the model has become by drain
+        // time, Handle(3) is the window that must activate. (Run red
+        // against the row-addressed drain: resolving row 2 against B
+        // selected Handle(2).)
+        let snap = snapshot(
+            vec![
+                toplevel(9, &[1], State::default(), 40),
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
+        let mut open = open.expect("session opened");
+
+        // Event receipt against model A: the boundary resolves the
+        // digit's row to A's row 2 and captures its handle — the
+        // SelectHandle twin — the target fixed against the model the
+        // user saw.
+        let model_a = overlay_model(&[1, 2, 3]);
+        let captured = model_a.rows.get(2).and_then(|row| row.handle);
+        assert_eq!(captured, Some(Handle(3)));
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::SelectHandle(captured),
+                shift: false
+            }),
+            GestureOutput::Activate {
+                handle: Some(Handle(3))
+            }
+        );
+
+        // The same-batch swap happened: B's row 2 is Handle(2), the
+        // window the user never chose. The captured handle crosses the
+        // machine and the queue untouched — the drain never consults
+        // the model — and the ring takes Handle(3) wherever B put it.
+        let model_b = overlay_model(&[9, 1, 2]);
+        assert_eq!(
+            model_b.rows.get(2).and_then(|row| row.handle),
+            Some(Handle(2))
+        );
+        assert_eq!(
+            open.ring.select(captured.expect("content row")),
+            Some(Handle(3)),
+            "the Ctrl+N target is fixed at event receipt; a same-batch model shift must not retarget it"
+        );
+        assert_eq!(commit_target(&open, &snap), Some(Handle(3)));
+    }
+
+    #[test]
     fn a_number_activation_commits_that_row_and_spends_the_session() {
         // The seam the Ctrl+N `Activate` arm composes through the same
-        // flow a pointer click takes: the machine yields the row, the
-        // on-screen model maps row 2 to its handle, Ring::select takes
-        // it, commit_target honors it — and the daemon-side close()
-        // leaves a later Alt-release and Tab inert.
+        // flow a pointer click takes: the boundary resolved row 2 to
+        // Handle(3) at the press, the machine yields the handle,
+        // Ring::select takes it, commit_target honors it — and the
+        // daemon-side close() leaves a later Alt-release and Tab inert.
         let snap = snapshot(
             vec![
                 toplevel(1, &[1], State::ACTIVATED, 30),
@@ -1601,12 +1667,14 @@ mod tests {
         gesture.feed(GestureInput::Invoke(Direction::Next));
         assert_eq!(
             gesture.feed(GestureInput::Press {
-                key: GestureKey::Select(2),
+                key: GestureKey::SelectHandle(Some(Handle(3))),
                 shift: false
             }),
-            GestureOutput::Activate { row: 2 }
+            GestureOutput::Activate {
+                handle: Some(Handle(3))
+            }
         );
-        // Daemon side: row 2 is Handle(3) on screen; select, then commit.
+        // Daemon side: the captured handle selects, then commits.
         assert_eq!(open.ring.select(Handle(3)), Some(Handle(3)));
         assert_eq!(commit_target(&open, &snap), Some(Handle(3)));
         gesture.close();
@@ -1627,10 +1695,11 @@ mod tests {
 
     #[test]
     fn an_out_of_range_number_activation_leaves_the_session_steppable() {
-        // Ctrl+7 with two rows on screen: the model has no row 6, so
-        // the shared activate_row guard (overlay_row_handle) stops the
-        // flow exactly as an off-model click stops — the selection and
-        // the session are untouched, and a following Tab still steps.
+        // Ctrl+7 with two rows on screen: the boundary's event-time
+        // resolution yields no handle (row 6 is past the model's end),
+        // so the output's `None` no-ops at the daemon exactly as an
+        // off-model click stops — the selection and the session are
+        // untouched, and a following Tab still steps.
         let snap = snapshot(
             vec![
                 toplevel(1, &[1], State::ACTIVATED, 30),
@@ -1653,13 +1722,13 @@ mod tests {
         gesture.feed(GestureInput::Invoke(Direction::Next));
         assert_eq!(
             gesture.feed(GestureInput::Press {
-                key: GestureKey::Select(6),
+                key: GestureKey::SelectHandle(None),
                 shift: false
             }),
-            GestureOutput::Activate { row: 6 }
+            GestureOutput::Activate { handle: None }
         );
-        // Row 6 maps to no handle, so nothing was selected: the frozen
-        // selection stands and the session is still open for a Tab.
+        // No handle means nothing was selected: the frozen selection
+        // stands and the session is still open for a Tab.
         assert_eq!(open.ring.selected(), Some(Handle(2)));
         assert_eq!(
             gesture.feed(GestureInput::Press {
@@ -1667,6 +1736,66 @@ mod tests {
                 shift: false
             }),
             GestureOutput::Step(Direction::Next)
+        );
+    }
+
+    #[test]
+    fn a_number_activation_on_a_continuation_row_no_ops_with_the_session_intact() {
+        // A continuation row exists on screen but carries no handle —
+        // not addressable by any input. The digit addressing it resolves
+        // to `None` at the boundary, the `None` flows through the
+        // machine, and the daemon's guard leaves the session and the
+        // selection exactly as they were.
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+        );
+        let open = open.expect("session opened");
+        assert_eq!(open.ring.selected(), Some(Handle(3)));
+
+        // Rows [h1, …, h3]: the middle slot is a continuation affordance.
+        let model = OverlayModel {
+            rows: vec![
+                RowModel {
+                    handle: Some(Handle(1)),
+                    ..RowModel::default()
+                },
+                RowModel::default(),
+                RowModel {
+                    handle: Some(Handle(3)),
+                    ..RowModel::default()
+                },
+            ],
+            ..OverlayModel::default()
+        };
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::SelectHandle(model.rows.get(1).and_then(|row| row.handle)),
+                shift: false
+            }),
+            GestureOutput::Activate { handle: None }
+        );
+        assert_eq!(
+            open.ring.selected(),
+            Some(Handle(3)),
+            "the selection stands where the keyboard left it"
+        );
+        assert!(
+            gesture.showing(),
+            "the session survives the unaddressable row"
         );
     }
 
