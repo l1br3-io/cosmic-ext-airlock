@@ -34,16 +34,22 @@ pub struct IconBitmap {
 }
 
 /// Font scale as an exact rational (numerator over denominator): text is
-/// 8 logical px tall, re-pinned 2026-11-02 by the owner after the
-/// hardware pass read even the 12-px step as oversized next to the 32-px
-/// icons — the icons carry the row's identity, the title only has to
-/// confirm it, and an 8-px bitmap stays crisp where a fractional 10-px
-/// scale would letter-space every glyph. Whole-pixel exact at every
-/// render scale (each font pixel is `scale` device px); the studied
-/// switchers' 13–16 px consensus (research record §2.10) spends its
-/// height on richer fonts, not on proportion.
-pub const FONT_SCALE_NUM: u32 = 1;
-pub const FONT_SCALE_DEN: u32 = 1;
+/// 12 logical px tall — re-pinned 2026-11-07 by the owner. The 11-02
+/// re-pin to 8 px ("even 12 read oversized next to the 32-px icons") was
+/// judged on the 200 % VM, where 8 logical px paint as 16 physical; on a
+/// 100 % output the same value is 8 physical pixels, a terminal's
+/// smallest font, and the owner read it as too small. The value didn't
+/// change, the display did — so the pin moves to the middle step, still
+/// under the icons in weight (they carry the row's identity, the title
+/// confirms it). Whole-pixel at the render-scale floor of 2 (each font
+/// pixel is 3 device px), which covers every output up to 200 %; at a 3×
+/// output the glyph block floors to 4 device px inside a 4.5-px cell and
+/// the text letter-spaces — stated here, not hidden. 16 px (`2/1`) is
+/// exact at every scale and stays the alternative if that ever matters.
+/// The studied switchers' 13–16 px consensus (research record §2.10)
+/// spends its height on richer fonts, not on proportion.
+pub const FONT_SCALE_NUM: u32 = 3;
+pub const FONT_SCALE_DEN: u32 = 2;
 
 /// Title text cell width in logical pixels (glyph cell × font scale).
 pub const TEXT_W: u32 = GLYPH_W * FONT_SCALE_NUM / FONT_SCALE_DEN;
@@ -93,14 +99,17 @@ pub const RADIUS: u32 = 12;
 /// Hairline card border thickness in logical pixels.
 pub const BORDER: u32 = 1;
 
-/// Maximum title columns shown before elision. 64 columns of 8-px text
-/// keeps the title territory at 596 logical px — cosmic-launcher's fixed
-/// switcher width and the cross-platform consensus cap of ~600 (research
-/// record §2.6, §2.10). The 8-px re-pin spends its savings on more first
-/// words per title, not on a narrower card; the hint band rides on top
-/// of the cap rather than under it (rev 2's recorded decision: the card
-/// widens by the band, the title budget does not fund it).
-pub const MAX_COLS: u32 = 64;
+/// Maximum title columns shown before elision. 48 columns of 12-px text
+/// keeps the title territory at 660 logical px — within reach of
+/// cosmic-launcher's 596 fixed switcher width and the cross-platform
+/// consensus cap of ~600 (research record §2.6, §2.10); the full card,
+/// hint band included, is 748. Re-pinned 2026-11-07 with the 12-px text
+/// from the 8-px era's 64 columns (596 territory, 660 card): the band
+/// consensus holds, the column budget pays for the larger glyphs. The
+/// hint band rides on top of the cap rather than under it (rev 2's
+/// recorded decision: the card widens by the band, the title budget does
+/// not fund it).
+pub const MAX_COLS: u32 = 48;
 
 /// Gap between the title band's right edge and the hint band, logical
 /// px. The hint's territory is its own, never the title's — a
@@ -311,6 +320,9 @@ const _: () = {
     assert!(TEXT_W == TEXT_H);
     // The glyph block is whole device pixels at the render-scale floor.
     assert!((TEXT_W * 2).is_multiple_of(GLYPH_W));
+    // The title band stays under the ~600-px switcher-width consensus
+    // (research record §2.6, §2.10); the hint band rides on top of it.
+    assert!(MAX_COLS * TEXT_W <= 600);
     assert!(ROW_H >= TEXT_H);
     assert!(PAD_Y >= RADIUS);
     assert!(RADIUS.is_multiple_of(4));
@@ -1711,13 +1723,26 @@ mod tests {
             model.width,
             2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
         );
-        // The research-informed cap governs the title territory; rev 2's
+        // The research-informed ~600 cap governs the title band; rev 2's
         // recorded decision widens the card by the structural hint band
-        // on top of it rather than taxing the 64-column title budget.
-        assert!(
-            model.width <= 600 + HINT_GAP + HINT_COLS * TEXT_W,
-            "card wider than the 600 px title cap plus the hint band"
-        );
+        // on top of it rather than taxing the column budget. The 11-07
+        // 12-px re-pin keeps the band under the cap (48 × 12 = 576) and
+        // lands the whole card at 748 logical px — the measured pin
+        // PRODUCT.md re-dates from 660.
+        // (The band cap itself is a compile-time pin beside the other
+        // geometry pins.)
+        assert_eq!(model.width, 748, "the measured card width pin");
+    }
+
+    #[test]
+    fn the_glyph_block_is_whole_device_pixels_at_the_render_scale_floor() {
+        // 12-px text at the 2× floor: each font pixel is exactly three
+        // device pixels, so nothing letter-spaces on any output up to
+        // 200 % (the 3× case floors to 4 in a 4.5 cell — documented on
+        // FONT_SCALE, not pinned here).
+        assert_eq!((TEXT_W, TEXT_H), (12, 12));
+        assert_eq!(TEXT_W * 2 / GLYPH_W, 3);
+        assert_eq!((TEXT_W * 2) % GLYPH_W, 0);
     }
 
     #[test]

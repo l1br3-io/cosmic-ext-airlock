@@ -37,8 +37,8 @@ Each row shows the window's application icon — resolved through the same
 desktop-entry and icon-theme pipeline the COSMIC launcher uses — next to
 its title; an application with no themed icon falls back to a generic
 window glyph. The card is a rounded rectangle with a hairline border, at
-most 660 px wide, with the selected row highlighted; text renders at
-8 px and stays sharp on HiDPI displays (the overlay renders at the
+most 748 px wide, with the selected row highlighted; text renders at
+12 px and stays sharp on HiDPI displays (the overlay renders at the
 output's scale). The `theme` setting picks the card — `auto` (the
 default) follows the desktop's dark/light preference; see
 [settings.md](settings.md#theme).

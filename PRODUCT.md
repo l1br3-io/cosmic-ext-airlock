@@ -61,9 +61,16 @@ same-application cycling gesture the platform default does not offer.
   workspace to global scope).
 - Overlay visuals (2026-11-01): themed app icons via the pop-launcher
   pipeline (SVG-first), 16-px text, ≤660-px card (measured; widened by
-  the Ctrl+N hint band), exact-AA corners,
-  HiDPI buffer scale; previewable headless via
-  `cargo run --example overlay-preview -- out.png`.
+  the Ctrl+N hint band), exact-AA corners, HiDPI buffer scale;
+  previewable headless via `cargo run --example overlay-preview --
+  out.png`. Re-decided 2026-11-07 (`overlay-density`): **12-px text,
+  ≤748-px card** (measured: 48 title columns at 12 px plus the hint
+  band). The 16-px figure above never shipped — the owner re-pinned
+  8 px on 2026-11-02 judging on the 200 % VM (16 physical px), then
+  found the same value tiny on a 100 % output (8 physical) and moved to
+  the middle step. The card keeps `rows` windows in view on a long
+  list (default 8, configurable 3–10), the `…` rows riding on top of
+  that budget.
 - Constraints, durable: RSS < 30 MB and warm press < 50 ms are product
   budgets, not targets; no libcosmic/iced dependency; never write
   outside the user's config and data dirs (`/usr/share` untouched);
@@ -132,8 +139,10 @@ same-application cycling gesture the platform default does not offer.
   (re-decided 2026-11-05, retroactive to the 2026-11-03
   `pointer-select` approval; the 2026-11-01 commitment read
   "keyboard-only, with pointer pass-through").
-- Glance legibility floor: both wallpaper polarities, 16-px text,
-  icon-shape recognition (airlock-design skill, pinned).
+- Glance legibility floor: both wallpaper polarities, 12-px text
+  (re-pinned 2026-11-07; 16 px was the 2026-11-01 figure, 8 px the
+  2026-11-02 one), icon-shape recognition (airlock-design skill,
+  pinned).
 - Non-ASCII titles render as `?` — accepted degradation, documented in
   README and the design skill; revisiting it is an explicit product
   decision, not a bug fix.

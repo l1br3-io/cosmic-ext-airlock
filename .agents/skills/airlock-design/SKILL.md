@@ -56,15 +56,21 @@ the room.
   fills carry alpha ≥ 0xFA, asserted at compile time, so the card reads
   the same on light and dark wallpapers. A new color states what it does
   on both polarities or it doesn't ship.
-- **The 8-pixel grid is the layout system.** One 8×8 bitmap font (drawn at
-  a 1× font scale, so 8-px text — re-pinned 2026-11-02 by the owner, twice
-  in one day: 16 px read oversized next to the 32-px icons, and so did
-  12 px; the icons carry the row's identity, the title only confirms it),
-  no font anti-aliasing: metrics are whole
-  logical pixels in the 4/8 step scale the constants already use,
-  symmetric padding mirrors top and bottom, and the row gap lives between
-  rows only. Corners are the one deliberate exception — rounded by exact
-  area-sampled coverage (`shape_cov`), never blurred.
+- **The 8-pixel grid is the layout system.** One 8×8 bitmap font drawn
+  at a 3/2 font scale, so 12-px text — re-pinned 2026-11-07 by the owner.
+  The history matters: on 2026-11-02 the owner re-pinned 8 px twice in
+  one day (16 px read oversized next to the 32-px icons, and so did
+  12 px), judging on the 200 % VM where 8 logical px paint as 16
+  physical; on a 100 % output the same 8 px are 8 physical pixels and
+  read as tiny. The value never changed, the display did — so the pin
+  is the middle step, still under the icons in weight (they carry the
+  row's identity, the title confirms it), whole-pixel at every output
+  up to 200 % and letter-spaced at 3× (stated on `FONT_SCALE`). No font
+  anti-aliasing: metrics are whole logical pixels in the 4/8 step scale
+  the constants already use, symmetric padding mirrors top and bottom,
+  and the row gap lives between rows only. Corners are the one
+  deliberate exception — rounded by exact area-sampled coverage
+  (`shape_cov`), never blurred.
 - **Rows carry the app's themed icon; the generic window glyph is the
   fallback.** Re-pinned 2026-11-01 by the owner (`overlay-visuals`
   module): titles stay primary, icons accompany them at 32 px from the
