@@ -733,7 +733,10 @@ fn show_selection(
                     icons,
                     scale,
                     &palette,
-                    current.viewport,
+                    crate::ui::Windowing {
+                        rows: crate::ui::DEFAULT_ROWS,
+                        prev: current.viewport,
+                    },
                 )
             })
         };

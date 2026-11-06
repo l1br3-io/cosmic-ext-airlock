@@ -114,13 +114,41 @@ pub const HINT_GAP: u32 = 16;
 /// paint in it.
 pub const HINT_COLS: u32 = 6; // len("Ctrl+9")
 
-/// Rows the card may show at once, content and affordances together. 8
-/// keeps the card at capacity at `2·12 + 8·48 + 7·8 = 464` logical px —
-/// inside a 540-logical (1080p@2x) screen with headroom, and past ~8
-/// rows a glance stops finding the target anyway: this is a switcher,
-/// not a launcher. The ring still walks the full eligible list; only
-/// presentation windows.
-pub const VIEW_ROWS: usize = 8;
+/// Windows the card keeps in view on a long list when the config sets
+/// no `rows` — the setting's default. The budget counts *windows*, not
+/// slots: a longer list reserves [`ROWS_SLACK`] slots beyond it, so the
+/// `…` continuation rows ride on top of the budget (`slots =
+/// min(len, rows + ROWS_SLACK)`) and eight windows stay in view
+/// mid-list, nine at either end, every window of a ≤10-long list.
+/// Re-pinned 2026-11-07 from the 11-04 "8 slots" rule, whose `…` rows
+/// spent two of the budget and left six windows mid-list. Worst case at
+/// the default is 10 slots = 576 logical px — inside a 720-logical
+/// screen (1440p@2x, any 1× panel); a 1080p panel at 2× (540 logical)
+/// wants `rows = 7`.
+pub const DEFAULT_ROWS: usize = 8;
+
+/// Smallest `rows` the setting accepts — the 11-04 floor, kept: with
+/// both edges truncated the window must still hold a content row, and a
+/// card showing fewer than three windows stops reading as a list.
+pub const ROWS_MIN: usize = 3;
+
+/// Largest `rows` the setting accepts: its worst case, `ROWS_MAX +
+/// ROWS_SLACK` = 12 slots = 688 logical px, still fits a 720-logical
+/// screen.
+pub const ROWS_MAX: usize = 10;
+
+/// Slots a long list reserves beyond its `rows` budget: one per
+/// truncatable edge, so the `…` affordance rows never spend window
+/// budget.
+pub const ROWS_SLACK: usize = 2;
+
+/// Card height in logical px for `slots` rows: the padding top and
+/// bottom, every row, and a gap between rows only. The one place the
+/// formula lives — the compile-time pins and [`overlay_model`] agree by
+/// construction.
+pub const fn card_height(slots: u32) -> u32 {
+    2 * PAD_Y + slots * ROW_H + (slots - 1) * ROW_GAP
+}
 
 /// How long the overlay stays up before closing itself when idle.
 pub const CLOSE_AFTER: Duration = Duration::from_secs(2);
@@ -297,13 +325,14 @@ const _: () = {
     assert!(SELECT_INSET.is_multiple_of(4));
     assert!(SELECT_INSET > BORDER);
     assert!(SELECT_INSET < PAD_X);
-    // The card at capacity fits the smallest common logical screen
-    // (1080p at 2× = 540 logical px).
-    assert!(2 * PAD_Y + VIEW_ROWS as u32 * ROW_H + (VIEW_ROWS as u32 - 1) * ROW_GAP <= 540);
-    // With rows hidden at both edges the two outermost slots become
-    // affordances; a window smaller than three could show no content at
-    // all.
-    assert!(VIEW_ROWS >= 3);
+    // The card at the `rows` setting's worst case — `rows + ROWS_SLACK`
+    // slots — fits a 720-logical screen (1440p@2x, any 1× panel): 576 at
+    // the default, 688 at the ceiling. The 11-04 540 pin moved with the
+    // 11-07 re-pin (spec `overlay-density`, OQ 2).
+    assert!(ROWS_MIN >= 3);
+    assert!(ROWS_MIN <= DEFAULT_ROWS && DEFAULT_ROWS <= ROWS_MAX);
+    assert!(card_height((DEFAULT_ROWS + ROWS_SLACK) as u32) <= 720);
+    assert!(card_height((ROWS_MAX + ROWS_SLACK) as u32) <= 720);
 };
 
 /// Placeholder shown when a window has neither title nor app_id.
@@ -404,8 +433,24 @@ pub struct Viewport {
     pub bottom: bool,
 }
 
+/// The two inputs to the windowing rule, carried together into
+/// [`overlay_model`]: the session's `rows` budget (frozen at open from
+/// the setting) and the window the previous rebuild computed, `None` at
+/// open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Windowing {
+    pub rows: usize,
+    pub prev: Option<Viewport>,
+}
+
 /// The window over a `len`-long eligible list with `sel` selected,
-/// continuing from `prev` — `None` is a fresh session, top-aligned.
+/// keeping `rows` windows in view, continuing from `prev` — `None` is a
+/// fresh session, top-aligned.
+///
+/// A list of at most `rows + ROWS_SLACK` windows shows whole; a longer
+/// one holds `rows + ROWS_SLACK` slots, so the `…` affordance at each
+/// truncated edge rides on top of the budget and `rows` windows stay
+/// content mid-list, `rows + 1` at either end.
 ///
 /// The window moves the minimum needed to keep the selection on a
 /// *content* row, never a continuation slot: nothing while the selection
@@ -415,9 +460,15 @@ pub struct Viewport {
 /// clamp of the carried start into it; the interval's upper end widens
 /// at the last window, whose bottom edge hides nothing. A start from a
 /// longer list re-clamps after a mid-gesture shrink.
-pub fn visible_window(len: usize, sel: usize, prev: Option<Viewport>) -> Viewport {
+pub fn visible_window(len: usize, sel: usize, rows: usize, prev: Option<Viewport>) -> Viewport {
     debug_assert!(sel < len, "the caller's selection indexes the list");
-    let visible = len.min(VIEW_ROWS);
+    // The slots this list gets: all of it within the budget plus slack,
+    // the budget plus one slot per truncatable edge beyond that.
+    let visible = if len > rows {
+        (rows + ROWS_SLACK).min(len)
+    } else {
+        len
+    };
     let max_start = len - visible;
     // The smallest and largest starts keeping `sel` on a content row.
     let lo = sel.saturating_add(2).saturating_sub(visible).min(max_start);
@@ -438,17 +489,18 @@ pub fn visible_window(len: usize, sel: usize, prev: Option<Viewport>) -> Viewpor
 
 /// Builds the overlay contents for `snapshot` with `selected` highlighted,
 /// listing windows under `scope`, with app icons from `icons` prepared at
-/// `scale` for the card `palette` paints, continuing the sticky `viewport`
-/// a session carries (`None` at open).
+/// `scale` for the card `palette` paints, windowed by `windowing` — the
+/// session's `rows` budget and the sticky viewport it carries (`None` at
+/// open).
 ///
 /// Rows follow [`switcher::eligible`] order (most recently activated
-/// first), then window to [`VIEW_ROWS`]: a continuation row replaces the
-/// outermost slot at each truncated edge, and the model reports the
-/// window it computed for the session to carry next. Width still derives
-/// from the *full* eligible set's widest title, so the card never
-/// breathes while the window moves under stepping. Returns `None` when
-/// there is nothing to show: no active workspace, no eligible windows,
-/// or a selection that is not in the eligible set.
+/// first), then window per [`visible_window`]: a continuation row
+/// replaces the outermost slot at each truncated edge, and the model
+/// reports the window it computed for the session to carry next. Width
+/// still derives from the *full* eligible set's widest title, so the
+/// card never breathes while the window moves under stepping. Returns
+/// `None` when there is nothing to show: no active workspace, no
+/// eligible windows, or a selection that is not in the eligible set.
 pub fn overlay_model(
     snapshot: &Snapshot,
     selected: Handle,
@@ -456,7 +508,7 @@ pub fn overlay_model(
     icons: &crate::icons::Cache,
     scale: u32,
     palette: &Palette,
-    viewport: Option<Viewport>,
+    windowing: Windowing,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
     let handles = switcher::eligible(&snapshot.toplevels, active, scope);
@@ -481,7 +533,7 @@ pub fn overlay_model(
         .map(|row| row.title.chars().count() as u32)
         .max()
         .unwrap_or(0);
-    let viewport = visible_window(rows.len(), sel, viewport);
+    let viewport = visible_window(rows.len(), sel, windowing.rows, windowing.prev);
     let mut windowed =
         Vec::with_capacity(viewport.top as usize + viewport.content + viewport.bottom as usize);
     if viewport.top {
@@ -498,7 +550,7 @@ pub fn overlay_model(
         width: 2 * PAD_X + ICON + ICON_GAP + cols * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
         // The row gap lives between rows only; the bottom edge mirrors
         // the top.
-        height: 2 * PAD_Y + count * ROW_H + (count - 1) * ROW_GAP,
+        height: card_height(count),
         viewport,
     })
 }
@@ -1424,7 +1476,10 @@ mod tests {
             &no_icons(),
             2,
             &Palette::dark(),
-            None,
+            Windowing {
+                rows: DEFAULT_ROWS,
+                prev: None,
+            },
         )
     }
 
@@ -1763,12 +1818,30 @@ mod tests {
         assert_eq!(handles, vec![Some(Handle(1)), Some(Handle(2))]);
     }
 
-    /// Every window `visible_window` can produce for a `len`-long list,
-    /// deduplicated: one per selection position.
-    fn reachable_windows(len: usize) -> Vec<Viewport> {
+    /// The slot count the rule reserves for a `len`-long list under a
+    /// `rows` budget — the contract, not the implementation: whole up to
+    /// `rows + ROWS_SLACK`, the budget plus one slot per truncatable edge
+    /// above it.
+    fn expected_slots(len: usize, rows: usize) -> usize {
+        if len > rows {
+            (rows + ROWS_SLACK).min(len)
+        } else {
+            len
+        }
+    }
+
+    /// Every `rows` the setting accepts: the property suite runs over all
+    /// of them — the enumerations stay small.
+    fn every_rows() -> std::ops::RangeInclusive<usize> {
+        ROWS_MIN..=ROWS_MAX
+    }
+
+    /// Every window `visible_window` can produce for a `len`-long list
+    /// under `rows`, deduplicated: one per selection position.
+    fn reachable_windows(len: usize, rows: usize) -> Vec<Viewport> {
         let mut out = Vec::new();
         for sel in 0..len {
-            let vp = visible_window(len, sel, None);
+            let vp = visible_window(len, sel, rows, None);
             if !out.contains(&vp) {
                 out.push(vp);
             }
@@ -1779,47 +1852,110 @@ mod tests {
     /// Prior windows a session could carry into a `len`-long rebuild:
     /// every window reachable at `len` plus every window reachable at a
     /// longer length — the mid-gesture shrink case.
-    fn prior_windows(len: usize) -> Vec<Viewport> {
-        let mut priors = reachable_windows(len);
-        for longer in len + 1..=3 * VIEW_ROWS + 2 {
-            priors.extend(reachable_windows(longer));
+    fn prior_windows(len: usize, rows: usize) -> Vec<Viewport> {
+        let mut priors = reachable_windows(len, rows);
+        for longer in len + 1..=3 * rows + 2 {
+            priors.extend(reachable_windows(longer, rows));
         }
         priors
     }
 
     #[test]
     fn visible_window_keeps_every_selection_on_a_content_row() {
-        // The fixed point, exhaustive over every (len, sel, prev) the
-        // gesture can produce: the window covers exactly the visible
-        // slots, the flags honestly report what is hidden, and the
-        // selection always lands in the inner content range — never an
-        // affordance slot, never off-window. Any implementation
+        // The fixed point, exhaustive over every (rows, len, sel, prev)
+        // the gesture can produce: the window covers exactly the
+        // reserved slots, the flags honestly report what is hidden, and
+        // the selection always lands in the inner content range — never
+        // an affordance slot, never off-window. Any implementation
         // satisfying this is the contract; the clamping inside is not.
-        for len in 0..=3 * VIEW_ROWS + 2 {
-            for sel in 0..len {
-                for prev in std::iter::once(None).chain(prior_windows(len).into_iter().map(Some)) {
-                    let vp = visible_window(len, sel, prev);
-                    let visible = len.min(VIEW_ROWS);
+        for rows in every_rows() {
+            for len in 0..=3 * rows + 2 {
+                for sel in 0..len {
+                    for prev in
+                        std::iter::once(None).chain(prior_windows(len, rows).into_iter().map(Some))
+                    {
+                        let vp = visible_window(len, sel, rows, prev);
+                        let visible = expected_slots(len, rows);
+                        assert_eq!(
+                            vp.top as usize + vp.content + vp.bottom as usize,
+                            visible,
+                            "rows {rows} len {len} sel {sel} prev {prev:?}: slots must equal the \
+                             reserved count"
+                        );
+                        assert_eq!(
+                            vp.top,
+                            vp.start > 0,
+                            "rows {rows} len {len} sel {sel}: top flag"
+                        );
+                        assert_eq!(
+                            vp.bottom,
+                            vp.start + visible < len,
+                            "rows {rows} len {len} sel {sel}: bottom flag"
+                        );
+                        assert!(
+                            vp.start + visible <= len,
+                            "rows {rows} len {len} sel {sel}: window runs past the list"
+                        );
+                        let first = vp.start + vp.top as usize;
+                        assert!(
+                            first <= sel && sel < first + vp.content,
+                            "rows {rows} len {len} sel {sel} prev {prev:?}: selection {sel} not on \
+                             a content row of {vp:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_list_keeps_at_least_rows_windows_in_view() {
+        // The 11-07 budget: the `…` rows ride on top of `rows`, never
+        // inside it — exactly `rows` content between two dots, one more
+        // when only one edge is truncated.
+        for rows in every_rows() {
+            for len in rows + ROWS_SLACK + 1..=3 * rows + 2 {
+                for sel in 0..len {
+                    let vp = visible_window(len, sel, rows, None);
+                    let edges = vp.top as usize + vp.bottom as usize;
                     assert_eq!(
-                        vp.top as usize + vp.content + vp.bottom as usize,
-                        visible,
-                        "len {len} sel {sel} prev {prev:?}: slots must equal the visible cap"
+                        vp.content + edges,
+                        rows + ROWS_SLACK,
+                        "rows {rows} len {len} sel {sel}: a long list reserves rows + slack slots"
                     );
-                    assert_eq!(vp.top, vp.start > 0, "len {len} sel {sel}: top flag");
                     assert_eq!(
-                        vp.bottom,
-                        vp.start + visible < len,
-                        "len {len} sel {sel}: bottom flag"
+                        vp.content,
+                        rows + ROWS_SLACK - edges,
+                        "rows {rows} len {len} sel {sel}: content is the budget plus the untruncated \
+                         edges"
                     );
                     assert!(
-                        vp.start + visible <= len,
-                        "len {len} sel {sel}: window runs past the list"
+                        vp.content >= rows,
+                        "rows {rows} len {len} sel {sel}: fewer windows in view than the budget"
                     );
-                    let first = vp.start + vp.top as usize;
-                    assert!(
-                        first <= sel && sel < first + vp.content,
-                        "len {len} sel {sel} prev {prev:?}: selection {sel} not on a content \
-                         row of {vp:?}"
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_list_within_the_budget_plus_slack_shows_whole() {
+        // Up to `rows + ROWS_SLACK` windows fit the reserved slots with
+        // nothing hidden, so no affordance is drawn and every row is
+        // content — the no-truncation boundary moved from `rows` to
+        // `rows + 2` with the 11-07 rule.
+        for rows in every_rows() {
+            for len in 1..=rows + ROWS_SLACK {
+                for sel in 0..len {
+                    assert_eq!(
+                        visible_window(len, sel, rows, None),
+                        Viewport {
+                            start: 0,
+                            content: len,
+                            top: false,
+                            bottom: false
+                        },
+                        "rows {rows} len {len} sel {sel}: a list within budget + slack shows whole"
                     );
                 }
             }
@@ -1831,15 +1967,18 @@ mod tests {
         // A selection already on a content row of the carried window
         // must not move it: interior steps keep the walking fill
         // walking, nothing else.
-        for len in VIEW_ROWS..=3 * VIEW_ROWS + 2 {
-            for prev in reachable_windows(len) {
-                let first = prev.start + prev.top as usize;
-                for sel in first..first + prev.content {
-                    assert_eq!(
-                        visible_window(len, sel, Some(prev)),
-                        prev,
-                        "len {len} sel {sel}: the window moved under a visible selection"
-                    );
+        for rows in every_rows() {
+            for len in rows..=3 * rows + 2 {
+                for prev in reachable_windows(len, rows) {
+                    let first = prev.start + prev.top as usize;
+                    for sel in first..first + prev.content {
+                        assert_eq!(
+                            visible_window(len, sel, rows, Some(prev)),
+                            prev,
+                            "rows {rows} len {len} sel {sel}: the window moved under a visible \
+                             selection"
+                        );
+                    }
                 }
             }
         }
@@ -1850,24 +1989,26 @@ mod tests {
         // One step of the selection moves the window by at most one row,
         // by zero while the new selection stays content-visible, and by
         // exactly one when it stepped past an edge.
-        for len in VIEW_ROWS + 1..=3 * VIEW_ROWS + 2 {
-            for prev_sel in 0..len {
-                let prev = visible_window(len, prev_sel, None);
-                for next_sel in [prev_sel + 1, prev_sel.saturating_sub(1)] {
-                    if next_sel >= len {
-                        continue;
+        for rows in every_rows() {
+            for len in rows + 1..=3 * rows + 2 {
+                for prev_sel in 0..len {
+                    let prev = visible_window(len, prev_sel, rows, None);
+                    for next_sel in [prev_sel + 1, prev_sel.saturating_sub(1)] {
+                        if next_sel >= len {
+                            continue;
+                        }
+                        let next = visible_window(len, next_sel, rows, Some(prev));
+                        let delta = next.start.abs_diff(prev.start);
+                        let still_visible = (prev.start + prev.top as usize
+                            ..prev.start + prev.top as usize + prev.content)
+                            .contains(&next_sel);
+                        let expected = if still_visible { 0 } else { 1 };
+                        assert_eq!(
+                            delta, expected,
+                            "rows {rows} len {len} {prev_sel}→{next_sel}: window moved {delta} \
+                             rows, expected {expected}"
+                        );
                     }
-                    let next = visible_window(len, next_sel, Some(prev));
-                    let delta = next.start.abs_diff(prev.start);
-                    let still_visible = (prev.start + prev.top as usize
-                        ..prev.start + prev.top as usize + prev.content)
-                        .contains(&next_sel);
-                    let expected = if still_visible { 0 } else { 1 };
-                    assert_eq!(
-                        delta, expected,
-                        "len {len} {prev_sel}→{next_sel}: window moved {delta} rows, expected \
-                         {expected}"
-                    );
                 }
             }
         }
@@ -1879,50 +2020,48 @@ mod tests {
         // window shows the head of the list — and the rule stays total:
         // any fresh selection the head window can still show as content
         // keeps it.
-        assert_eq!(visible_window(VIEW_ROWS + 5, 0, None).start, 0);
-        let head = visible_window(VIEW_ROWS + 5, VIEW_ROWS - 2, None);
-        assert_eq!(head.start, 0);
-        assert!(head.bottom, "a longer list truncates at the bottom only");
+        for rows in every_rows() {
+            assert_eq!(visible_window(rows + 5, 0, rows, None).start, 0);
+            let head = visible_window(rows + 5, rows - 2, rows, None);
+            assert_eq!(head.start, 0, "rows {rows}");
+            assert!(
+                head.bottom,
+                "rows {rows}: a longer list truncates at the bottom only"
+            );
+        }
     }
 
     #[test]
-    fn a_list_at_the_cap_shows_whole() {
-        // The 8-row-exact boundary: at the cap the window is the list —
-        // no affordances, no truncation, today's card exactly.
-        let at_cap = visible_window(VIEW_ROWS, VIEW_ROWS - 1, None);
-        assert_eq!(
-            at_cap,
-            Viewport {
-                start: 0,
-                content: VIEW_ROWS,
-                top: false,
-                bottom: false
-            }
-        );
-        // Below the cap the same holds for any length.
-        let short = visible_window(3, 2, None);
-        assert_eq!(
-            short,
-            Viewport {
-                start: 0,
-                content: 3,
-                top: false,
-                bottom: false
-            }
-        );
-        // One past the cap, both truncations are reachable — the head
-        // window hides a row below, the pulled-down window hides a row
-        // above — but never both at once: only two windows exist.
-        let head = visible_window(VIEW_ROWS + 1, 0, None);
-        assert!(!head.top && head.bottom);
-        let pulled = visible_window(VIEW_ROWS + 1, VIEW_ROWS, None);
-        assert_eq!(pulled.start, 1);
-        assert!(pulled.top && !pulled.bottom);
-        assert_eq!(pulled.content, VIEW_ROWS - 1);
-        // Two past the cap, the interior window carries both dots.
-        let interior = visible_window(VIEW_ROWS + 2, VIEW_ROWS - 1, None);
-        assert!(interior.top && interior.bottom);
-        assert_eq!(interior.content, VIEW_ROWS - 2);
+    fn the_truncation_edges_appear_past_the_slack() {
+        // Past `rows + ROWS_SLACK` the windows reach both truncations:
+        // the head hides rows below, the pulled-down window rows above,
+        // and an interior window — four past the budget — both at once.
+        for rows in every_rows() {
+            let past = rows + ROWS_SLACK + 1;
+            let head = visible_window(past, 0, rows, None);
+            assert!(
+                !head.top && head.bottom,
+                "rows {rows}: head hides below only"
+            );
+            assert_eq!(
+                head.content,
+                rows + 1,
+                "rows {rows}: one edge, one extra window"
+            );
+            let pulled = visible_window(past, past - 1, rows, None);
+            assert_eq!(pulled.start, 1, "rows {rows}");
+            assert!(
+                pulled.top && !pulled.bottom,
+                "rows {rows}: pulled hides above only"
+            );
+            assert_eq!(pulled.content, rows + 1, "rows {rows}");
+            let interior = visible_window(rows + 4, rows + 1, rows, None);
+            assert!(interior.top && interior.bottom, "rows {rows}: both dots");
+            assert_eq!(
+                interior.content, rows,
+                "rows {rows}: exactly the budget between dots"
+            );
+        }
     }
 
     #[test]
@@ -1930,36 +2069,44 @@ mod tests {
         // Carrying the window through a whole Tab sweep (and back) moves
         // it from the top window to the bottom window one row at a time,
         // never jumping — the shift reads as one clean frame per step.
-        for len in [VIEW_ROWS + 1, 2 * VIEW_ROWS, 3 * VIEW_ROWS + 2] {
-            let visible = len.min(VIEW_ROWS);
-            let mut carried = visible_window(len, 0, None);
-            assert_eq!(carried.start, 0, "len {len}: the sweep opens top-aligned");
-            let mut starts = vec![carried.start];
-            for sel in 1..len {
-                carried = visible_window(len, sel, Some(carried));
-                starts.push(carried.start);
-            }
-            assert_eq!(
-                carried.start,
-                len - visible,
-                "len {len}: the sweep must reach the bottom window"
-            );
-            for pair in starts.windows(2) {
-                assert!(
-                    pair[1] - pair[0] <= 1,
-                    "len {len}: the window jumped: {starts:?}"
+        for rows in every_rows() {
+            for len in [rows + ROWS_SLACK + 1, 2 * rows + 2, 3 * rows + 2] {
+                let visible = expected_slots(len, rows);
+                let mut carried = visible_window(len, 0, rows, None);
+                assert_eq!(
+                    carried.start, 0,
+                    "rows {rows} len {len}: the sweep opens top-aligned"
+                );
+                let mut starts = vec![carried.start];
+                for sel in 1..len {
+                    carried = visible_window(len, sel, rows, Some(carried));
+                    starts.push(carried.start);
+                }
+                assert_eq!(
+                    carried.start,
+                    len - visible,
+                    "rows {rows} len {len}: the sweep must reach the bottom window"
+                );
+                for pair in starts.windows(2) {
+                    assert!(
+                        pair[1] - pair[0] <= 1,
+                        "rows {rows} len {len}: the window jumped: {starts:?}"
+                    );
+                }
+                // Shift+Tab back up: the same vocabulary in reverse.
+                for sel in (0..len - 1).rev() {
+                    let now = visible_window(len, sel, rows, Some(carried));
+                    assert!(
+                        carried.start - now.start <= 1,
+                        "rows {rows} len {len} sel {sel}: the window jumped back up"
+                    );
+                    carried = now;
+                }
+                assert_eq!(
+                    carried.start, 0,
+                    "rows {rows} len {len}: the return sweep re-tops"
                 );
             }
-            // Shift+Tab back up: the same vocabulary in reverse.
-            for sel in (0..len - 1).rev() {
-                let now = visible_window(len, sel, Some(carried));
-                assert!(
-                    carried.start - now.start <= 1,
-                    "len {len} sel {sel}: the window jumped back up"
-                );
-                carried = now;
-            }
-            assert_eq!(carried.start, 0, "len {len}: the return sweep re-tops");
         }
     }
 
@@ -1991,6 +2138,7 @@ mod tests {
     fn build_windowed(
         snap: &Snapshot,
         selected: Handle,
+        rows: usize,
         prev: Option<Viewport>,
     ) -> Option<OverlayModel> {
         overlay_model(
@@ -2000,28 +2148,29 @@ mod tests {
             &no_icons(),
             2,
             &Palette::dark(),
-            prev,
+            Windowing { rows, prev },
         )
     }
 
     #[test]
-    fn a_list_at_the_cap_renders_whole_and_unchanged() {
-        // The no-regression boundary, exactly at the cap: no affordance
-        // rows, every handle present, and today's geometry formulas
-        // verbatim — a ≤ 8-window gesture is byte-identical to the
-        // pre-module card.
-        let snap = long_snapshot(VIEW_ROWS as u64);
-        let model = build_windowed(&snap, Handle(1), None).expect("eligible windows exist");
-        assert_eq!(model.rows.len(), VIEW_ROWS);
+    fn a_list_within_the_budget_renders_whole_and_unchanged() {
+        // The no-regression boundary, exactly at the default budget: no
+        // affordance rows, every handle present, and the pre-module
+        // geometry formulas verbatim — a ≤ 8-window gesture renders
+        // byte-identical to the card before `rows` existed.
+        let snap = long_snapshot(DEFAULT_ROWS as u64);
+        let model =
+            build_windowed(&snap, Handle(1), DEFAULT_ROWS, None).expect("eligible windows exist");
+        assert_eq!(model.rows.len(), DEFAULT_ROWS);
         assert!(
             model.rows.iter().all(|row| row.handle.is_some()),
-            "no affordance rows at the cap"
+            "no affordance rows within the budget"
         );
         assert_eq!(
             model.viewport,
             Viewport {
                 start: 0,
-                content: VIEW_ROWS,
+                content: DEFAULT_ROWS,
                 top: false,
                 bottom: false
             }
@@ -2032,44 +2181,48 @@ mod tests {
         );
         assert_eq!(
             model.height,
-            2 * PAD_Y + VIEW_ROWS as u32 * ROW_H + (VIEW_ROWS as u32 - 1) * ROW_GAP
+            2 * PAD_Y + DEFAULT_ROWS as u32 * ROW_H + (DEFAULT_ROWS as u32 - 1) * ROW_GAP
         );
     }
 
     #[test]
     fn a_long_lists_head_window_truncates_only_below() {
+        // Fifteen windows under the default budget: ten slots — nine
+        // windows in view, dots below.
         let snap = long_snapshot(15);
-        let model = build_windowed(&snap, Handle(1), None).expect("eligible windows exist");
-        assert_eq!(model.rows.len(), VIEW_ROWS);
+        let model =
+            build_windowed(&snap, Handle(1), DEFAULT_ROWS, None).expect("eligible windows exist");
+        assert_eq!(model.rows.len(), DEFAULT_ROWS + ROWS_SLACK);
         assert_eq!(
             model.viewport,
             Viewport {
                 start: 0,
-                content: VIEW_ROWS - 1,
+                content: DEFAULT_ROWS + 1,
                 top: false,
                 bottom: true
             }
         );
         let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
-        let expected: Vec<Option<Handle>> = (1..=7)
+        let expected: Vec<Option<Handle>> = (1..=9)
             .map(|handle| Some(Handle(handle)))
             .chain([None])
             .collect();
-        assert_eq!(handles, expected, "seven content rows, dots at the bottom");
+        assert_eq!(handles, expected, "nine content rows, dots at the bottom");
     }
 
     #[test]
     fn an_interior_selection_windows_both_edges() {
         let snap = long_snapshot(15);
-        // Carrying the head window while selecting list index 7 (handle
-        // 8) shifts it by one row: dots above and below, the selection on
-        // the last content row.
+        // Carrying the head window while selecting list index 9 (handle
+        // 10) shifts it by one row: dots above and below, exactly the
+        // budget between them, the selection on the last content row.
         let model = build_windowed(
             &snap,
-            Handle(8),
+            Handle(10),
+            DEFAULT_ROWS,
             Some(Viewport {
                 start: 0,
-                content: VIEW_ROWS - 1,
+                content: DEFAULT_ROWS + 1,
                 top: false,
                 bottom: true,
             }),
@@ -2079,7 +2232,7 @@ mod tests {
             model.viewport,
             Viewport {
                 start: 1,
-                content: VIEW_ROWS - 2,
+                content: DEFAULT_ROWS,
                 top: true,
                 bottom: true
             }
@@ -2087,13 +2240,13 @@ mod tests {
         let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
         let expected: Vec<Option<Handle>> = [None]
             .into_iter()
-            .chain((3..=8).map(|handle| Some(Handle(handle))))
+            .chain((3..=10).map(|handle| Some(Handle(handle))))
             .chain([None])
             .collect();
         assert_eq!(handles, expected);
         assert_eq!(
             model.height,
-            2 * PAD_Y + VIEW_ROWS as u32 * ROW_H + (VIEW_ROWS as u32 - 1) * ROW_GAP,
+            card_height((DEFAULT_ROWS + ROWS_SLACK) as u32),
             "the card at capacity stays bounded"
         );
     }
@@ -2128,14 +2281,22 @@ mod tests {
 
         let mut prev = None;
         let mut widths = Vec::new();
+        let mut heights = Vec::new();
         for handle in 1..=15 {
-            let model =
-                build_windowed(&snap, Handle(handle), prev).expect("eligible windows exist");
+            let model = build_windowed(&snap, Handle(handle), DEFAULT_ROWS, prev)
+                .expect("eligible windows exist");
             widths.push(model.width);
+            heights.push(model.height);
             prev = Some(model.viewport);
         }
         widths.dedup();
         assert_eq!(widths.len(), 1, "the card breathed across the sweep");
+        heights.dedup();
+        assert_eq!(
+            heights.len(),
+            1,
+            "the card's height breathed across the sweep"
+        );
         assert_eq!(
             widths[0],
             2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
@@ -2148,10 +2309,10 @@ mod tests {
         let snap = long_snapshot(30);
         let mut prev = None;
         for handle in 1..=30 {
-            let model =
-                build_windowed(&snap, Handle(handle), prev).expect("eligible windows exist");
+            let model = build_windowed(&snap, Handle(handle), DEFAULT_ROWS, prev)
+                .expect("eligible windows exist");
             assert!(
-                model.rows.len() <= VIEW_ROWS,
+                model.rows.len() <= DEFAULT_ROWS + ROWS_SLACK,
                 "handle {handle}: card over cap"
             );
             let selected: Vec<&RowModel> = model.rows.iter().filter(|row| row.selected).collect();
@@ -2179,10 +2340,11 @@ mod tests {
         let snap = long_snapshot(15);
         let model = build_windowed(
             &snap,
-            Handle(8),
+            Handle(10),
+            DEFAULT_ROWS,
             Some(Viewport {
                 start: 0,
-                content: VIEW_ROWS - 1,
+                content: DEFAULT_ROWS + 1,
                 top: false,
                 bottom: true,
             }),
@@ -2193,7 +2355,7 @@ mod tests {
             let stride = w * 4;
             let mut canvas = vec![0u8; (stride * h) as usize];
             render(&model, &mut canvas, w, h, stride, 2, &palette);
-            for slot in [0, 7] {
+            for slot in [0, 9] {
                 let mut paints = 0;
                 let mut muted = 0;
                 for (x, y) in row_band_points(slot, model.width) {
@@ -2225,10 +2387,11 @@ mod tests {
         let snap = long_snapshot(15);
         let model = build_windowed(
             &snap,
-            Handle(8),
+            Handle(10),
+            DEFAULT_ROWS,
             Some(Viewport {
                 start: 0,
-                content: VIEW_ROWS - 1,
+                content: DEFAULT_ROWS + 1,
                 top: false,
                 bottom: true,
             }),
@@ -2236,7 +2399,7 @@ mod tests {
         .expect("eligible windows exist");
         let (canvas, stride) = rendered(&model, 2);
         let palette = Palette::dark();
-        for slot in [0, 7] {
+        for slot in [0, 9] {
             for (x, y) in hint_band_points(slot, model.width) {
                 assert_eq!(
                     pixel(&canvas, stride, x, y),
@@ -2268,7 +2431,7 @@ mod tests {
                 .collect(),
             width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + rows as u32 * ROW_H + (rows as u32 - 1) * ROW_GAP,
-            viewport: visible_window(rows, 0, None),
+            viewport: visible_window(rows, 0, DEFAULT_ROWS, None),
         }
     }
 
@@ -2515,7 +2678,7 @@ mod tests {
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
-            viewport: visible_window(1, 0, None),
+            viewport: visible_window(1, 0, DEFAULT_ROWS, None),
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -2549,7 +2712,7 @@ mod tests {
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
-            viewport: visible_window(1, 0, None),
+            viewport: visible_window(1, 0, DEFAULT_ROWS, None),
         };
         let (canvas, stride) = rendered(&model, 2);
         let glyph_x = (PAD_X + (ICON - GLYPH_W * GLYPH_SCALE) / 2) * 2;
@@ -2809,7 +2972,7 @@ mod tests {
                     .collect(),
                 width: 2 * PAD_X + ICON + ICON_GAP + 8 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
                 height: 2 * PAD_Y + 5 * ROW_H + 4 * ROW_GAP,
-                viewport: visible_window(5, 0, None),
+                viewport: visible_window(5, 0, DEFAULT_ROWS, None),
             };
             let (canvas, stride) = rendered(&model, 2);
             // A probe column inside the band's horizontal extent, in the
@@ -2866,7 +3029,7 @@ mod tests {
             height: 2 * PAD_Y + 12 * ROW_H + 11 * ROW_GAP,
             // Hand-built past the cap on purpose (hint-silence rows past
             // nine); render is row-count agnostic and never reads the viewport.
-            viewport: visible_window(12, 0, None),
+            viewport: visible_window(12, 0, DEFAULT_ROWS, None),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -2895,7 +3058,7 @@ mod tests {
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + 4 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
-            viewport: visible_window(1, 0, None),
+            viewport: visible_window(1, 0, DEFAULT_ROWS, None),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -2935,7 +3098,7 @@ mod tests {
             ],
             width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + 2 * ROW_H + ROW_GAP,
-            viewport: visible_window(2, 0, None),
+            viewport: visible_window(2, 0, DEFAULT_ROWS, None),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -2969,7 +3132,7 @@ mod tests {
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
-            viewport: visible_window(1, 0, None),
+            viewport: visible_window(1, 0, DEFAULT_ROWS, None),
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -3020,7 +3183,7 @@ mod tests {
             height: 2 * PAD_Y + 10 * ROW_H + 9 * ROW_GAP,
             // Hand-built past the cap on purpose (render work, not a real
             // card shape); render never reads the viewport.
-            viewport: visible_window(10, 0, None),
+            viewport: visible_window(10, 0, DEFAULT_ROWS, None),
         };
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4;

@@ -4,7 +4,7 @@
 //! be judged on both wallpaper polarities exactly as the design skill's
 //! review step demands. `--light` judges the light palette's card. Every
 //! row carries the structural `Ctrl+N` hint band (number-select rev 2);
-//! long lists window to `VIEW_ROWS` with `…` continuation rows at the
+//! long lists keep `rows` windows in view with `…` continuation rows at the
 //! truncated edges (list-viewport), built here exactly as `overlay_model`
 //! builds them.
 //!
@@ -193,13 +193,14 @@ fn dots_row() -> RowModel {
 fn windowed(
     count: usize,
     sel: usize,
+    rows: usize,
     prev: Option<ui::Viewport>,
     icons: &[Option<Rc<IconBitmap>>],
 ) -> OverlayModel {
     let titles: Vec<String> = (0..count)
         .map(|index| format!("Window {index} - the long-list case"))
         .collect();
-    let viewport = ui::visible_window(count, sel, prev);
+    let viewport = ui::visible_window(count, sel, rows, prev);
     let mut rows =
         Vec::with_capacity(viewport.top as usize + viewport.content + viewport.bottom as usize);
     if viewport.top {
@@ -230,7 +231,7 @@ fn windowed(
             + cols * ui::TEXT_W
             + ui::HINT_GAP
             + ui::HINT_COLS * ui::TEXT_W,
-        height: 2 * ui::PAD_Y + shown * ui::ROW_H + (shown - 1) * ui::ROW_GAP,
+        height: ui::card_height(shown),
         viewport,
     }
 }
@@ -309,14 +310,19 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
     // from the window's titles alone. A fresh 15-row gesture's head
     // window (dots below only), the same list stepped to an interior
     // selection (dots at both edges, the fill one row down), its bottom
-    // window (dots above only), and a 30-row list mid-sweep.
-    let head = windowed(15, 0, None, icons);
-    let interior = windowed(15, 7, Some(head.viewport), icons);
-    let bottom = windowed(15, 14, Some(interior.viewport), icons);
+    // window (dots above only), and a 30-row list mid-sweep — all at the
+    // default `rows` budget; then the same 30-row list at the setting's
+    // floor and ceiling (overlay-density).
+    let rows = ui::DEFAULT_ROWS;
+    let head = windowed(15, 0, rows, None, icons);
+    let interior = windowed(15, 7, rows, Some(head.viewport), icons);
+    let bottom = windowed(15, 14, rows, Some(interior.viewport), icons);
     sheet.push(head);
     sheet.push(interior);
     sheet.push(bottom);
-    sheet.push(windowed(30, 15, None, icons));
+    sheet.push(windowed(30, 15, rows, None, icons));
+    sheet.push(windowed(30, 15, ui::ROWS_MIN, None, icons));
+    sheet.push(windowed(30, 15, ui::ROWS_MAX, None, icons));
     sheet
 }
 
