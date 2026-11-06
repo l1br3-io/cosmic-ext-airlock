@@ -23,7 +23,7 @@
   <url type="homepage">https://github.com/l1br3-io/cosmic-ext-airlock</url>
   <url type="bugtracker">https://github.com/l1br3-io/cosmic-ext-airlock/issues</url>
   <releases>
-    <release version="0.1.0" date="2026-11-05">
+    <release version="0.1.0" date="2026-11-06">
       <description>
         <ul>
           <li>Workspace-isolated Alt+Tab overlay with application icons,

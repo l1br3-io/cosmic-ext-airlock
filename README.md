@@ -12,7 +12,7 @@ rows above and below](https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airl
 > COSMIC software and is not affiliated with or endorsed by System76.
 
 **Status:** [v0.1.0](https://github.com/l1br3-io/cosmic-ext-airlock/releases/tag/v0.1.0) ·
-released 2026-11-02 · early, actively developed — the core Alt+Tab gesture is
+released 2026-11-06 · early, actively developed — the core Alt+Tab gesture is
 solid; same-app cycling and pointer input are newer.
 
 ## Why
@@ -157,6 +157,7 @@ the GitHub org. A Launchpad PPA and Flathub are on the roadmap without dates
 - [Troubleshooting](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/troubleshooting.md)
 - [Hardware verification checklist](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/hardware-checklist.md)
 - [Developing and testing in the COSMIC VM](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/vm-development.md)
+- [Releasing](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/releasing.md)
 - [Research index](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/research/README.md)
 
 ## License
