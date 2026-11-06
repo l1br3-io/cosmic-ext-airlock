@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::switcher::{Scope, Workspace, WorkspaceId};
-use crate::ui::ThemeSetting;
+use crate::ui::{self, ThemeSetting};
 
 /// Cap on config size: reloads run at session open, on the gesture path,
 /// so a pathological file must never stall switching.
@@ -46,11 +46,24 @@ pub enum WorkspaceRef {
 }
 
 /// Parsed settings. An empty one reproduces v1 behavior everywhere.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     /// Which card the overlay paints; missing key = [`ThemeSetting::Auto`].
     pub theme: ThemeSetting,
+    /// Windows the card keeps in view on a long list; missing key =
+    /// [`ui::DEFAULT_ROWS`], accepted `ui::ROWS_MIN..=ui::ROWS_MAX`.
+    pub rows: usize,
     pub workspaces: Vec<WorkspaceRule>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            theme: ThemeSetting::Auto,
+            rows: ui::DEFAULT_ROWS,
+            workspaces: Vec::new(),
+        }
+    }
 }
 
 /// The workspace a gesture was invoked on, as resolution sees it.
@@ -126,7 +139,8 @@ impl Settings {
 }
 
 /// Walks a parsed document: the top-level `theme` key becomes the
-/// [`ThemeSetting`], `[[workspace]]` entries become rules.
+/// [`ThemeSetting`], `rows` the windows-in-view budget, `[[workspace]]`
+/// entries become rules.
 fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
     let theme = match root.get("theme") {
         None => ThemeSetting::Auto,
@@ -146,9 +160,24 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             }
         },
     };
+    let rows = match root.get("rows") {
+        None => ui::DEFAULT_ROWS,
+        Some(value) => {
+            let rows = value.as_integer().ok_or(SettingsError::InvalidFile {
+                problem: "`rows` must be a whole number",
+            })?;
+            usize::try_from(rows)
+                .ok()
+                .filter(|rows| (ui::ROWS_MIN..=ui::ROWS_MAX).contains(rows))
+                .ok_or(SettingsError::InvalidFile {
+                    problem: "`rows` must be between 3 and 10",
+                })?
+        }
+    };
     let Some(entries) = root.get("workspace") else {
         return Ok(Settings {
             theme,
+            rows,
             ..Settings::default()
         });
     };
@@ -162,7 +191,11 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         .enumerate()
         .map(|(index, entry)| parse_rule(index + 1, entry))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Settings { theme, workspaces })
+    Ok(Settings {
+        theme,
+        rows,
+        workspaces,
+    })
 }
 
 /// Parses one `[[workspace]]` entry; `entry_number` is its 1-based file
@@ -435,6 +468,7 @@ isolated = false
             settings,
             Settings {
                 theme: ThemeSetting::Auto,
+                rows: ui::DEFAULT_ROWS,
                 workspaces: vec![
                     WorkspaceRule {
                         reference: WorkspaceRef::Name("code".to_owned()),
@@ -661,6 +695,96 @@ isolated = false
         assert_eq!(settings.workspaces.len(), 1);
     }
 
+    #[test]
+    fn parse_reads_the_rows_key() {
+        for (config, rows) in [
+            (&b"rows = 8\n"[..], 8),
+            (b"rows = 3\n", ui::ROWS_MIN),
+            (b"rows = 10\n", ui::ROWS_MAX),
+            (b"rows = 5\n", 5),
+        ] {
+            let settings = Settings::parse(config).expect("valid rows value");
+            assert_eq!(settings.rows, rows);
+        }
+    }
+
+    #[test]
+    fn parse_without_a_rows_key_defaults_to_the_windowing_budget() {
+        // An empty file and a rules-only file alike: no `rows`, the
+        // default budget — the no-config card is unchanged.
+        assert_eq!(Settings::parse(b"").expect("empty").rows, ui::DEFAULT_ROWS);
+        let rules_only = Settings::parse(b"[[workspace]]\nindex = 1\n").expect("rules");
+        assert_eq!(rules_only.rows, ui::DEFAULT_ROWS);
+        assert_eq!(Settings::default().rows, ui::DEFAULT_ROWS);
+    }
+
+    #[test]
+    fn parse_rejects_rows_out_of_range() {
+        // Below the floor, above the ceiling, zero, negative, and absurd
+        // alike: named, never clamped.
+        for config in [
+            &b"rows = 2\n"[..],
+            b"rows = 11\n",
+            b"rows = 0\n",
+            b"rows = -1\n",
+            b"rows = 99999999999\n",
+        ] {
+            let error = Settings::parse(config).expect_err("out-of-range rows");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: "`rows` must be between 3 and 10"
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_rejects_a_non_integer_rows() {
+        for config in [&b"rows = 8.5\n"[..], b"rows = \"8\"\n", b"rows = true\n"] {
+            let error = Settings::parse(config).expect_err("non-integer rows");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: "`rows` must be a whole number"
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn the_rows_diagnostic_names_the_accepted_range() {
+        // The literal in the parser must track the constants: a re-pin
+        // of either bound touches this test.
+        assert_eq!((ui::ROWS_MIN, ui::ROWS_MAX), (3, 10));
+        let error = Settings::parse(b"rows = 1\n").expect_err("below the floor");
+        assert_eq!(
+            error.to_string(),
+            "settings: `rows` must be between 3 and 10"
+        );
+    }
+
+    #[test]
+    fn a_bad_rows_fails_the_whole_file() {
+        // The last-good contract: an invalid `rows` beside valid rules
+        // yields no settings at all, never a partial set.
+        let config = b"rows = 42\n\n[[workspace]]\nname = \"code\"\nisolated = false\n";
+        assert!(Settings::parse(config).is_err());
+    }
+
+    #[test]
+    fn parse_coexists_rows_with_theme_and_workspace_rules() {
+        let config = b"theme = \"light\"\nrows = 6\n\n[[workspace]]\nname = \"code\"\n";
+        let settings = Settings::parse(config).expect("valid config");
+        assert_eq!(settings.theme, ThemeSetting::Light);
+        assert_eq!(settings.rows, 6);
+        assert_eq!(settings.workspaces.len(), 1);
+    }
+
     // --- Resolution ------------------------------------------------------
 
     fn rule(reference: WorkspaceRef, isolated: bool) -> WorkspaceRule {
@@ -674,6 +798,7 @@ isolated = false
     fn scope_for_matches_a_named_workspace_by_name() {
         let settings = Settings {
             theme: ThemeSetting::Auto,
+            rows: ui::DEFAULT_ROWS,
             workspaces: vec![rule(WorkspaceRef::Name("browse".to_owned()), false)],
         };
         let scope = scope_for(
@@ -690,6 +815,7 @@ isolated = false
     fn scope_for_matches_an_unnamed_workspace_by_position() {
         let settings = Settings {
             theme: ThemeSetting::Auto,
+            rows: ui::DEFAULT_ROWS,
             workspaces: vec![rule(WorkspaceRef::Position(2), false)],
         };
         let scope = scope_for(
@@ -707,6 +833,7 @@ isolated = false
         // Both rules point at the same workspace; the name rule wins.
         let settings = Settings {
             theme: ThemeSetting::Auto,
+            rows: ui::DEFAULT_ROWS,
             workspaces: vec![
                 rule(WorkspaceRef::Position(1), true),
                 rule(WorkspaceRef::Name("code".to_owned()), false),
@@ -726,6 +853,7 @@ isolated = false
     fn scope_for_falls_back_to_the_position_rule_for_a_named_workspace() {
         let settings = Settings {
             theme: ThemeSetting::Auto,
+            rows: ui::DEFAULT_ROWS,
             workspaces: vec![rule(WorkspaceRef::Position(1), false)],
         };
         let scope = scope_for(
@@ -742,6 +870,7 @@ isolated = false
     fn scope_for_on_an_out_of_range_position_matches_nothing() {
         let settings = Settings {
             theme: ThemeSetting::Auto,
+            rows: ui::DEFAULT_ROWS,
             workspaces: vec![rule(WorkspaceRef::Position(9), false)],
         };
         let scope = scope_for(
@@ -758,6 +887,7 @@ isolated = false
     fn scope_for_last_duplicate_rule_wins() {
         let settings = Settings {
             theme: ThemeSetting::Auto,
+            rows: ui::DEFAULT_ROWS,
             workspaces: vec![
                 rule(WorkspaceRef::Name("browse".to_owned()), false),
                 rule(WorkspaceRef::Name("browse".to_owned()), true),
@@ -777,6 +907,7 @@ isolated = false
     fn scope_for_without_a_matching_rule_is_current_workspace() {
         let settings = Settings {
             theme: ThemeSetting::Auto,
+            rows: ui::DEFAULT_ROWS,
             workspaces: vec![rule(WorkspaceRef::Name("elsewhere".to_owned()), false)],
         };
         let scope = scope_for(
@@ -946,6 +1077,7 @@ isolated = false
             settings,
             Settings {
                 theme: ThemeSetting::Auto,
+                rows: ui::DEFAULT_ROWS,
                 workspaces: vec![rule(WorkspaceRef::Name("code".to_owned()), false)]
             }
         );

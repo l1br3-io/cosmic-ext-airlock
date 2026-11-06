@@ -95,6 +95,10 @@ pub struct Switch {
     /// scope and frozen for the session's life — a theme edit landing
     /// mid-gesture never repaints under held Alt (the scope philosophy).
     palette: crate::ui::Palette,
+    /// Windows the card keeps in view, resolved once at open from the
+    /// `rows` setting and frozen like the palette: a config edit landing
+    /// mid-gesture never re-windows the open session.
+    rows: usize,
     /// The window the card is showing over the session's list — derived
     /// state carried between rebuilds so the sticky rule can continue
     /// it, never persisted across gestures: sessions are built fresh
@@ -143,15 +147,16 @@ pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> 
 /// window — so one step lands on the MRU-second (or wraps to the least
 /// recent). Later presses reuse the same ring instead of rebuilding it:
 /// walking three windows takes three presses, unlike T4's per-press rebuild
-/// which toggled between the front two. `scope` and `palette` are consumed
-/// only when the session opens; an already-open session keeps the ones it
-/// was built with.
+/// which toggled between the front two. `scope`, `palette`, and `rows`
+/// are consumed only when the session opens; an already-open session
+/// keeps the ones it was built with.
 pub fn ring_step(
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
     direction: Direction,
     scope: Scope,
     palette: crate::ui::Palette,
+    rows: usize,
 ) -> Option<Handle> {
     if open.is_none() {
         let active = snapshot.active?;
@@ -161,6 +166,7 @@ pub fn ring_step(
             scope,
             app: None,
             palette,
+            rows,
             viewport: None,
         });
     }
@@ -189,12 +195,13 @@ pub fn session_step(
     scope: Scope,
     same_app: bool,
     palette: crate::ui::Palette,
+    rows: usize,
 ) -> Option<Handle> {
-    // An open session steps its frozen ring; the snapshot, scope, and
-    // palette only matter when a session opens. Plain opens go straight
-    // through.
+    // An open session steps its frozen ring; the snapshot, scope,
+    // palette, and rows only matter when a session opens. Plain opens go
+    // straight through.
     if open.is_some() || !same_app {
-        return ring_step(open, snapshot, direction, scope, palette);
+        return ring_step(open, snapshot, direction, scope, palette, rows);
     }
     // A new same-app session: anchor, narrow, and hold the two-window
     // floor — one window of the app is nothing to cycle.
@@ -204,7 +211,7 @@ pub fn session_step(
     if view.toplevels.len() < 2 {
         return None;
     }
-    let selected = ring_step(open, &view, direction, scope, palette);
+    let selected = ring_step(open, &view, direction, scope, palette, rows);
     // ring_step stored the session on the filtered ring; freeze the anchor
     // into it so later steps re-filter by it.
     if let Some(session) = open.as_mut() {
@@ -665,8 +672,8 @@ fn step_and_show(
     settings: &mut LiveSettings,
     icons: &mut crate::icons::Cache,
 ) {
-    let (scope, palette) = match open {
-        Some(open) => (open.scope, open.palette),
+    let (scope, palette, rows) = match open {
+        Some(open) => (open.scope, open.palette, open.rows),
         None => {
             settings.refresh();
             // `auto` asks the system once per open — two small file reads
@@ -679,6 +686,7 @@ fn step_and_show(
             (
                 resolve_scope(snapshot, &settings.settings),
                 crate::ui::Palette::resolve(settings.settings.theme, system_prefers_dark),
+                settings.settings.rows,
             )
         }
     };
@@ -689,6 +697,7 @@ fn step_and_show(
         scope,
         step.same_app,
         palette,
+        rows,
     );
     show_selection(session, gesture, open, snapshot, icons);
 }
@@ -734,7 +743,7 @@ fn show_selection(
                     scale,
                     &palette,
                     crate::ui::Windowing {
-                        rows: crate::ui::DEFAULT_ROWS,
+                        rows: current.rows,
                         prev: current.viewport,
                     },
                 )
@@ -775,7 +784,7 @@ fn fresh_snapshot(session: &mut wayland::Session, mru: &mut Mru) -> Snapshot {
 mod tests {
     use super::*;
     use crate::switcher::WorkspaceId;
-    use crate::ui::{GestureKey, OverlayModel, Palette, RowModel};
+    use crate::ui::{DEFAULT_ROWS, GestureKey, OverlayModel, Palette, RowModel};
 
     fn toplevel(handle: u64, workspaces: &[u64], state: State, last_activated: u64) -> Toplevel {
         Toplevel {
@@ -934,7 +943,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(2))
         );
@@ -957,7 +967,8 @@ mod tests {
                 &snap,
                 Direction::Previous,
                 Scope::CurrentWorkspace,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(3))
         );
@@ -980,7 +991,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(2))
         );
@@ -990,7 +1002,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(3))
         );
@@ -1000,7 +1013,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(1))
         );
@@ -1010,7 +1024,8 @@ mod tests {
                 &snap,
                 Direction::Previous,
                 Scope::CurrentWorkspace,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(3))
         );
@@ -1036,7 +1051,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(4))
         );
@@ -1052,7 +1068,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             None
         );
@@ -1062,7 +1079,8 @@ mod tests {
                 &snap,
                 Direction::Previous,
                 Scope::CurrentWorkspace,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             None
         );
@@ -1078,7 +1096,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             None
         );
@@ -1091,7 +1110,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::CurrentWorkspace,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(1))
         );
@@ -1113,6 +1133,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("session opened");
         assert!(session_holds(&open, &snap));
@@ -1134,6 +1155,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("session opened");
 
@@ -1165,6 +1187,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("session opened");
 
@@ -1188,6 +1211,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("session opened");
 
@@ -1217,6 +1241,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("session opened");
 
@@ -1247,6 +1272,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("session opened");
 
@@ -1276,6 +1302,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("session opened");
         assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
@@ -1297,6 +1324,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("session opened");
 
@@ -1331,6 +1359,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.selected(), Some(Handle(2)));
@@ -1358,6 +1387,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.select(Handle(4)), None);
@@ -1384,6 +1414,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.select(Handle(2)), Some(Handle(2)));
@@ -1417,6 +1448,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let mut open = open.expect("session opened");
 
@@ -1471,6 +1503,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let mut open = open.expect("session opened");
 
@@ -1523,6 +1556,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.selected(), Some(Handle(3)));
@@ -1602,6 +1636,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let mut open = open.expect("session opened");
 
@@ -1663,6 +1698,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let mut open = open.expect("session opened");
 
@@ -1717,6 +1753,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("session opened");
         assert_eq!(open.ring.selected(), Some(Handle(2)));
@@ -1763,6 +1800,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("session opened");
         assert_eq!(open.ring.selected(), Some(Handle(3)));
@@ -1823,6 +1861,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.select(Handle(4)), None);
@@ -1850,6 +1889,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let mut open = open.expect("session opened");
         let mut hover = PointerHover::default();
@@ -1878,6 +1918,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let mut open = open.expect("session opened");
         let mut hover = PointerHover::default();
@@ -1995,7 +2036,8 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 true,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(3)),
             "the browser never enters the ring; the app's own MRU-second lands first"
@@ -2016,7 +2058,8 @@ mod tests {
                 Direction::Previous,
                 Scope::CurrentWorkspace,
                 true,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(4))
         );
@@ -2040,7 +2083,8 @@ mod tests {
                     direction,
                     Scope::CurrentWorkspace,
                     true,
-                    Palette::dark()
+                    Palette::dark(),
+                    DEFAULT_ROWS
                 ),
                 expected
             );
@@ -2064,7 +2108,8 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 true,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             None
         );
@@ -2088,7 +2133,8 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 true,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             None
         );
@@ -2106,6 +2152,7 @@ mod tests {
             Scope::CurrentWorkspace,
             true,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
 
         // Mid-gesture, focus moves to the browser: the next press must
@@ -2126,7 +2173,8 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 true,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(4))
         );
@@ -2149,6 +2197,7 @@ mod tests {
             Scope::CurrentWorkspace,
             true,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         assert_eq!(
             session_step(
@@ -2157,7 +2206,8 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 false,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(4))
         );
@@ -2176,7 +2226,8 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 false,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(2)),
             "a plain session steps the full ring: the global MRU-second"
@@ -2188,7 +2239,8 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 true,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(3)),
             "the frozen plain ring keeps walking; the anchor never applies"
@@ -2216,6 +2268,7 @@ mod tests {
             Scope::All,
             true,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("same-app session opened");
         assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
@@ -2234,6 +2287,7 @@ mod tests {
             Scope::CurrentWorkspace,
             true,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("same-app session opened");
 
@@ -2280,7 +2334,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::All,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(2))
         );
@@ -2290,7 +2345,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::All,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(3))
         );
@@ -2300,7 +2356,8 @@ mod tests {
                 &snap,
                 Direction::Next,
                 Scope::All,
-                Palette::dark()
+                Palette::dark(),
+                DEFAULT_ROWS
             ),
             Some(Handle(1))
         );
@@ -2322,6 +2379,7 @@ mod tests {
             Direction::Next,
             Scope::All,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         let open = open.expect("session opened");
         // The selection lives on workspace 2; under All that is commitable.
@@ -2335,6 +2393,7 @@ mod tests {
             scope: Scope::CurrentWorkspace,
             app: None,
             palette: Palette::dark(),
+            rows: DEFAULT_ROWS,
             viewport: None,
         };
         assert_eq!(commit_target(&confined, &snap), None);
@@ -2359,6 +2418,7 @@ mod tests {
             Direction::Next,
             Scope::All,
             Palette::dark(),
+            DEFAULT_ROWS,
         );
         assert!(
             open.as_ref().is_some_and(|open| open.viewport.is_none()),
@@ -2386,7 +2446,14 @@ mod tests {
         );
         for scope in [Scope::CurrentWorkspace, Scope::All] {
             let mut open = None;
-            ring_step(&mut open, &snap, Direction::Next, scope, Palette::dark());
+            ring_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                scope,
+                Palette::dark(),
+                DEFAULT_ROWS,
+            );
             let open = open.expect("session opened");
             assert!(session_holds(&open, &snap), "holds under {scope:?}");
             assert!(!session_holds(&open, &switched), "voids under {scope:?}");
@@ -2406,6 +2473,7 @@ mod tests {
         };
         let not_isolated = crate::settings::Settings {
             theme: crate::ui::ThemeSetting::Auto,
+            rows: DEFAULT_ROWS,
             workspaces: vec![crate::settings::WorkspaceRule {
                 reference: crate::settings::WorkspaceRef::Name("browse".to_owned()),
                 isolated: false,
@@ -2522,6 +2590,27 @@ mod tests {
         assert_eq!(live.settings.theme, crate::ui::ThemeSetting::Light);
     }
 
+    #[test]
+    fn refresh_adopts_a_rows_change() {
+        // Live apply, the rows twin: editing `rows` takes effect on the
+        // refresh a next invocation performs — no daemon restart.
+        let dir = TempDir::new("rows-edit");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, b"rows = 5\n").expect("write");
+        let mut live = live_at(path.clone());
+        live.refresh();
+        assert_eq!(live.settings.rows, 5);
+
+        std::fs::write(&path, b"rows = 9\n").expect("rewrite");
+        live.refresh();
+        assert_eq!(live.settings.rows, 9);
+
+        // A bad edit keeps the last-good value, like every setting.
+        std::fs::write(&path, b"rows = 42\n").expect("rewrite bad");
+        live.refresh();
+        assert_eq!(live.settings.rows, 9, "an out-of-range rows must not apply");
+    }
+
     /// The palette twin of the frozen-scope seam: the card is resolved
     /// once at session open and frozen for the session's life — a theme
     /// edit landing mid-gesture (here: the palette the next invocation
@@ -2544,6 +2633,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             crate::ui::Palette::dark(),
+            DEFAULT_ROWS,
         );
         assert_eq!(
             open.as_ref().expect("session opened").palette,
@@ -2559,6 +2649,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             crate::ui::Palette::light(),
+            DEFAULT_ROWS,
         );
         assert_eq!(
             open.as_ref().expect("session still open").palette,
@@ -2575,10 +2666,68 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             crate::ui::Palette::light(),
+            DEFAULT_ROWS,
         );
         assert_eq!(
             open.as_ref().expect("fresh session opened").palette,
             crate::ui::Palette::light()
         );
+    }
+
+    /// The rows twin of the frozen-palette seam: the budget is resolved
+    /// once at session open and frozen for the session's life — a `rows`
+    /// edit landing mid-gesture (here: the value the next invocation
+    /// would read) changes nothing until the session closes and the next
+    /// press starts fresh.
+    #[test]
+    fn an_open_session_keeps_its_frozen_rows_across_a_config_edit() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            5,
+        );
+        assert_eq!(open.as_ref().expect("session opened").rows, 5);
+
+        // The config moves to nine between presses; the open session
+        // still windows to the budget it was opened with.
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            9,
+        );
+        assert_eq!(
+            open.as_ref().expect("session still open").rows,
+            5,
+            "a mid-gesture rows edit must not re-window the open session"
+        );
+
+        // The next press after the session ends starts fresh: nine.
+        open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            9,
+        );
+        assert_eq!(open.as_ref().expect("fresh session opened").rows, 9);
     }
 }
