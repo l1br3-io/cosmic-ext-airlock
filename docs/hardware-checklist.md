@@ -106,8 +106,22 @@ binary.
       and walks the rows at Tab speed
 - [ ] Set the display to 200% scale: text and icons stay crisp (no
       upscaled blur), the card stays centered
+- [ ] At 100% scale the titles read at a glance — the 12-px re-pin
+      (2026-11-07); the icons still carry the row, the title confirms
 - [ ] A 48+-character title truncates with `…`; an untitled window shows
       `(untitled)`
+
+### Rows (list density)
+
+- [ ] A 20+-window list at the default: eight windows in view mid-list,
+      nine at either end, `…` rows at the truncated edges
+- [ ] Step the list end to end: the card's height never changes while
+      the window moves, and the selection never lands on a `…` row
+- [ ] `rows = 10`, then `rows = 3`: the next Alt+Tab keeps that many
+      windows in view, no restart; a flip mid-gesture windows nothing
+      until the next press
+- [ ] `rows = 11` and `rows = "8"` each log a `settings:` diagnostic
+      naming `rows`; switching keeps working on the last-good value
 
 ### Theme (card color)
 

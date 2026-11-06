@@ -3,6 +3,22 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
+## [Unreleased]
+
+### Added
+
+- **`rows` setting**: how many windows the card keeps in view on a long
+  list (`rows = 3`–`10` in `~/.config/airlock/config.toml`, default 8).
+  The `…` continuation rows now ride on top of that budget instead of
+  spending it — a long list keeps eight windows in view mid-list where
+  it showed six.
+
+### Changed
+
+- **Larger titles**: overlay text renders at 12 px (was 8), staying
+  legible at a glance on 100%-scaled displays; the card widens to at
+  most 748 px and long titles truncate a little sooner to match.
+
 ## [0.1.1] — 2026-11-07
 
 ### Fixed

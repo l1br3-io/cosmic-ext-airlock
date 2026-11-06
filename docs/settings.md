@@ -5,7 +5,7 @@ can opt individual workspaces out: there the switcher lists every
 non-minimized window across **all** workspaces, most-recently-used first,
 while workspaces without an entry stay isolated exactly as before. The
 same file also picks the switcher's card color — light, dark, or
-following the desktop.
+following the desktop — and how many windows the card keeps in view.
 
 Airlock reads the file; you write it. Airlock never creates, renames, or
 rearranges workspaces — names and positions come from COSMIC itself.
@@ -28,6 +28,7 @@ default behavior, nothing to configure.
 # Workspaces without an entry keep the default: isolated.
 
 theme = "auto"         # match the desktop's dark/light mode (the default)
+rows = 8                # windows the card keeps in view (the default)
 
 [[workspace]]
 name = "code"          # matches a workspace COSMIC reports as named "code"
@@ -51,8 +52,9 @@ flag:
 
 An entry needs `name` or `index` — never both.
 
-The one top-level key, `theme`, picks the card — see
-[Theme](#theme).
+The two top-level keys: `theme` picks the card (see
+[Theme](#theme)); `rows` picks how many windows it keeps in view (see
+[Rows](#rows)).
 
 ## Referencing workspaces
 
@@ -98,6 +100,27 @@ And like every setting, `theme` is read when a gesture starts. An edit
 mid-gesture changes nothing until the next press — a session keeps the
 card it was opened with until Alt is released.
 
+## Rows
+
+`rows` sets how many windows the card keeps in view on a long list —
+a whole number from 3 to 10, default 8. The `…` continuation rows at
+truncated edges ride on top of that budget, never inside it: with the
+default, a long list shows eight windows mid-list, nine at either
+end, and a list of ten or fewer shows every window with no `…` at
+all.
+
+The card grows by two rows once the list outgrows `rows` (the `…`
+slots). At the default that is 576 logical pixels tall — fine on any
+100%-scaled display and on a 1440p screen at 200%; a 1080p panel at
+200% (a 540-logical screen) is the one configuration that wants less —
+`rows = 7` keeps the card inside that height.
+
+Like every setting, `rows` is read when a gesture starts. An edit
+mid-gesture changes nothing until the next press; a session keeps the
+budget it opened with until Alt is released. A value outside 3–10 (or
+a non-integer) is named in a diagnostic and the last-good settings
+apply.
+
 ## What `isolated = false` changes
 
 Alt+Tab / Shift+Alt+Tab on that workspace lists every non-minimized
@@ -133,6 +156,10 @@ A bad config never breaks switching:
 - **A bad `theme` value** — a wrong type (`theme = 3`) or an unknown
   string (`theme = "blue"`) — is named in a diagnostic and the
   last-good settings apply, like any malformed edit.
+- **A bad `rows` value** — a wrong type (`rows = 8.5`, `rows = "8"`)
+  or a number outside 3–10 — is named in a diagnostic ("must be a
+  whole number" / "must be between 3 and 10") and the last-good
+  settings apply, like any malformed edit.
 - **Unknown keys are ignored** — extra keys inside an entry cost nothing.
 - **Size cap** — files over 1 MiB are ignored entirely (defaults apply);
   the read runs on the gesture path and must stay cheap.
@@ -149,3 +176,5 @@ A bad config never breaks switching:
   the light card (`"dark"` paints the dark card on a light-mode desktop)
 - With `theme = "auto"`, flip COSMIC's dark mode; the next Alt+Tab
   already matches
+- Set `rows = 10`, then `rows = 3`; the next Alt+Tab keeps that many
+  windows in view, `…` rows riding on top — no restart
