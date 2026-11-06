@@ -23,6 +23,20 @@
   <url type="homepage">https://github.com/l1br3-io/cosmic-ext-airlock</url>
   <url type="bugtracker">https://github.com/l1br3-io/cosmic-ext-airlock/issues</url>
   <releases>
+    <release version="0.1.1" date="2026-11-07">
+      <description>
+        <ul>
+          <li>Fixed: installing no longer resets every keyboard shortcut
+              to defaults. 0.1.0 wrote three bindings in a form COSMIC
+              rejects, which made the compositor fall back to factory
+              defaults for the live session; nothing was deleted from
+              disk — `airlock install --uninstall` restores, or upgrade
+              and re-run `airlock install` to repair in place.</li>
+          <li>Fixed: Alt+Esc now actually fires — 0.1.0 bound a
+              non-existent keysym name.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-11-06">
       <description>
         <ul>
