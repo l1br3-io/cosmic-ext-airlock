@@ -145,6 +145,14 @@ binary.
       Alt+Shift+grave, Alt+Esc — to the sibling `custom` file; a key
       already bound by one of your shortcuts is skipped with a diagnostic,
       never clobbered
+- [ ] **Every pre-existing shortcut still fires right after install** —
+      before anything else, press a custom shortcut you already had; the
+      0.1.0 regression here made cosmic-comp discard the whole `custom`
+      file (factory-default session) because one emitted keysym didn't
+      parse. Confirm `journalctl --user -b | grep "custom config error"`
+      shows nothing new
+- [ ] Alt+grave and Alt+Esc actually fire (not just appear in the file);
+      Esc's keysym name is `Escape`
 - [ ] `--uninstall` restores the `custom` file byte-exactly too (same
       diff), or deletes it when install created it; unmarked entries
       survive

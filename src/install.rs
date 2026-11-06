@@ -703,10 +703,23 @@ fn write_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
 // file of the shortcuts v1 directory. cosmic-config writes it with RON's
 // default pretty printer: multi-line binding keys (`modifiers: [\n Alt,\n]`,
 // bare variant names), inline values (`Spawn("...")`), trailing commas, no
-// final newline, entries in HashMap order. cosmic-comp matches a press
-// against the level-0 keysym of the physical key (layout- and
-// shift-level-agnostic), so `Alt+Shift+grave` binds `key: Some("grave")`.
-// That re-serialization also strips comment lines — so airlock's marker can
+// final newline, entries in HashMap order. Two schema facts are load-
+// bearing (0.1.0 got the first wrong and reset users' live shortcuts):
+//
+// * `key` is a **bare string** — `key: "grave"`. cosmic's keysym
+//   deserializer (cosmic-settings-daemon `config/src/shortcuts/sym.rs`)
+//   rejects `key: Some("grave")`, and because a Binding is the map key,
+//   one bad entry fails the whole file's load: cosmic-comp then falls
+//   back to factory defaults *in memory* — every user shortcut appears
+//   reset while their bytes sit untouched on disk. Recognition below
+//   still understands 0.1.0's `Some(..)` form so those installs can be
+//   uninstalled or healed by a re-run.
+// * cosmic-comp matches a press against the level-0 keysym of the
+//   physical key (layout- and shift-level-agnostic), so `Alt+Shift+grave`
+//   binds `key: "grave"` — and keysyms carry their canonical X names:
+//   Escape, never "Esc".
+//
+// cosmic's re-serialization strips comment lines — so airlock's marker can
 // vanish while its entries live on; recognition below is therefore semantic
 // (binding + spawned command), never byte- or marker-only.
 
@@ -716,8 +729,15 @@ struct CustomBinding {
     display: &'static str,
     /// Modifier names in the order COSMIC serializes them.
     modifiers: &'static [&'static str],
-    /// Keysym name of the key (level-0, per cosmic-comp matching).
+    /// Keysym name of the key (level-0, per cosmic-comp matching), as a
+    /// bare string in the emitted file — canonical X names ("Escape",
+    /// "grave"), never abbreviations.
     key: &'static str,
+    /// Keysym names earlier releases emitted for this binding (empty when
+    /// none). 0.1.0 bound the quick toggle as `"Esc"` — not a keysym — so
+    /// its entries must be matched by the legacy name to uninstall or heal
+    /// a 0.1.0 machine.
+    legacy_keys: &'static [&'static str],
     /// Command the binding spawns.
     command: &'static str,
     /// Description cosmic-settings shows for the entry.
@@ -731,6 +751,7 @@ const CUSTOM_BINDINGS: &[CustomBinding] = &[
         display: "Alt+grave",
         modifiers: &["Alt"],
         key: "grave",
+        legacy_keys: &[],
         command: SAME_APP_CMD,
         description: "Airlock: same app windows",
     },
@@ -738,13 +759,15 @@ const CUSTOM_BINDINGS: &[CustomBinding] = &[
         display: "Alt+Shift+grave",
         modifiers: &["Alt", "Shift"],
         key: "grave",
+        legacy_keys: &[],
         command: SAME_APP_PREV_CMD,
         description: "Airlock: same app windows, backwards",
     },
     CustomBinding {
         display: "Alt+Esc",
         modifiers: &["Alt"],
-        key: "Esc",
+        key: "Escape",
+        legacy_keys: &["Esc"],
         command: QUICK_TOGGLE_CMD,
         description: "Airlock: quick toggle",
     },
@@ -777,10 +800,13 @@ enum CustomUninstall {
     NotInstalled,
 }
 
-/// Airlock's canonical one-line serialization of one binding.
+/// Airlock's canonical one-line serialization of one binding. The keysym
+/// is a bare string — cosmic's `Binding.key` deserializer rejects
+/// `Some(..)`, and a malformed map key makes cosmic-comp discard the whole
+/// `custom` file and run factory defaults (the 0.1.0 incident).
 fn custom_entry_line(binding: &CustomBinding) -> String {
     format!(
-        "    (modifiers: [{}], key: Some(\"{}\"), description: Some(\"{}\")): \
+        "    (modifiers: [{}], key: \"{}\", description: Some(\"{}\")): \
          Spawn(\"{}\"),\n",
         binding.modifiers.join(", "),
         binding.key,
@@ -796,7 +822,8 @@ struct CustomEntry {
     span: (usize, usize),
     /// Lowercased modifier names from the binding's `modifiers` list.
     modifiers: Vec<String>,
-    /// Keysym name from `key: Some("…")`; `None` when absent or `None`.
+    /// Keysym name from `key: "…"` (or 0.1.0's `key: Some("…")`); `None`
+    /// when absent or `None`.
     key: Option<String>,
     /// Action text after the binding's closing `): `, trailing comma
     /// stripped (e.g. `Spawn("xeyes")`).
@@ -805,9 +832,12 @@ struct CustomEntry {
 
 impl CustomEntry {
     /// Whether this entry binds exactly `binding`'s modifier set and key —
-    /// order and quoting differences aside.
+    /// order and quoting differences aside. A legacy keysym name counts as
+    /// the same key, so 0.1.0-era entries are still recognized as airlock's.
     fn holds(&self, binding: &CustomBinding) -> bool {
-        self.key.as_deref() == Some(binding.key)
+        self.key
+            .as_deref()
+            .is_some_and(|key| key == binding.key || binding.legacy_keys.contains(&key))
             && self.modifiers.len() == binding.modifiers.len()
             && binding.modifiers.iter().all(|modifier| {
                 self.modifiers
@@ -901,11 +931,14 @@ fn modifiers_of(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The keysym string inside `key: Some("…")` — `keycode:` never matches
-/// because its `key` is followed by `c`, not `:`.
+/// The keysym string inside `key: "…"` — or `key: Some("…")`, the form
+/// 0.1.0 emitted; both must be recognized so legacy installs uninstall
+/// cleanly. `keycode:` never matches because its `key` is followed by `c`,
+/// not `:`.
 fn key_of(text: &str) -> Option<String> {
     let colon = text.find("key:")?;
-    let rest = text[colon + 4..].trim_start().strip_prefix("Some(")?;
+    let rest = text[colon + 4..].trim_start();
+    let rest = rest.strip_prefix("Some(").unwrap_or(rest);
     quoted_string(rest)
 }
 

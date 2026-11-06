@@ -1,6 +1,54 @@
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// Faithful test replica of cosmic's `custom` shortcuts schema
+/// (cosmic-settings-daemon `config/src/shortcuts/{binding.rs,sym.rs,
+/// action.rs}`): `Binding` denies unknown fields and its `key` field uses a
+/// custom keysym deserializer that accepts only a **bare string** —
+/// `key: Some("grave")` is a hard deserialization error, and because a
+/// Binding is the map key, one bad entry poisons the whole file. That is
+/// the 0.1.0 incident: cosmic-comp watched the file, failed to load it,
+/// and fell back to factory defaults for the live session while the user's
+/// bytes sat untouched on disk. Every file install emits must parse here.
+mod cosmic_schema {
+    use serde::{Deserialize, Deserializer, Serialize};
+    use std::collections::HashMap;
+
+    #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+    pub enum Modifier {
+        Ctrl,
+        Alt,
+        Shift,
+        Super,
+    }
+
+    /// Bare-string keysym, mirroring cosmic's sym.rs: `Some(..)` rejected.
+    fn deserialize_keysym<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(Some)
+    }
+
+    #[derive(Debug, Deserialize, PartialEq, Eq, Hash)]
+    #[serde(deny_unknown_fields)]
+    pub struct Binding {
+        pub modifiers: Vec<Modifier>,
+        #[serde(default, deserialize_with = "deserialize_keysym")]
+        pub key: Option<String>,
+        #[serde(default)]
+        pub description: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq, Eq, Hash)]
+    pub enum Action {
+        Spawn(String),
+        Disable,
+    }
+
+    pub type Shortcuts = HashMap<Binding, Action>;
+}
+
 /// Trimmed copy of the shipped system default (same shape: doc comments,
 /// both switcher keys, unrelated entries).
 const SYSTEM_DEFAULT: &str = concat!(
@@ -62,15 +110,16 @@ const USER_BACKSLASH_CR: &str = concat!(
 );
 
 /// A `custom` file as cosmic-settings writes it: one user Spawn shortcut,
-/// multi-line binding keys, bare modifier names, trailing commas, no final
-/// newline.
+/// multi-line binding keys, bare modifier names, a **bare-string keysym**
+/// (`key: "A"` — cosmic's custom deserializer rejects `Some(..)`), trailing
+/// commas, no final newline.
 const CUSTOM_USER_FILE: &str = concat!(
     "{\n",
     "    (\n",
     "        modifiers: [\n",
     "            Super,\n",
     "        ],\n",
-    "        key: Some(\"A\"),\n",
+    "        key: \"A\",\n",
     "    ): Spawn(\"xeyes\"),\n",
     "}",
 );
@@ -83,13 +132,13 @@ const CUSTOM_HELD_GRAVE: &str = concat!(
     "        modifiers: [\n",
     "            Alt,\n",
     "        ],\n",
-    "        key: Some(\"grave\"),\n",
+    "        key: \"grave\",\n",
     "    ): Spawn(\"my own thing\"),\n",
     "    (\n",
     "        modifiers: [\n",
     "            Super,\n",
     "        ],\n",
-    "        key: Some(\"A\"),\n",
+    "        key: \"A\",\n",
     "    ): Spawn(\"xeyes\"),\n",
     "}",
 );
@@ -104,15 +153,28 @@ const CUSTOM_REWRITTEN: &str = concat!(
     "        modifiers: [\n",
     "            Alt,\n",
     "        ],\n",
-    "        key: Some(\"grave\"),\n",
+    "        key: \"grave\",\n",
     "    ): Spawn(\"airlock same-app\"),\n",
     "    (\n",
     "        modifiers: [\n",
     "            Super,\n",
     "        ],\n",
-    "        key: Some(\"A\"),\n",
+    "        key: \"A\",\n",
     "    ): Spawn(\"xeyes\"),\n",
     "}",
+);
+
+/// A `custom` file exactly as 0.1.0 wrote it: airlock's three entries with
+/// the schema-invalid `key: Some(..)` form — the bytes that made cosmic-comp
+/// fall back to factory defaults. Reinstall must heal the file to the valid
+/// shape and uninstall must still recognize and remove the entries.
+const CUSTOM_LEGACY_0_1_0: &str = concat!(
+    "// airlock-v1 custom=absent-file\n",
+    "{\n",
+    "    (modifiers: [Alt], key: Some(\"grave\"), description: Some(\"Airlock: same app windows\")): Spawn(\"airlock same-app\"),\n",
+    "    (modifiers: [Alt, Shift], key: Some(\"grave\"), description: Some(\"Airlock: same app windows, backwards\")): Spawn(\"airlock same-app-previous\"),\n",
+    "    (modifiers: [Alt], key: Some(\"Esc\"), description: Some(\"Airlock: quick toggle\")): Spawn(\"airlock quick-toggle\"),\n",
+    "}\n",
 );
 
 #[test]
@@ -390,6 +452,107 @@ fn custom_install_preserves_user_entries_and_uninstall_restores_bytes() {
 }
 
 #[test]
+fn custom_install_output_parses_as_cosmic_shortcut_map() {
+    // THE 0.1.0 regression guard: whatever install emits must deserialize
+    // as cosmic's Binding→Action map. A malformed map key (0.1.0's
+    // `key: Some(..)`) makes cosmic-comp discard the whole file and run
+    // factory defaults for the live session — every user shortcut appears
+    // reset. Fails loudly with the file content if this ever regresses.
+    for (label, expected, content) in [
+        (
+            "fresh install",
+            3,
+            custom_install_content(None).expect("fresh install").content,
+        ),
+        (
+            "over a cosmic-written user file",
+            4,
+            custom_install_content(Some(CUSTOM_USER_FILE))
+                .expect("install over user file")
+                .content,
+        ),
+    ] {
+        let parsed: cosmic_schema::Shortcuts = ron::from_str(&content).unwrap_or_else(
+            |error| {
+                panic!("cosmic cannot load this file ({label}); live session would reset to defaults: {error}\n{content}")
+            },
+        );
+        assert_eq!(
+            parsed.len(),
+            expected,
+            "wrong entry count ({label}):\n{content}"
+        );
+    }
+}
+
+#[test]
+fn emitted_bindings_use_bare_keysyms_and_canonical_names() {
+    let install = custom_install_content(None).expect("install");
+    assert!(
+        install.content.contains("key: \"grave\""),
+        "keysym must be a bare string:\n{}",
+        install.content
+    );
+    assert!(
+        install.content.contains("key: \"Escape\""),
+        "quick toggle must bind the canonical Escape keysym:\n{}",
+        install.content
+    );
+    assert!(
+        !install.content.contains("key: Some("),
+        "0.1.0's Some-form must never be emitted again:\n{}",
+        install.content
+    );
+}
+
+#[test]
+fn legacy_0_1_0_file_is_healed_by_reinstall() {
+    // Re-running install over 0.1.0's malformed file replaces the
+    // Some-form entries with valid ones — a repair path for bitten users.
+    let healed = custom_install_content(Some(CUSTOM_LEGACY_0_1_0)).expect("reinstall");
+    assert_eq!(healed.in_place.len(), 3, "{:?}", healed.in_place);
+    let parsed: cosmic_schema::Shortcuts =
+        ron::from_str(&healed.content).expect("healed file must parse for cosmic");
+    assert_eq!(
+        parsed.len(),
+        3,
+        "only airlock's entries:\n{}",
+        healed.content
+    );
+}
+
+#[test]
+fn legacy_0_1_0_file_uninstalls_and_restores_user_bytes() {
+    // 0.1.0 entries sitting next to user entries: recognized semantically,
+    // removed, user bytes preserved exactly.
+    let legacy_with_user = concat!(
+        "{\n",
+        "    (modifiers: [Alt], key: Some(\"grave\"), description: Some(\"Airlock: same app windows\")): Spawn(\"airlock same-app\"),\n",
+        "    (\n        modifiers: [\n            Super,\n        ],\n        key: \"A\",\n    ): Spawn(\"xeyes\"),\n",
+        "}",
+    );
+    match custom_uninstall_content(legacy_with_user).expect("uninstall") {
+        CustomUninstall::Restored { content } => assert_eq!(
+            content,
+            concat!(
+                "{\n",
+                "    (\n        modifiers: [\n            Super,\n        ],\n        key: \"A\",\n    ): Spawn(\"xeyes\"),\n",
+                "}",
+            ),
+            "user entry not byte-preserved:\n{content}"
+        ),
+        other => panic!("expected Restored, got {other:?}"),
+    }
+
+    // The pure 0.1.0 fresh-install file: only airlock owned it, so the
+    // marker path deletes it.
+    match custom_uninstall_content(CUSTOM_LEGACY_0_1_0).expect("uninstall") {
+        CustomUninstall::RemoveFile => {}
+        other => panic!("expected RemoveFile, got {other:?}"),
+    }
+}
+
+#[test]
 fn custom_install_skips_user_held_binding_and_names_it() {
     let install = custom_install_content(Some(CUSTOM_HELD_GRAVE)).expect("install");
     assert_eq!(install.skipped, ["Alt+grave"]);
@@ -450,7 +613,8 @@ fn custom_uninstall_without_airlock_entries_reports_not_installed() {
 #[test]
 fn custom_disable_action_on_our_key_is_held_not_clobbered() {
     // Hand-written compact file: the user disabled Alt+Esc themselves.
-    let held = "{\n    (modifiers: [Alt], key: Some(\"Esc\")): Disable,\n}";
+    // Bare keysym in cosmic's real form (canonical "Escape" name).
+    let held = "{\n    (modifiers: [Alt], key: \"Escape\"): Disable,\n}";
     let install = custom_install_content(Some(held)).expect("install");
     assert_eq!(install.skipped, ["Alt+Esc"]);
     assert_eq!(install.in_place, ["Alt+grave", "Alt+Shift+grave"]);
@@ -463,15 +627,29 @@ fn custom_disable_action_on_our_key_is_held_not_clobbered() {
 
 #[test]
 fn custom_modifier_order_and_compact_forms_are_recognized() {
-    // Reordered modifiers on a compact single-line entry: still a held
-    // Alt+Shift+grave.
-    let held = concat!(
+    // Reordered modifiers on compact single-line entries: still held
+    // bindings — in cosmic's bare-keysym form and in 0.1.0's Some-form.
+    let bare = concat!(
+        "{\n",
+        "    (modifiers: [Shift, Alt], key: \"grave\"): Spawn(\"other\"),\n",
+        "}\n",
+    );
+    assert_eq!(
+        custom_install_content(Some(bare)).expect("install").skipped,
+        ["Alt+Shift+grave"]
+    );
+
+    let legacy_some = concat!(
         "{\n",
         "    (modifiers: [Shift, Alt], key: Some(\"grave\")): Spawn(\"other\"),\n",
         "}\n",
     );
-    let install = custom_install_content(Some(held)).expect("install");
-    assert_eq!(install.skipped, ["Alt+Shift+grave"]);
+    assert_eq!(
+        custom_install_content(Some(legacy_some))
+            .expect("install")
+            .skipped,
+        ["Alt+Shift+grave"]
+    );
 }
 
 #[test]

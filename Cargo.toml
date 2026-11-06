@@ -46,3 +46,13 @@ resvg = { version = "0.45.1", default-features = false }
 # never derive), FromStr needs `parse`, fs/env need `std`; only `display`
 # is trimmed from the default set.
 toml = { version = "0.9", default-features = false, features = ["parse", "serde", "std"] }
+
+[dev-dependencies]
+# Test-only schema check for the `custom` shortcuts file: parse what
+# install emits against a faithful replica of cosmic's Binding map, so a
+# serialization cosmic rejects (0.1.0's `key: Some(..)`) can never ship
+# again. Matches the ron line cosmic-config reads with (plain
+# `ron::from_str`, default options).
+ron = "0.9"
+serde = { version = "1", features = ["derive"] }
+

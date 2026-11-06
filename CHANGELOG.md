@@ -3,6 +3,22 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
+## [0.1.1] — 2026-11-07
+
+### Fixed
+
+- **Installing no longer resets every shortcut to defaults.** 0.1.0 wrote
+  its Alt+grave / Alt+Shift+grave / Alt+Esc bindings in a form COSMIC
+  rejects, which made cosmic-comp discard the `custom` shortcuts file —
+  the file that holds all your customizations — and run factory defaults
+  for the live session. Your entries were never deleted from disk:
+  `airlock install --uninstall` (any version) restores them byte-exactly,
+  or upgrade and re-run `airlock install` to repair the file in place.
+- **Alt+Esc now actually fires** — 0.1.0 bound the non-existent `Esc`
+  keysym; the key's real name is `Escape`.
+- Re-running install over a 0.1.0 machine replaces the malformed entries
+  with valid ones instead of leaving them beside the new ones.
+
 ## [0.1.0] — 2026-11-06
 
 Initial release.
