@@ -65,7 +65,20 @@ run:
 # hand control back after a dev session, or to activate a fresh
 # `just install` (a running daemon keeps the old code until stopped).
 stop:
-    -@pkill -x airlock
+	-@pkill -x airlock
+
+# Regenerate docs/img/overlay-card.png, the README hero image: the
+# overlay-preview contact sheet's interior 15-window scenario (selection
+# mid-list) cropped from the light-backdrop column at --scale 2. Card
+# 388x464 logical px = 776x928 device; offsets x = 2*gutter + backdrop_w
+# = 1512, y = 64 + singles(1728) + 5 gutters(320) = 3104 — re-derive from
+# examples/overlay-preview.rs if the scenario list changes. Themed icons
+# resolve from the host's icon theme; a theme-less host draws the
+# synthetic tiles. Needs ImageMagick (convert).
+readme-image:
+	{{just_executable()}} quietly 'cargo run --example overlay-preview -- /tmp/airlock-preview-sheet.png'
+	convert /tmp/airlock-preview-sheet.png -crop 776x928+1512+3104 +repage docs/img/overlay-card.png
+
 
 # Prerequisite gate, shared by `install` (and runnable alone): checks
 # the C toolchain, pkg-config, the pkg-config modules behind the system

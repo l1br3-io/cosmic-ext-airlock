@@ -4,8 +4,29 @@ Workspace-isolated Alt+Tab for the COSMIC™ desktop: the switcher lists and
 cycles only the windows on the **current workspace**, so nothing you parked
 elsewhere leaks into your focus.
 
+![The Airlock overlay mid-gesture: a dark rounded card on a light wallpaper,
+listing six windows of the current workspace — each row an app icon and a
+title, one row highlighted, ellipsis rows marking the windows hidden above
+and below](https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/docs/img/overlay-card.png)
+
 > Airlock is third-party software for the COSMIC™ desktop. It is not official
 > COSMIC software and is not affiliated with or endorsed by System76.
+
+**Status:** [v0.1.0](https://github.com/l1br3-io/cosmic-ext-airlock/releases/tag/v0.1.0),
+released 2026-11-02 — early and actively developed. The core Alt+Tab gesture
+is solid; same-app cycling and pointer input are newer edges.
+
+## Why
+
+The built-in COSMIC switcher lists every window from every workspace, in the
+order you last used them. Its pipeline has no workspace filter, and the
+request to add one
+([pop-os/cosmic-epoch#1777](https://github.com/pop-os/cosmic-epoch/issues/1777))
+is still open. Airlock is that filter, as a standalone app: no compositor
+patch, and `airlock install --uninstall` puts the built-in switcher back.
+The switcher path it replaces (cosmic-launcher's cosmic-switch-less)
+measured ≈ 170 MB RSS; Airlock's daemon measures 8.0 MB (see
+[Performance](#performance)).
 
 ## How it works
 
@@ -35,7 +56,7 @@ most 660 px wide, with the selected row highlighted; text renders at
 8 px and stays sharp on HiDPI displays (the overlay renders at the
 output's scale). The `theme` setting picks the card — `auto` (the
 default) follows the desktop's dark/light preference; see
-[Settings](docs/settings.md#theme). To preview the look without a COSMIC
+[Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#theme). To preview the look without a COSMIC
 session:
 
 ```sh
@@ -47,7 +68,7 @@ sticky windows appear everywhere, minimized windows nowhere, and a window
 parked on another workspace can never be focused through Airlock.
 
 The isolation is per-workspace configurable: a workspace can opt into the
-global switcher through a config file — see [Settings](docs/settings.md).
+global switcher through a config file — see [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md).
 
 `airlock install` also claims three more keys. Hold **Alt** and tap
 **grave** (the key above Tab): the overlay lists only the current
@@ -68,7 +89,7 @@ overlay is software-rendered — no GPU required.
 - A COSMIC desktop session (epoch). Other compositors are out of scope for
   v1; on one that lacks the required protocols the daemon exits non-zero
   with a diagnostic naming what is missing.
-- A Rust toolchain to build (`cargo install cosmic-ext-airlock` handles
+- A Rust toolchain (1.93+) to build (`cargo install cosmic-ext-airlock` handles
   the rest; see [Install](#install)). Building from a checkout with
   `just install` checks the build prerequisites first — the C toolchain,
   pkg-config, the Wayland/xkbcommon headers, and cargo — and installs
@@ -147,22 +168,19 @@ other path returns your exact bytes.
   releases the grab): `pkill -x airlock`, then press Alt+Tab to restart
   clean.
 
-See also the [hardware verification checklist](docs/hardware-checklist.md)
+See also the [hardware verification checklist](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/hardware-checklist.md)
 for the full pass that every release build goes through.
 
 ## Performance
 
 Measured on hardware (2026-11-02, see the
-[checklist](docs/hardware-checklist.md) for how to reproduce):
+[checklist](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/hardware-checklist.md) for how to reproduce):
 
 | Measurement | Target | Airlock |
 |---|---|---|
 | Daemon RSS / threads | < 30 MB | **8.0 MB / 1 thread** |
 | Warm press round-trip | < 50 ms | **< 10 ms** |
 | Cold press (respawn + settle) | — | ~340 ms |
-
-For scale, the switcher path this replaces (cosmic-launcher's
-cosmic-switch-less) measures ≈ 170 MB RSS.
 
 ## Packaging
 
@@ -177,7 +195,7 @@ IDs are widespread). A Launchpad PPA and Flathub are on the roadmap
 without dates — Flathub only after re-opening the research verdict that
 a sandboxed daemon cannot take over the keybind (the takeover rewrites
 `~/.config/cosmic/…`, outside the sandbox); see the
-[research index](docs/research/README.md).
+[research index](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/research/README.md).
 
 ## Development
 
@@ -196,15 +214,15 @@ Daily use and development never collide:
 
 Verification gates: `just test`, `just check` (clippy, warnings denied),
 `just fmt-check`. Runtime behavior needs real COSMIC hardware — run the
-[hardware checklist](docs/hardware-checklist.md); a COSMIC VM works too
-(see the [VM guide](docs/vm-development.md)).
+[hardware checklist](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/hardware-checklist.md); a COSMIC VM works too
+(see the [VM guide](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/vm-development.md)).
 
 ## Documentation
 
-- [Per-workspace settings](docs/settings.md)
-- [Hardware verification checklist](docs/hardware-checklist.md)
-- [Developing and testing in the COSMIC VM](docs/vm-development.md)
-- [Research index](docs/research/README.md)
+- [Per-workspace settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md)
+- [Hardware verification checklist](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/hardware-checklist.md)
+- [Developing and testing in the COSMIC VM](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/vm-development.md)
+- [Research index](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/research/README.md)
 
 ## License
 
