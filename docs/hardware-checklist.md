@@ -78,6 +78,26 @@ binary.
 - [ ] Regression: Tab / Shift+Tab / arrows / Enter / Escape / Alt
       release / quick tap behave exactly as before
 
+### Number select (Ctrl+1..9 and the row hints)
+
+- [ ] Hold Alt, tap Tab, press Ctrl+3 — the third row's window focuses,
+      the overlay unmaps, and a later Alt release is inert
+- [ ] The keypad digits do the same: Ctrl with keypad 3 reaches the third
+      row
+- [ ] Ctrl+9 with fewer than nine windows listed changes nothing — the
+      overlay stays up and Tab still steps
+- [ ] A number key without Ctrl does nothing mid-hold
+- [ ] In an Alt+grave overlay, Ctrl+N addresses the Nth row of that
+      application's list
+- [ ] Rows one to nine show `Ctrl+1` … `Ctrl+9` at the right edge,
+      legible on both themes at 100% and 200% scale over a light and a
+      dark wallpaper; with ten or more windows, rows beyond the ninth
+      show nothing
+- [ ] The selected row's hint stays legible over the highlight; a long,
+      truncated title stops short of its hint
+- [ ] Regression: Tab / Shift+Tab / arrows / Enter / Escape / Alt
+      release / quick tap / hover / click / wheel behave exactly as before
+
 ### Same-app and quick toggle
 
 - [ ] Alt+grave opens the overlay listing only the current application's

@@ -13,7 +13,11 @@ walks back, and the arrow keys step too — **Up** or **Left** back,
 **Down** or **Right** forward. Releasing **Alt** focuses the selection and
 dismisses the overlay; **Enter** confirms the same outcome without letting
 go of **Alt**. **Escape** dismisses without switching. A quick tap —
-released before the overlay even appears — still switches.
+released before the overlay even appears — still switches. **Ctrl+1**
+through **Ctrl+9** — keypad digits included — switch to that row's window
+at once, the same outcome as clicking it; the first nine rows show their
+key at the right edge, and deeper rows show none. Without **Ctrl**, the
+number row does nothing.
 
 ## The pointer gesture
 
@@ -28,8 +32,8 @@ scan never times the overlay out.
 ## The frozen list
 
 The list is frozen for the gesture: a window that opened after the
-overlay appeared is not on it, so neither the pointer nor the wheel can
-reach it mid-gesture.
+overlay appeared is not on it, so neither the pointer, the wheel, nor a
+number key can reach it mid-gesture.
 
 ## The card
 

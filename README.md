@@ -38,6 +38,8 @@ pipeline the COSMIC launcher uses) beside its title.
 - A quick tap, released before the overlay appears, still switches
 - Pointer: hover moves the selection, click switches, the wheel steps the
   list
+- **Ctrl+N** (1–9, keypad too) switches to the Nth window at once, like a
+  click; each row shows its key
 
 Preview the card without a COSMIC session:
 
