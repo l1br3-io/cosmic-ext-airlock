@@ -51,7 +51,8 @@ Scope and extra keys:
   window on another workspace can never be reached through Airlock. A
   workspace can opt into the global list — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md).
-- **Alt+grave** cycles the current application's windows;
+- **Alt+grave** (the key above Tab) cycles the current application's
+  windows;
   **Alt+Shift+grave** starts it stepping backwards; **Alt+Esc** jumps to the
   second-most-recent window with no overlay.
 - A small daemon keeps a live compositor snapshot; the keybind stubs
