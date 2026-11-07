@@ -23,6 +23,10 @@ observe, not internal mechanics.
 
 ### Fixed
 
+- **The `grouping` setting has its reference at last**: the
+  docs/settings.md section planned when the setting shipped — the app
+  tree's shape, the re-bound keys (Tab steps apps, → enters a parent's
+  children, ← exits), and the read-at-gesture-start contract.
 - The `…` overflow marker sits centered on the card again (it drifted
   2 px right), and the selection band's ends round to match the card's
   corners instead of ending as clipped stripes; the card edge now

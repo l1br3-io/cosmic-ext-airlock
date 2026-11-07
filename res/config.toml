@@ -12,9 +12,12 @@
 
 # Rules below opt a workspace OUT of isolation. Workspaces without an
 # entry keep the default: Alt+Tab sees only that workspace's windows.
+# Match by name or by 1-based position — never both keys in one rule.
 #
 # [[workspace]]
-# name = "code"       # a workspace COSMIC reports with exactly this name — or:
-# index = 2           # the 2nd workspace in COSMIC's order, named or not
-#                     # (name or index, never both)
+# name = "code"       # a workspace COSMIC reports with exactly this name
 # isolated = false    # false: Alt+Tab here cycles every window, MRU
+#
+# [[workspace]]
+# index = 2           # the 2nd workspace in COSMIC's order, named or not
+# isolated = false

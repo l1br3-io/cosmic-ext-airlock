@@ -28,11 +28,12 @@ configure.
 ## Example
 
 ```toml
-# ~/.config/airlock/config.toml — Airlock reads, you write.
+# ~/.config/airlock/config.toml — Airlock reads, you edit.
 # Workspaces without an entry keep the default: isolated.
 
 theme = "auto"         # match the desktop's dark/light mode (the default)
-rows = 8                # windows the card keeps in view (the default)
+rows = 8               # windows the card keeps in view (the default)
+grouping = false       # the flat list; true groups it by app (the default)
 
 [[workspace]]
 name = "code"          # matches a workspace COSMIC reports as named "code"
@@ -56,9 +57,10 @@ flag:
 
 An entry needs `name` or `index` — never both.
 
-The two top-level keys: `theme` picks the card (see
+The three top-level keys: `theme` picks the card (see
 [Theme](#theme)); `rows` picks how many windows it keeps in view (see
-[Rows](#rows)).
+[Rows](#rows)); `grouping` picks the list's shape (see
+[Grouping](#grouping)).
 
 ## Referencing workspaces
 
@@ -125,6 +127,31 @@ budget it opened with until Alt is released. A value outside 3–10 (or
 a non-integer) is named in a diagnostic and the last-good settings
 apply.
 
+## Grouping
+
+`grouping = true` re-partitions the same MRU window list into an app
+tree: one parent row per application — ordered by each app's
+most-recently-used window — with that app's windows beneath it in MRU
+order, all parents expanded. A window COSMIC cannot attribute to an
+application never groups; it stays a top-level row. A parent row
+carries its app's frontmost window, so committing it (Alt-release or
+Enter) activates that window.
+
+The keys re-bind to the tree:
+
+- **Tab / Shift+Tab** step **apps** — next / previous parent row
+- **→** enters the selected parent's children; **←** exits back to
+  the parent row
+- **↑ / ↓** keep stepping rows, through the tree's flattened order
+- Flat mode (`false`, the default) is unchanged: Tab steps rows and
+  ←/→ ride with ↑/↓ as step aliases
+
+The `rows` budget applies to the tree's rows, parent and child alike.
+`grouping` is read when a gesture starts like every setting: a
+session keeps the list shape it opened with until Alt is released. A
+non-boolean value (`grouping = 1`, `grouping = "yes"`) is named in a
+diagnostic and the last-good settings apply.
+
 ## What `isolated = false` changes
 
 Alt+Tab / Shift+Alt+Tab on that workspace lists every non-minimized
@@ -164,6 +191,9 @@ A bad config never breaks switching:
   or a number outside 3–10 — is named in a diagnostic ("must be a
   whole number" / "must be between 3 and 10") and the last-good
   settings apply, like any malformed edit.
+- **A bad `grouping` value** — `grouping = 1`, `grouping = "yes"` —
+  is named in a diagnostic ("`grouping` must be a boolean") and the
+  last-good settings apply, like any malformed edit.
 - **Unknown keys are ignored** — extra keys inside an entry cost nothing.
 - **Size cap** — files over 1 MiB are ignored entirely (defaults apply);
   the read runs on the gesture path and must stay cheap.
