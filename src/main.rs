@@ -61,6 +61,7 @@ fn main() {
                 std::process::exit(1);
             }
         },
+        Command::Version => println!("{}", cli::version()),
     }
 }
 

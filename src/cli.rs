@@ -21,6 +21,8 @@ pub enum Command {
     Install { uninstall: bool },
     /// Debug: print toplevels, workspaces, and the active workspace.
     List,
+    /// Print the binary name and version.
+    Version,
 }
 
 /// Why argument parsing failed.
@@ -62,6 +64,7 @@ pub fn parse(args: &[String]) -> Result<Command, ParseError> {
             Ok(Command::Install { uninstall })
         }
         "list" => no_extra_args(rest).map(|()| Command::List),
+        "--version" => no_extra_args(rest).map(|()| Command::Version),
         unknown => Err(ParseError::Unknown(unknown.to_string())),
     }
 }
@@ -71,6 +74,11 @@ fn no_extra_args(rest: &[String]) -> Result<(), ParseError> {
         [] => Ok(()),
         [extra, ..] => Err(ParseError::Unexpected(extra.clone())),
     }
+}
+
+/// Prints the binary name and version, e.g. "airlock 0.2.0".
+pub fn version() -> &'static str {
+    concat!("airlock ", env!("CARGO_PKG_VERSION"))
 }
 
 /// Usage text, printed to stderr when parsing fails.
@@ -86,6 +94,7 @@ commands:
   quick-toggle              switch to the previous window without the overlay
   install [--uninstall]     take over (or restore) the Alt+Tab keybind
   list                      print toplevels, workspaces, and the active workspace
+  --version                 print the binary name and version
 "
 }
 
@@ -165,11 +174,29 @@ mod tests {
     }
 
     #[test]
+    fn parses_version_flag() {
+        assert_eq!(parse(&args(&["--version"])), Ok(Command::Version));
+    }
+
+    #[test]
     fn flag_like_first_token_reports_unknown() {
         assert_eq!(
             parse(&args(&["--help"])),
             Err(ParseError::Unknown("--help".to_string()))
         );
+    }
+
+    #[test]
+    fn version_flag_after_daemon_reports_unexpected() {
+        assert_eq!(
+            parse(&args(&["daemon", "--version"])),
+            Err(ParseError::Unexpected("--version".to_string()))
+        );
+    }
+
+    #[test]
+    fn version_matches_the_compiled_package_version() {
+        assert_eq!(version(), concat!("airlock ", env!("CARGO_PKG_VERSION")));
     }
 
     #[test]
@@ -232,6 +259,7 @@ mod tests {
             "quick-toggle",
             "install",
             "list",
+            "--version",
         ] {
             assert!(usage.contains(name), "usage is missing `{name}`");
         }
