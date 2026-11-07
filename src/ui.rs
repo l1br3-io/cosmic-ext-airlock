@@ -84,11 +84,25 @@ pub const ROW_GAP: u32 = 8;
 /// rather than a full-bleed stripe clipped by the border.
 pub const SELECT_INSET: u32 = 4;
 
+/// Corner radius of the selection band's own ends, logical px. The band
+/// is a row button, so its ends round into the card's corner vocabulary
+/// instead of ending as clipped stripes against the 12-px card radius —
+/// drawn by the same coverage sampler, still one flat fill (no accent,
+/// no glow). `PAD_Y ≥ RADIUS` holds the band clear of the card's corner
+/// arcs. 2026-11-07 layout pass, preview-frozen beside [`PAD_Y`].
+pub const BAND_RADIUS: u32 = 8;
+
 /// Horizontal padding inside the card.
 pub const PAD_X: u32 = 20;
 
 /// Vertical padding inside the card; rows start and end inside it.
-pub const PAD_Y: u32 = 12;
+/// Double the row gap: the card edge breathes one deliberate step above
+/// the row rhythm, so an edge selection reads as held by the container
+/// rather than parked beside its neighbor. Also keeps `PAD_Y ≥ RADIUS`
+/// with real slack — 12 sat at exact equality, one padding trim away
+/// from clipping a corner arc. 2026-11-07 layout pass (16 = 2 × the
+/// 8-px row gap).
+pub const PAD_Y: u32 = 16;
 
 /// Card corner radius in logical pixels. COSMIC's house radius for cards
 /// is `radius_s + 4` ≈ 12 (research record §2.6). Corners are coverage
@@ -131,7 +145,7 @@ pub const HINT_COLS: u32 = 6; // len("Ctrl+9")
 /// mid-list, nine at either end, every window of a ≤10-long list.
 /// Re-pinned 2026-11-07 from the 11-04 "8 slots" rule, whose `…` rows
 /// spent two of the budget and left six windows mid-list. Worst case at
-/// the default is 10 slots = 576 logical px — inside a 720-logical
+/// the default is 10 slots = 584 logical px — inside a 720-logical
 /// screen (1440p@2x, any 1× panel); a 1080p panel at 2× (540 logical)
 /// wants `rows = 7`.
 pub const DEFAULT_ROWS: usize = 8;
@@ -142,7 +156,7 @@ pub const DEFAULT_ROWS: usize = 8;
 pub const ROWS_MIN: usize = 3;
 
 /// Largest `rows` the setting accepts: its worst case, `ROWS_MAX +
-/// ROWS_SLACK` = 12 slots = 688 logical px, still fits a 720-logical
+/// ROWS_SLACK` = 12 slots = 696 logical px, still fits a 720-logical
 /// screen.
 pub const ROWS_MAX: usize = 10;
 
@@ -313,7 +327,8 @@ pub enum ThemeSetting {
 // Geometry pins. The 8-grid holds for every stepped metric; the row is
 // exactly the icon cell plus its breathing; rows stay clear of the
 // corner arcs (PAD_Y ≥ RADIUS), so a selection band can never clip a
-// corner; and the border is a hairline, not a frame.
+// corner, and the band's own ends round within its height; and the
+// border is a hairline, not a frame.
 const _: () = {
     assert!(ROW_H == ICON + 2 * ROW_PAD_Y);
     assert!(TEXT_H == GLYPH_H * FONT_SCALE_NUM / FONT_SCALE_DEN);
@@ -337,9 +352,11 @@ const _: () = {
     assert!(SELECT_INSET.is_multiple_of(4));
     assert!(SELECT_INSET > BORDER);
     assert!(SELECT_INSET < PAD_X);
+    assert!(BAND_RADIUS.is_multiple_of(4));
+    assert!(2 * BAND_RADIUS <= ROW_H);
     // The card at the `rows` setting's worst case — `rows + ROWS_SLACK`
-    // slots — fits a 720-logical screen (1440p@2x, any 1× panel): 576 at
-    // the default, 688 at the ceiling. The 11-04 540 pin moved with the
+    // slots — fits a 720-logical screen (1440p@2x, any 1× panel): 584 at
+    // the default, 696 at the ceiling. The 11-04 540 pin moved with the
     // 11-07 re-pin (spec `overlay-density`, OQ 2).
     assert!(ROWS_MIN >= 3);
     assert!(ROWS_MIN <= DEFAULT_ROWS && DEFAULT_ROWS <= ROWS_MAX);
@@ -532,7 +549,10 @@ pub fn overlay_model(
     for handle in handles {
         // Unreachable in practice: eligible() draws from this same snapshot.
         let toplevel = snapshot.toplevels.iter().find(|t| t.handle == handle)?;
-        let title = truncate_cols(display_title(&toplevel.title, &toplevel.app_id));
+        let title = truncate_cols(fold_title(&display_title(
+            &toplevel.title,
+            &toplevel.app_id,
+        )));
         rows.push(RowModel {
             title,
             icon: icons.bitmap(&toplevel.app_id, scale, palette),
@@ -661,10 +681,13 @@ pub fn render(
         // than any title and legible on both card fills and both
         // wallpaper polarities. Nothing else paints on this row: no
         // band, no icon, no title, no hint — a row beyond addressability
-        // earns nothing but its dots. Card-centered is the candidate
+        // earns nothing but its dots. The glyph paints `TEXT_W` wide, so
+        // its box centers on `TEXT_W` exactly as `dots_y` centers on
+        // `TEXT_H`; centering on the font cell biased the ink 2 px right
+        // of the card's center line. Card-centered is the candidate
         // placement; the preview sheet freezes it (LV3).
         if row.handle.is_none() {
-            let dots_x = lw.saturating_sub(GLYPH_W) / 2;
+            let dots_x = lw.saturating_sub(TEXT_W) / 2;
             let dots_y = top + (ROW_H - TEXT_H) / 2;
             draw_glyph(
                 canvas,
@@ -678,21 +701,34 @@ pub fn render(
             continue;
         }
         if row.selected {
-            let band_width = lw.saturating_sub(2 * SELECT_INSET) as usize;
+            // The band is its own rounded rect: `BAND_RADIUS` ends
+            // through the same coverage sampler as the card corners.
+            // The ramp interpolates toward the band fill between two
+            // painted fills — full coverage is the exact band color, zero
+            // coverage leaves the card untouched, and because both are
+            // near-opaque the arc never thins the card. `PAD_Y ≥ RADIUS`
+            // holds the band clear of the card's corner arcs, so the
+            // card mask doesn't ride along.
+            let band_w = lw.saturating_sub(2 * SELECT_INSET);
             for ly in top..top + ROW_H {
-                let cov_row = &outer[(ly * lw) as usize..(ly * lw + lw) as usize];
                 for dy in 0..scale {
                     let y = ly * scale + dy;
-                    for (lx, cov) in cov_row
-                        .iter()
-                        .enumerate()
-                        .skip(SELECT_INSET as usize)
-                        .take(band_width)
-                    {
-                        let argb = coverage_argb(palette.selected_bg, *cov);
-                        let x0 = lx as u32 * scale;
+                    for lx in SELECT_INSET..lw.saturating_sub(SELECT_INSET) {
+                        let cov =
+                            shape_cov(lx - SELECT_INSET, ly - top, band_w, ROW_H, BAND_RADIUS, 0);
+                        if cov == 0 {
+                            continue;
+                        }
+                        let x0 = lx * scale;
                         for x in x0..x0 + scale {
-                            put_pixel(canvas, stride, x, y, argb);
+                            let index = y as usize * stride as usize + x as usize * 4;
+                            if let Some(slot) = canvas.get_mut(index..index + 4) {
+                                let dst = u32::from_le_bytes(
+                                    slot.try_into().expect("pixel is four bytes"),
+                                );
+                                let out = mix_pixel(dst, palette.selected_bg, cov);
+                                slot.copy_from_slice(&out.to_le_bytes());
+                            }
                         }
                     }
                 }
@@ -855,29 +891,35 @@ fn coverage_argb(color: u32, coverage: u8) -> u32 {
     (scale(24) << 24) | (scale(16) << 16) | (scale(8) << 8) | scale(0)
 }
 
+/// Composites one premultiplied-ARGB pixel over the canvas (src over
+/// dst). Full-alpha source replaces; anything else blends.
+fn over_pixel(canvas: &mut [u8], stride: u32, x: u32, y: u32, src: u32) {
+    let sa = src >> 24;
+    let index = y as usize * stride as usize + x as usize * 4;
+    let Some(slot) = canvas.get_mut(index..index + 4) else {
+        return;
+    };
+    if sa == 255 {
+        slot.copy_from_slice(&src.to_le_bytes());
+        return;
+    }
+    let dst = u32::from_le_bytes(slot.try_into().expect("pixel is four bytes"));
+    let out_a = sa + ((dst >> 24) * (255 - sa) + 127) / 255;
+    let blend = |sc: u32, dc: u32| -> u32 { sc + ((dc * (255 - sa) + 127) / 255) };
+    let out = (out_a << 24)
+        | (blend((src >> 16) & 0xFF, (dst >> 16) & 0xFF) << 16)
+        | (blend((src >> 8) & 0xFF, (dst >> 8) & 0xFF) << 8)
+        | blend(src & 0xFF, dst & 0xFF);
+    slot.copy_from_slice(&out.to_le_bytes());
+}
+
 /// Composites a premultiplied-ARGB bitmap 1:1 over the canvas at device
 /// coordinates (`src` over `dst`, both premultiplied at the boundary).
 fn blit_bitmap(canvas: &mut [u8], stride: u32, bitmap: &IconBitmap, x: u32, y: u32) {
     for py in 0..bitmap.side {
         for px in 0..bitmap.side {
             let src = bitmap.argb[(py * bitmap.side + px) as usize];
-            let sa = src >> 24;
-            let index = ((y + py) as usize) * stride as usize + ((x + px) as usize) * 4;
-            let Some(slot) = canvas.get_mut(index..index + 4) else {
-                continue;
-            };
-            if sa == 255 {
-                slot.copy_from_slice(&src.to_le_bytes());
-                continue;
-            }
-            let dst = u32::from_le_bytes(slot.try_into().expect("pixel is four bytes"));
-            let out_a = sa + ((dst >> 24) * (255 - sa) + 127) / 255;
-            let blend = |sc: u32, dc: u32| -> u32 { sc + ((dc * (255 - sa) + 127) / 255) };
-            let out = (out_a << 24)
-                | (blend((src >> 16) & 0xFF, (dst >> 16) & 0xFF) << 16)
-                | (blend((src >> 8) & 0xFF, (dst >> 8) & 0xFF) << 8)
-                | blend(src & 0xFF, dst & 0xFF);
-            slot.copy_from_slice(&out.to_le_bytes());
+            over_pixel(canvas, stride, x + px, y + py, src);
         }
     }
 }
@@ -888,6 +930,19 @@ fn put_pixel(canvas: &mut [u8], stride: u32, x: u32, y: u32, argb: u32) {
     if let Some(slot) = canvas.get_mut(index..index + 4) {
         slot.copy_from_slice(&argb.to_le_bytes());
     }
+}
+
+/// Interpolates one painted pixel toward `src` by `coverage`/255: the
+/// anti-aliasing ramp between two fills. Full coverage is the exact
+/// source color, zero coverage the untouched destination — and because
+/// both fills are near-opaque, the ramp never thins the card's alpha.
+fn mix_pixel(dst: u32, src: u32, coverage: u8) -> u32 {
+    let c = coverage as u32;
+    let mix = |sc: u32, dc: u32| (sc * c + dc * (255 - c) + 127) / 255;
+    (mix(src >> 24, dst >> 24) << 24)
+        | (mix((src >> 16) & 0xFF, (dst >> 16) & 0xFF) << 16)
+        | (mix((src >> 8) & 0xFF, (dst >> 8) & 0xFF) << 8)
+        | mix(src & 0xFF, dst & 0xFF)
 }
 
 /// Draws one 8×8 glyph in `text` color with `block` device pixels per
@@ -922,7 +977,8 @@ fn draw_glyph(
 
 /// Glyph bitmap for one character: ASCII printables come from [`FONT`],
 /// the ellipsis is [`ELLIPSIS_GLYPH`], typographic punctuation folds to
-/// its ASCII lookalike ([`fold_punct`]), everything else renders as `?`.
+/// its ASCII lookalike ([`fold_punct`]), everything else renders as `?`
+/// — the per-glyph backstop behind [`fold_title`]'s string-level fold.
 fn glyph(ch: char) -> [u8; 8] {
     match fold_punct(ch) {
         '…' => ELLIPSIS_GLYPH,
@@ -937,8 +993,9 @@ fn glyph(ch: char) -> [u8; 8] {
 /// punctuation, not as a row of `?` where a title's own separator went.
 /// At the 8×8 cell the fold is invisible — the ASCII glyph and a
 /// purpose-drawn one differ by pixels, not shape. Every fold is one char
-/// to one char, so column math is unchanged. Letters and other scripts
-/// still fall through to `?`: the honest floor of an ASCII font, stated
+/// to one char, so column math is unchanged. Letters fold at the string
+/// level in [`fold_title`]; whatever survives both folds falls through
+/// to `?` in [`glyph`] — the honest floor of an ASCII font, stated
 /// rather than papered over with lookalike letters.
 fn fold_punct(ch: char) -> char {
     match ch {
@@ -955,6 +1012,93 @@ fn fold_punct(ch: char) -> char {
         | '\u{3000}' => ' ',
         _ => ch,
     }
+}
+
+/// Latin Extended-A members whose canonical decomposition is an ASCII
+/// base plus a combining mark, as `(first, last, upper, lower)` — the
+/// block pairs upper/lower alternately from each entry's first, which
+/// handles `Ÿ`'s run of capitals at the top of the Z block (its `ÿ`
+/// lives in Latin-1, so `Ź` is odd-numbered). Strokes (`Đ Ħ Ł Ŧ`),
+/// ligatures (`Ĳ Œ`), and letterforms with no ASCII base (`ı ŉ ſ`) are
+/// out by construction: folding them would be invention, not
+/// decomposition.
+const LATIN_EXTENDED_A: &[(u32, u32, char, char)] = &[
+    (0x0100, 0x0105, 'A', 'a'),
+    (0x0106, 0x010D, 'C', 'c'),
+    (0x010E, 0x010F, 'D', 'd'),
+    (0x0112, 0x011B, 'E', 'e'),
+    (0x011C, 0x0123, 'G', 'g'),
+    (0x0124, 0x0125, 'H', 'h'),
+    (0x0128, 0x0130, 'I', 'i'),
+    (0x0134, 0x0135, 'J', 'j'),
+    (0x0136, 0x0137, 'K', 'k'),
+    (0x0139, 0x013E, 'L', 'l'),
+    (0x0143, 0x0148, 'N', 'n'),
+    (0x014C, 0x0151, 'O', 'o'),
+    (0x0154, 0x0159, 'R', 'r'),
+    (0x015A, 0x0161, 'S', 's'),
+    (0x0162, 0x0165, 'T', 't'),
+    (0x0168, 0x0173, 'U', 'u'),
+    (0x0174, 0x0175, 'W', 'w'),
+    (0x0176, 0x0178, 'Y', 'y'),
+    (0x0179, 0x017E, 'Z', 'z'),
+];
+
+/// The ASCII base of a precomposed Latin letter whose canonical
+/// decomposition is that base plus a combining mark: `é` → `e`. `None`
+/// for everything else, so [`fold_title`] passes it through untouched.
+fn fold_diacritic(ch: char) -> Option<char> {
+    let base = match ch {
+        // Latin-1 Supplement letters. `×` and `÷` are math signs, and
+        // `ß æ ð ø þ` have no ASCII base — all of them stay `?`.
+        'À'..='Å' => 'A',
+        'Ç' => 'C',
+        'È'..='Ë' => 'E',
+        'Ì'..='Ï' => 'I',
+        'Ñ' => 'N',
+        'Ò'..='Ö' => 'O',
+        'Ù'..='Ü' => 'U',
+        'Ý' => 'Y',
+        'à'..='å' => 'a',
+        'ç' => 'c',
+        'è'..='ë' => 'e',
+        'ì'..='ï' => 'i',
+        'ñ' => 'n',
+        'ò'..='ö' => 'o',
+        'ù'..='ü' => 'u',
+        'ý' | 'ÿ' => 'y',
+        _ => {
+            let cp = ch as u32;
+            let &(first, _, upper, lower) = LATIN_EXTENDED_A
+                .iter()
+                .find(|&&(first, last, _, _)| (first..=last).contains(&cp))?;
+            return Some(if (cp - first).is_multiple_of(2) {
+                upper
+            } else {
+                lower
+            });
+        }
+    };
+    Some(base)
+}
+
+/// Folds a display title onto the card's renderable text: precomposed
+/// Latin letters with an ASCII canonical base fold to it (`é` → `e`),
+/// combining marks are dropped so NFD decompositions fold too (a
+/// macOS-built `café.txt` reads `cafe.txt`), and [`fold_punct`] still
+/// handles punctuation per glyph. Runs before [`truncate_cols`], so the
+/// deleted marks never spend columns. Everything else — CJK, Cyrillic,
+/// stroke letters, ligatures — still falls through to `?` in
+/// [`glyph`]. The fold deletes a phonemic distinction: `café.txt` and
+/// `cafe.txt` render identically by decision, and that is documented
+/// degradation (README, the design skill), not fidelity.
+/// 2026-11-07 typeset pass, the critique's user-approved item.
+pub fn fold_title(title: &str) -> String {
+    title
+        .chars()
+        .filter(|ch| !matches!(u32::from(*ch), 0x0300..=0x036F))
+        .map(|ch| fold_diacritic(ch).unwrap_or(ch))
+        .collect()
 }
 
 /// The title shown for a toplevel: its title if non-blank, else its
@@ -2442,6 +2586,81 @@ mod tests {
         assert!(muted > 0, "the content row beside the dots keeps its hint");
     }
 
+    #[test]
+    fn selection_band_rounds_its_ends_like_the_card_corners() {
+        // The band is a row button: its own corners take the coverage
+        // ramp — card fill at the exact corner, a blend along the arc,
+        // exact fill from the first straight-edge pixel — composited
+        // over the card, so the ramp never thins the near-opaque fill.
+        let mut model = hit_model(3);
+        model.rows[1].selected = true;
+        let (canvas, stride) = rendered(&model, 2);
+        let palette = Palette::dark();
+        let band_top = (PAD_Y + ROW_H + ROW_GAP) * 2;
+        let band_x = SELECT_INSET * 2;
+        assert_eq!(
+            pixel(&canvas, stride, band_x, band_top),
+            palette.background,
+            "the band's own corner pixel stays card fill"
+        );
+        let ramp = pixel(&canvas, stride, band_x + 10, band_top); // logical x = 5, mid-arc
+        assert_ne!(ramp, palette.background, "the arc blends selection in");
+        assert_ne!(ramp, palette.selected_bg, "the arc is not full fill yet");
+        assert!(
+            ramp >> 24 >= palette.background >> 24,
+            "the coverage ramp never thins the card's own opacity"
+        );
+        assert_eq!(
+            pixel(&canvas, stride, band_x + BAND_RADIUS * 2, band_top),
+            palette.selected_bg,
+            "the first straight-edge pixel is exact fill"
+        );
+        assert_eq!(
+            pixel(&canvas, stride, band_x, band_top + ROW_H * 2 - 1),
+            palette.background,
+            "the band's bottom corner mirrors the top"
+        );
+    }
+
+    #[test]
+    fn continuation_dots_center_their_painted_glyph() {
+        // The `…` glyph paints TEXT_W wide, so its box centers on
+        // TEXT_W — centering on the font cell biased the ink 2 px right
+        // of the card's center line. The expected ink derives from the
+        // glyph's own set columns, not hardcoded positions.
+        let mut model = hit_model(3);
+        model.rows[0].handle = None; // the top continuation row
+        let (canvas, stride) = rendered(&model, 2);
+        let palette = Palette::dark();
+        let dots_x = (model.width - TEXT_W) / 2;
+        let block = TEXT_W * 2 / GLYPH_W; // device px per font pixel at scale 2
+        let mut ink: Vec<u32> = Vec::new();
+        for y in (PAD_Y * 2)..(PAD_Y + ROW_H) * 2 {
+            for x in 0..model.width * 2 {
+                if pixel(&canvas, stride, x, y) == palette.muted {
+                    ink.push(x);
+                }
+            }
+        }
+        assert!(!ink.is_empty(), "the dots row paints muted ink");
+        ink.sort_unstable();
+        ink.dedup();
+        // Set font columns of the ellipsis, mapped to device spans.
+        let cols: Vec<u32> = (0..8)
+            .filter(|col| ELLIPSIS_GLYPH[5] & (1 << col) != 0)
+            .collect();
+        assert_eq!(
+            ink[0],
+            dots_x * 2 + cols[0] * block,
+            "the leftmost dot opens the glyph box at its centered origin"
+        );
+        assert_eq!(
+            ink[ink.len() - 1],
+            dots_x * 2 + (cols[cols.len() - 1] + 1) * block - 1,
+            "the rightmost dot closes the glyph box at its centered origin"
+        );
+    }
+
     /// A plain `rows`-row model with the documented card rhythm, for
     /// hit-testing. Bands run PAD_Y + i·(ROW_H + ROW_GAP) … + ROW_H.
     fn hit_model(rows: usize) -> OverlayModel {
@@ -2465,8 +2684,9 @@ mod tests {
         let model = hit_model(3);
         let x = model.width as f64 / 2.0;
         // Mid-band of every row: PAD_Y top inset, ROW_H bands, ROW_GAP
-        // seams — 36/92/148 at the documented rhythm.
-        for (row, mid) in [(0usize, 36.0f64), (1, 92.0), (2, 148.0)] {
+        // seams — 40/96/152 at the documented rhythm (PAD_Y 16 doubles
+        // the row gap; the 11-07 layout pass).
+        for (row, mid) in [(0usize, 40.0f64), (1, 96.0), (2, 152.0)] {
             assert_eq!(model.row_at(x, mid, 1), Some(row), "mid of row {row}");
         }
         // The band's own boundaries belong to it: first pixel and last.
@@ -2482,10 +2702,10 @@ mod tests {
     fn row_at_returns_none_across_gap_seams() {
         let model = hit_model(3);
         let x = model.width as f64 / 2.0;
-        // The seam between rows 0 and 1 is [60, 68); between 1 and 2
-        // [116, 124). Selection bands never merge across a seam; neither
+        // The seam between rows 0 and 1 is [64, 72); between 1 and 2
+        // [120, 128). Selection bands never merge across a seam; neither
         // does a click land.
-        for y in [60.0f64, 64.0, 67.0, 116.0] {
+        for y in [64.0f64, 68.0, 71.0, 120.0] {
             assert_eq!(model.row_at(x, y, 1), None, "seam at y={y}");
         }
     }
@@ -2503,11 +2723,11 @@ mod tests {
         // Off the card entirely.
         assert_eq!(model.row_at(x, model.height as f64, 1), None);
         assert_eq!(model.row_at(x, -1.0, 1), None);
-        assert_eq!(model.row_at(-0.5, 36.0, 1), None);
-        assert_eq!(model.row_at(model.width as f64, 36.0, 1), None);
+        assert_eq!(model.row_at(-0.5, 40.0, 1), None);
+        assert_eq!(model.row_at(model.width as f64, 40.0, 1), None);
         // The last pixel columns are still the card.
         assert_eq!(
-            model.row_at(model.width as f64 - 0.5, 36.0, 1),
+            model.row_at(model.width as f64 - 0.5, 40.0, 1),
             Some(0),
             "just inside the right edge still hits"
         );
@@ -3298,9 +3518,60 @@ mod tests {
             );
         }
         // Only the table folds: everything else passes through — the
-        // ellipsis keeps its own glyph path, letters stay themselves.
+        // ellipsis keeps its own glyph path, letters stay themselves
+        // (the diacritic fold lives at the string level, `fold_title`).
         assert_eq!(fold_punct('…'), '…');
         assert_eq!(fold_punct('é'), 'é');
+    }
+
+    #[test]
+    fn latin_diacritics_fold_to_their_ascii_base_in_titles() {
+        // Precomposed and decomposed forms land on the same ASCII
+        // title; punctuation still rides the per-glyph table.
+        assert_eq!(fold_title("Résumé — naïve.txt"), "Resume — naive.txt");
+        assert_eq!(fold_title("Ångström.log"), "Angstrom.log");
+        // NFD marks are dropped, so a macOS-built title folds too —
+        // and the marks never spend columns for truncate_cols.
+        assert_eq!(fold_title("cafe\u{0301}.txt"), "cafe.txt");
+        assert_eq!(fold_title("cafe\u{0301}").chars().count(), 4);
+        // Letterforms with no ASCII base stay put; `glyph`'s `?` is
+        // still their honest floor. `Łódź` shows the mix: the stroke L
+        // survives, its neighbors fold.
+        assert_eq!(fold_title("Łódź"), "Łodz");
+        assert_eq!(fold_title("您好.txt"), "您好.txt");
+        for baseless in [
+            '×', '÷', 'ß', 'æ', 'ð', 'ø', 'þ', 'Đ', 'Ħ', 'Ł', 'ł', 'ı', 'ŉ', 'Ŋ', 'Œ', 'œ', 'Ŧ',
+            'ŧ', 'ſ',
+        ] {
+            assert_eq!(
+                fold_diacritic(baseless),
+                None,
+                "{baseless} has no ASCII base"
+            );
+        }
+    }
+
+    #[test]
+    fn the_latin_extended_table_is_exhaustive_and_canonical() {
+        // Asserted over the whole table, not a sample: each entry
+        // alternates upper/lower from its first codepoint, and every
+        // fold lands in printable ASCII, so a mangled entry cannot
+        // silently invent a letter or widen a column.
+        for &(first, last, upper, lower) in LATIN_EXTENDED_A {
+            for cp in first..=last {
+                let folded = fold_diacritic(char::from_u32(cp).expect("table codepoint"));
+                let expected = if (cp - first).is_multiple_of(2) {
+                    upper
+                } else {
+                    lower
+                };
+                assert_eq!(folded, Some(expected), "U+{cp:04X} must fold to {expected}");
+                assert!(
+                    folded.expect("checked above").is_ascii_alphabetic(),
+                    "U+{cp:04X} folds outside ASCII letters"
+                );
+            }
+        }
     }
 
     #[test]

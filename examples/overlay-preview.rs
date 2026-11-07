@@ -165,7 +165,9 @@ fn ui_icons(scale: u32, palette: &ui::Palette) -> Vec<Option<Rc<IconBitmap>>> {
 
 fn row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
     RowModel {
-        title: title.to_string(),
+        // The same fold the daemon applies in `build` — the preview
+        // shows what the card would actually render.
+        title: ui::fold_title(title),
         icon,
         selected,
         // Preview scenarios render no real window, so no handle to name —

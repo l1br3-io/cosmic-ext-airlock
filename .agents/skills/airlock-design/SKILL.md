@@ -109,11 +109,14 @@ Build to this floor without announcing it:
 - **Both wallpaper polarities pass.** Verify every color and contrast
   change on a light and a dark wallpaper, not just the one on screen.
 - **Degradation is honest.** Typographic punctuation (dashes, curly
-  quotes, Unicode spaces, `·`) folds onto its ASCII lookalike, so a
-  title's own separator never reads as `?`; non-ASCII *letters* still
+  quotes, Unicode spaces, `·`) folds onto its ASCII lookalike, and Latin
+  accents fold to their ASCII base letter (`é` → `e`, combining marks
+  dropped — a macOS-built `café.txt` reads `cafe.txt`). Both folds are
+  documented in the README, never silent: `café.txt` and `cafe.txt`
+  render identically by decision. Letters with no ASCII base still
   render as `?` — a CJK title reads as `?????`. If that's no longer
   acceptable, the fix is a font decision with its costs stated — never a
-  special case for one script, and never silent lookalike letters.
+  special case for one script.
 - **Shape the edges with data**: one row and fifteen; the 64-column
   truncated title and the empty one (falling back to `(untitled)`);
   selection at the top, middle, and bottom of the list.

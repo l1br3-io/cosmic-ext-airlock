@@ -3,6 +3,23 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
+## [Unreleased]
+
+### Changed
+
+- **Titles degrade less, stated the same**: Latin accents fold to their
+  base letter (`é` → `e`) and dropped combining marks no longer read as
+  `?` (a macOS-built `café.txt` shows `cafe.txt`). Punctuation folds as
+  before; anything with no ASCII form — CJK, Cyrillic, ligatures like
+  `æ` — still renders as `?`.
+
+### Fixed
+
+- The `…` overflow marker sits centered on the card again (it drifted
+  2 px right), and the selection band's ends round to match the card's
+  corners instead of ending as clipped stripes; the card edge now
+  breathes twice the row gap.
+
 ## [0.2.0] — 2026-11-07
 
 ### Added

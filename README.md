@@ -40,6 +40,10 @@ pipeline the COSMIC launcher uses) beside its title.
   list
 - **Ctrl+N** (1–9, keypad too) switches to the Nth window at once, like a
   click; each row shows its key
+- Titles render in a built-in ASCII pixel font: typographic punctuation
+  folds to its ASCII lookalike (`—` → `-`), Latin accents fold to their
+  base letter (`é` → `e`), and anything with no ASCII form — CJK,
+  Cyrillic, ligatures like `æ` — shows as `?`. Stated, not papered over.
 
 Preview the card without a COSMIC session:
 
