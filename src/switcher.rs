@@ -4,7 +4,7 @@
 //! translated into these plain types at the `wayland` boundary so all
 //! switching logic stays unit-testable without a compositor.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Opaque identifier for a toplevel, assigned by the wayland layer and stable
 /// for the daemon's connection lifetime.
@@ -225,6 +225,178 @@ impl Ring {
 
     pub fn is_empty(&self) -> bool {
         self.handles.is_empty()
+    }
+}
+
+/// A row's place in the grouped tree.
+//
+// The grouped-mode API lands unconsumed, the LV1/S1 precedent: dead in
+// the binary until the grouped overlay consumes it, exercised by the
+// tests here and public in the dev lib target — an `allow`, not an
+// `expect`, for exactly that reason (see `ui::Gesture::showing`).
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowKind {
+    /// A top-level row nothing nests under: a single-window app (the W3C
+    /// end-node rule — no chevron, no count) or an un-attributable
+    /// window, which never groups.
+    Leaf,
+    /// A multi-window app's top-level row, immediately followed by its
+    /// [`RowKind::Child`] rows.
+    Parent,
+    /// A window nested under the nearest preceding parent of its app.
+    Child,
+}
+
+/// One row of the grouped switcher list: the window the row commits to,
+/// plus its place in the app tree.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupedRow {
+    /// The window this row resolves to at commit time. A parent carries
+    /// its app's MRU-front eligible window — GNOME's `cachedWindows[0]`
+    /// semantics — so Alt-release on a parent row activates that window.
+    pub handle: Handle,
+    /// The app the row belongs to: the grouping key for parents and
+    /// children, empty for un-attributable top-level leaves.
+    pub app_id: String,
+    pub kind: RowKind,
+}
+
+/// The eligible list re-partitioned into an app → windows tree, flattened
+/// to the all-expanded row sequence: parent rows in MRU first-appearance
+/// order, each followed by its children in MRU order, top-level leaves at
+/// their own first-appearance positions. All parents expanded is the v1
+/// model — no collapse state exists, and the sequence freezes at open
+/// exactly as the flat list does.
+///
+/// Windows of `app` in [`eligible`] order, or the empty count it never
+/// gets: an empty app_id groups nothing (the [`app_anchor`] rule), so
+/// unattributable windows stay top-level leaf rows.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Grouping {
+    rows: Vec<GroupedRow>,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl Grouping {
+    /// Partitions [`eligible`]'s MRU list on `active` under `scope` into
+    /// the grouped row sequence.
+    pub fn new(toplevels: &[Toplevel], active: WorkspaceId, scope: Scope) -> Self {
+        let handles = eligible(toplevels, active, scope);
+        // App of each eligible handle, parallel to `handles`; empty for
+        // windows the compositor cannot attribute.
+        let apps: Vec<String> = handles
+            .iter()
+            .map(|&handle| {
+                toplevels
+                    .iter()
+                    .find(|t| t.handle == handle)
+                    .map_or_else(String::new, |t| t.app_id.clone())
+            })
+            .collect();
+        // Windows per app, empty app_ids excluded — they never count
+        // toward parenthood.
+        let mut windows_per_app: HashMap<&str, usize> = HashMap::new();
+        for app in &apps {
+            if !app.is_empty() {
+                *windows_per_app.entry(app.as_str()).or_default() += 1;
+            }
+        }
+        let mut emitted: HashSet<&str> = HashSet::new();
+        let mut rows = Vec::new();
+        for (&handle, app) in handles.iter().zip(&apps) {
+            if app.is_empty() || windows_per_app[app.as_str()] == 1 {
+                // An un-attributable window or a single-window app: a
+                // top-level leaf either way.
+                rows.push(GroupedRow {
+                    handle,
+                    app_id: app.clone(),
+                    kind: RowKind::Leaf,
+                });
+            } else if emitted.insert(app.as_str()) {
+                // First appearance fronts its app's block; the parent
+                // carries this, the MRU-front window. The app's other
+                // windows follow as children, MRU within the parent.
+                rows.push(GroupedRow {
+                    handle,
+                    app_id: app.clone(),
+                    kind: RowKind::Parent,
+                });
+                for (&sibling, sibling_app) in handles.iter().zip(&apps) {
+                    if sibling != handle && sibling_app == app {
+                        rows.push(GroupedRow {
+                            handle: sibling,
+                            app_id: app.clone(),
+                            kind: RowKind::Child,
+                        });
+                    }
+                }
+            }
+            // Any other window of an already-emitted app went out with
+            // its parent — nothing to push here.
+        }
+        Self { rows }
+    }
+
+    /// The flattened row sequence — parents each followed by their
+    /// children, top-level leaves at their own positions — the sequence
+    /// ↑/↓ stepping and the `rows` budget apply over.
+    pub fn rows(&self) -> &[GroupedRow] {
+        &self.rows
+    }
+
+    /// Index of the next [`RowKind::Parent`] row strictly after `from`,
+    /// wrapping past the end — Tab's step, skipping the current app's
+    /// children. `None` when no parent exists or `from` is out of range.
+    pub fn next_parent(&self, from: usize) -> Option<usize> {
+        let len = self.rows.len();
+        if from >= len {
+            return None;
+        }
+        (1..=len)
+            .map(|offset| (from + offset) % len)
+            .find(|&index| self.rows[index].kind == RowKind::Parent)
+    }
+
+    /// Index of the previous [`RowKind::Parent`] row strictly before
+    /// `from`, wrapping past the front — Shift+Tab's step. `None` when no
+    /// parent exists or `from` is out of range.
+    pub fn previous_parent(&self, from: usize) -> Option<usize> {
+        let len = self.rows.len();
+        if from >= len {
+            return None;
+        }
+        (1..=len)
+            .map(|offset| (from + len - offset) % len)
+            .find(|&index| self.rows[index].kind == RowKind::Parent)
+    }
+
+    /// Index of the parent row the child at `from` nests under — ←'s
+    /// exit-to-parent. `None` for parents, leaves, and out-of-range
+    /// positions: only a [`RowKind::Child`] has a parent, and children
+    /// sit contiguously under theirs, so the nearest preceding parent
+    /// row is the one.
+    pub fn parent_of(&self, child: usize) -> Option<usize> {
+        if self.rows.get(child)?.kind != RowKind::Child {
+            return None;
+        }
+        self.rows[..child]
+            .iter()
+            .rposition(|row| row.kind == RowKind::Parent)
+    }
+
+    /// Index of `parent`'s first child — the row right after it, since a
+    /// parent's children are contiguous — →'s enter. `None` for leaves
+    /// and out-of-range positions; a parent by construction always has
+    /// at least one child.
+    pub fn first_child(&self, parent: usize) -> Option<usize> {
+        if self.rows.get(parent)?.kind != RowKind::Parent {
+            return None;
+        }
+        let child = parent + 1;
+        (self.rows.get(child)?.kind == RowKind::Child).then_some(child)
     }
 }
 
@@ -678,5 +850,305 @@ mod tests {
         };
         assert!(!switchable(&snapshot, Handle(1), Scope::CurrentWorkspace));
         assert!(!switchable(&snapshot, Handle(1), Scope::All));
+    }
+
+    // --- Grouping ---------------------------------------------------------
+
+    /// Handles+app_ids of a grouped row sequence, in row order — the
+    /// shape contract asserted throughout the grouping tests.
+    fn shape(grouping: &Grouping) -> Vec<(RowKind, Handle)> {
+        grouping
+            .rows()
+            .iter()
+            .map(|row| (row.kind, row.handle))
+            .collect()
+    }
+
+    #[test]
+    fn grouped_partitions_multi_window_apps_into_parent_then_children() {
+        // MRU order: a1, b1, a2, c1, a3, b2. Parents appear in MRU
+        // first-appearance order (a, then b); children follow their
+        // parent MRU within the app; single-window c is a leaf.
+        let toplevels = vec![
+            app_window(1, "a", &[1], State::ACTIVATED, 30),
+            app_window(2, "b", &[1], State::default(), 25),
+            app_window(3, "a", &[1], State::default(), 20),
+            app_window(4, "c", &[1], State::default(), 15),
+            app_window(5, "a", &[1], State::default(), 10),
+            app_window(6, "b", &[1], State::default(), 5),
+        ];
+        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        assert_eq!(
+            shape(&grouping),
+            vec![
+                (RowKind::Parent, Handle(1)),
+                (RowKind::Child, Handle(3)),
+                (RowKind::Child, Handle(5)),
+                (RowKind::Parent, Handle(2)),
+                (RowKind::Child, Handle(6)),
+                (RowKind::Leaf, Handle(4)),
+            ]
+        );
+    }
+
+    #[test]
+    fn grouped_leaves_windows_the_compositor_cannot_attribute_top_level() {
+        // MRU: u1, a1, a2, u2. The empty app_ids never group — the
+        // `app_anchor` rule — so both stay top-level leaves at their own
+        // first-appearance positions; only a nests.
+        let toplevels = vec![
+            app_window(1, "", &[1], State::ACTIVATED, 40),
+            app_window(2, "a", &[1], State::default(), 30),
+            app_window(3, "a", &[1], State::default(), 20),
+            app_window(4, "", &[1], State::default(), 10),
+        ];
+        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        assert_eq!(
+            shape(&grouping),
+            vec![
+                (RowKind::Leaf, Handle(1)),
+                (RowKind::Parent, Handle(2)),
+                (RowKind::Child, Handle(3)),
+                (RowKind::Leaf, Handle(4)),
+            ]
+        );
+    }
+
+    #[test]
+    fn grouped_renders_single_window_apps_as_leaf_rows() {
+        // One window of `a`, one of `solo`: neither earns a parent row —
+        // the W3C end-node rule, no chevron and no count.
+        let toplevels = vec![
+            app_window(1, "a", &[1], State::ACTIVATED, 30),
+            app_window(2, "solo", &[1], State::default(), 20),
+        ];
+        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        assert_eq!(
+            shape(&grouping),
+            vec![(RowKind::Leaf, Handle(1)), (RowKind::Leaf, Handle(2))]
+        );
+    }
+
+    #[test]
+    fn a_parent_row_carries_its_apps_mru_front_window() {
+        // b's front window is handle 2 (MRU 25): committing the parent
+        // row activates it — GNOME's `cachedWindows[0]` semantics — not
+        // a later child.
+        let toplevels = vec![
+            app_window(1, "a", &[1], State::ACTIVATED, 30),
+            app_window(2, "b", &[1], State::default(), 25),
+            app_window(3, "b", &[1], State::default(), 20),
+        ];
+        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        let parent = &grouping.rows()[1];
+        assert_eq!(parent.kind, RowKind::Parent);
+        assert_eq!(parent.handle, Handle(2));
+        assert_eq!(parent.app_id, "b");
+    }
+
+    #[test]
+    fn grouped_children_break_mru_ties_by_snapshot_order() {
+        // a2 and a3 tie on last_activated; children keep snapshot order
+        // exactly as `eligible` does.
+        let toplevels = vec![
+            app_window(1, "a", &[1], State::ACTIVATED, 30),
+            app_window(2, "a", &[1], State::default(), 7),
+            app_window(3, "a", &[1], State::default(), 7),
+        ];
+        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        assert_eq!(
+            shape(&grouping),
+            vec![
+                (RowKind::Parent, Handle(1)),
+                (RowKind::Child, Handle(2)),
+                (RowKind::Child, Handle(3)),
+            ]
+        );
+    }
+
+    #[test]
+    fn grouped_partitions_follow_the_scope() {
+        // a spans workspaces 1 and 2, b lives on 2 alone: under the v1
+        // scope a's second window is out of view (one window, one leaf),
+        // under All it counts and a grows a parent+child block with b's
+        // leaf at its own first-appearance position.
+        let toplevels = vec![
+            app_window(1, "a", &[1], State::ACTIVATED, 30),
+            app_window(2, "a", &[2], State::default(), 20),
+            app_window(3, "b", &[2], State::default(), 25),
+        ];
+        let confined = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        assert_eq!(shape(&confined), vec![(RowKind::Leaf, Handle(1))]);
+        // All-scope MRU: a1, b, a2 — first appearance a then b.
+        let everywhere = Grouping::new(&toplevels, WorkspaceId(1), Scope::All);
+        assert_eq!(
+            shape(&everywhere),
+            vec![
+                (RowKind::Parent, Handle(1)),
+                (RowKind::Child, Handle(2)),
+                (RowKind::Leaf, Handle(3)),
+            ]
+        );
+    }
+
+    #[test]
+    fn grouped_on_an_empty_eligible_list_is_empty() {
+        let toplevels = vec![app_window(1, "a", &[2], State::default(), 30)];
+        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        assert!(grouping.rows().is_empty());
+    }
+
+    /// The grouped shape the walk tests step through: parent a + two
+    /// children, parent b + one child, single-window leaf c.
+    fn grouped_fixture() -> Grouping {
+        let toplevels = vec![
+            app_window(1, "a", &[1], State::ACTIVATED, 60),
+            app_window(2, "a", &[1], State::default(), 50),
+            app_window(3, "a", &[1], State::default(), 40),
+            app_window(4, "b", &[1], State::default(), 30),
+            app_window(5, "b", &[1], State::default(), 20),
+            app_window(6, "c", &[1], State::default(), 10),
+        ];
+        Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace)
+    }
+
+    #[test]
+    fn next_parent_from_a_parent_steps_past_its_own_children() {
+        // Tab from parent a lands on parent b, never back inside a's
+        // children.
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.next_parent(0), Some(3));
+    }
+
+    #[test]
+    fn next_parent_from_a_child_or_leaf_finds_the_following_parent() {
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.next_parent(2), Some(3), "last a-child → parent b");
+        assert_eq!(grouping.next_parent(5), Some(0), "trailing leaf wraps to a");
+    }
+
+    #[test]
+    fn next_parent_wraps_from_the_last_parent_to_the_first() {
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.next_parent(3), Some(0));
+    }
+
+    #[test]
+    fn next_parent_lands_only_on_parent_rows() {
+        let grouping = grouped_fixture();
+        for from in 0..grouping.rows().len() {
+            let next = grouping.next_parent(from).expect("fixture has parents");
+            assert_eq!(
+                grouping.rows()[next].kind,
+                RowKind::Parent,
+                "next_parent({from}) landed on a non-parent"
+            );
+        }
+    }
+
+    #[test]
+    fn previous_parent_wraps_from_the_first_parent_to_the_last() {
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.previous_parent(0), Some(3));
+    }
+
+    #[test]
+    fn previous_parent_from_a_child_or_leaf_finds_the_preceding_parent() {
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.previous_parent(4), Some(3), "b-child → parent b");
+        assert_eq!(
+            grouping.previous_parent(5),
+            Some(3),
+            "trailing leaf → parent b"
+        );
+        assert_eq!(grouping.previous_parent(1), Some(0), "a-child → parent a");
+    }
+
+    #[test]
+    fn previous_parent_lands_only_on_parent_rows() {
+        let grouping = grouped_fixture();
+        for from in 0..grouping.rows().len() {
+            let previous = grouping.previous_parent(from).expect("fixture has parents");
+            assert_eq!(
+                grouping.rows()[previous].kind,
+                RowKind::Parent,
+                "previous_parent({from}) landed on a non-parent"
+            );
+        }
+    }
+
+    #[test]
+    fn parent_walks_without_any_parents_are_none() {
+        // All leaves: two single-window apps and an un-attributable
+        // window — Tab has nowhere to step.
+        let toplevels = vec![
+            app_window(1, "a", &[1], State::ACTIVATED, 30),
+            app_window(2, "b", &[1], State::default(), 20),
+            app_window(3, "", &[1], State::default(), 10),
+        ];
+        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        assert_eq!(grouping.next_parent(0), None);
+        assert_eq!(grouping.previous_parent(0), None);
+    }
+
+    #[test]
+    fn parent_walks_from_out_of_range_positions_are_none() {
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.next_parent(99), None);
+        assert_eq!(grouping.previous_parent(99), None);
+    }
+
+    #[test]
+    fn parent_of_a_child_is_the_row_that_heads_its_block() {
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.parent_of(1), Some(0));
+        assert_eq!(grouping.parent_of(2), Some(0));
+        assert_eq!(grouping.parent_of(4), Some(3));
+    }
+
+    #[test]
+    fn parent_of_a_parent_or_leaf_is_none() {
+        // Only a child nests; parents and leaves are top-level.
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.parent_of(0), None);
+        assert_eq!(grouping.parent_of(3), None);
+        assert_eq!(grouping.parent_of(5), None);
+    }
+
+    #[test]
+    fn parent_of_an_out_of_range_position_is_none() {
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.parent_of(9), None);
+    }
+
+    #[test]
+    fn first_child_of_a_multi_window_parent_is_the_row_after_it() {
+        // A parent's children are contiguous, so its first child sits
+        // immediately below it — →'s target.
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.first_child(0), Some(1));
+        assert_eq!(grouping.first_child(3), Some(4));
+    }
+
+    #[test]
+    fn first_child_of_a_leaf_is_none() {
+        // The W3C end-node rule: → does nothing on a leaf.
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.first_child(5), None);
+    }
+
+    #[test]
+    fn first_child_of_an_out_of_range_position_is_none() {
+        let grouping = grouped_fixture();
+        assert_eq!(grouping.first_child(9), None);
+    }
+
+    #[test]
+    fn walks_on_an_empty_grouping_are_none() {
+        let grouping = Grouping::new(&[], WorkspaceId(1), Scope::CurrentWorkspace);
+        assert_eq!(grouping.next_parent(0), None);
+        assert_eq!(grouping.previous_parent(0), None);
+        assert_eq!(grouping.parent_of(0), None);
+        assert_eq!(grouping.first_child(0), None);
     }
 }
