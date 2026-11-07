@@ -736,6 +736,7 @@ fn locations_for(dir: &Path) -> Locations {
         custom: shortcuts.join("custom"),
         icon: data.join("icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg"),
         desktop: data.join("applications/io.github.l1br3-io.Airlock.desktop"),
+        config: dir.join("config/airlock/config.toml"),
     }
 }
 
@@ -800,6 +801,10 @@ fn run_at_creates_missing_config_dirs_on_fresh_install() {
         read_file(&locations.custom).contains(&format!("Spawn(\"{SAME_APP_CMD}\")")),
         "same-app not installed"
     );
+    assert!(
+        locations.config.is_file(),
+        "the starter config must appear on a fresh install"
+    );
 
     run_at(true, &locations).expect("uninstall");
     assert!(
@@ -809,6 +814,98 @@ fn run_at_creates_missing_config_dirs_on_fresh_install() {
     assert!(
         !locations.custom.exists(),
         "absent-file restore must delete the custom file"
+    );
+    assert!(
+        !locations.config.exists(),
+        "the unedited starter must leave with the rest"
+    );
+}
+
+// --- starter config ---
+
+#[test]
+fn the_starter_config_parses_to_the_defaults() {
+    // The starter may never change behavior: as shipped (all lines
+    // commented) it must parse to the same settings as no file at all.
+    let settings =
+        crate::settings::Settings::parse(DEFAULT_CONFIG).expect("the starter must be valid TOML");
+    assert_eq!(
+        settings,
+        crate::settings::Settings::default(),
+        "the starter changes behavior as shipped:\n{settings:?}"
+    );
+}
+
+#[test]
+fn install_writes_the_starter_config_when_absent() {
+    let dir = TempDir::new("config-fresh");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+
+    let report = run_at(false, &locations).expect("install");
+    assert_eq!(
+        fs::read(&locations.config).expect("starter written"),
+        DEFAULT_CONFIG
+    );
+    assert!(
+        report.contains("starter config"),
+        "report must name the starter: {report}"
+    );
+}
+
+#[test]
+fn install_never_touches_an_existing_config() {
+    let dir = TempDir::new("config-user");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+    let user_config = "rows = 5\n";
+    write_file(&locations.config, user_config);
+
+    let report = run_at(false, &locations).expect("install");
+    assert_eq!(
+        read_file(&locations.config),
+        user_config,
+        "an existing config is the user's, however it got there"
+    );
+    assert!(
+        report.contains("left untouched"),
+        "report must say the config was left alone: {report}"
+    );
+}
+
+#[test]
+fn uninstall_removes_the_starter_config() {
+    let dir = TempDir::new("config-undo");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+
+    run_at(false, &locations).expect("install");
+    run_at(true, &locations).expect("uninstall");
+    assert!(
+        !locations.config.exists(),
+        "a byte-identical starter is airlock's to remove"
+    );
+}
+
+#[test]
+fn uninstall_keeps_a_user_edited_config_and_names_it() {
+    let dir = TempDir::new("config-edited");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+
+    run_at(false, &locations).expect("install");
+    let edited = "theme = \"dark\"\n";
+    write_file(&locations.config, edited);
+
+    let report = run_at(true, &locations).expect("uninstall");
+    assert_eq!(
+        read_file(&locations.config),
+        edited,
+        "a hand-edited config is the user's now"
+    );
+    assert!(
+        report.contains(&locations.config.display().to_string()),
+        "report must name the kept file: {report}"
     );
 }
 

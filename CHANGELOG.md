@@ -5,6 +5,14 @@ observe, not internal mechanics.
 
 ## [Unreleased]
 
+### Added
+
+- **A starter config on install**: `airlock install` now drops a fully
+  commented `~/.config/airlock/config.toml` — every setting documented,
+  nothing enabled, so behavior is unchanged until you uncomment a line.
+  An existing config is never touched, and `--uninstall` removes the
+  starter only if you never edited it.
+
 ### Changed
 
 - **Titles degrade less, stated the same**: Latin accents fold to their

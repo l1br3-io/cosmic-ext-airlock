@@ -6,9 +6,10 @@
 //! state back byte-exactly.
 //!
 //! Boundary (spec): the only files this module may ever write are the
-//! user's `system_actions` and `custom` shortcuts files, plus exactly
+//! user's `system_actions` and `custom` shortcuts files, exactly
 //! two asset files under the user's data dir — the embedded app icon
-//! and desktop entry. The pre-install
+//! and desktop entry — and the starter config under the user's config
+//! dir, written only when no config exists yet. The pre-install
 //! state is therefore recorded *inside* those files as leading
 //! `// airlock-v1` comment markers — one per switcher key, plus one
 //! `custom=absent-file` marker when install creates the `custom` file —
@@ -18,7 +19,10 @@
 //! holds is skipped with a diagnostic naming the key and the way out.
 //! Assets are removed on uninstall only while their bytes still match
 //! what install wrote — a hand-edited file is the user's now, kept and
-//! named in the report.
+//! named in the report. The config is stricter still: install never
+//! rewrites it (a file that exists is the user's, however it got
+//! there), and uninstall removes it under the same bytes-still-match
+//! rule as the assets.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,6 +53,10 @@ const ICON_SVG: &[u8] =
     include_bytes!("../res/icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg");
 /// The desktop entry, embedded alongside the icon.
 const DESKTOP_ENTRY: &[u8] = include_bytes!("../res/io.github.l1br3-io.Airlock.desktop");
+/// The commented starter config. Every setting line ships commented out,
+/// so the file as written parses to the same defaults as no file at all;
+/// it exists so a fresh install surfaces where settings live.
+const DEFAULT_CONFIG: &[u8] = include_bytes!("../res/config.toml");
 
 /// The files install works with.
 pub struct Locations {
@@ -63,6 +71,9 @@ pub struct Locations {
     pub icon: PathBuf,
     /// User-level desktop entry: [`DESKTOP_ENTRY`]'s destination.
     pub desktop: PathBuf,
+    /// The starter config's path: [`DEFAULT_CONFIG`]'s destination, written
+    /// only while absent.
+    pub config: PathBuf,
 }
 
 /// What uninstall did to the user file.
@@ -108,7 +119,8 @@ pub fn run_at(uninstall: bool, locations: &Locations) -> Result<String, String> 
     let actions = manage_system_actions(uninstall, locations)?;
     let custom = manage_custom(uninstall, locations)?;
     let assets = manage_assets(uninstall, locations)?;
-    Ok(format!("{actions}\n{custom}\n{assets}"))
+    let config = manage_config(uninstall, locations)?;
+    Ok(format!("{actions}\n{custom}\n{assets}\n{config}"))
 }
 
 /// Installs or uninstalls the `system_actions` takeover at
@@ -311,6 +323,70 @@ fn manage_assets(uninstall: bool, locations: &Locations) -> Result<String, Strin
     ))
 }
 
+/// Places or removes the starter config at [`Locations::config`].
+///
+/// Unlike the assets, install never rewrites it: a config that exists is
+/// the user's, however it got there, and is only named in the report.
+/// Uninstall mirrors the asset rule — removed only while the bytes still
+/// match [`DEFAULT_CONFIG`]; a hand-edited file is kept and named.
+///
+/// # Errors
+///
+/// Returns a human-readable diagnostic when the file can't be read,
+/// written, or removed.
+fn manage_config(uninstall: bool, locations: &Locations) -> Result<String, String> {
+    if uninstall {
+        return match fs::read(&locations.config) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok("nothing to uninstall: no starter config present".to_string())
+            }
+            Err(error) => Err(format!(
+                "cannot read {}: {error}",
+                locations.config.display()
+            )),
+            Ok(bytes) if bytes == DEFAULT_CONFIG => {
+                fs::remove_file(&locations.config).map_err(|error| {
+                    format!("cannot remove {}: {error}", locations.config.display())
+                })?;
+                Ok(format!(
+                    "removed starter config {}",
+                    locations.config.display()
+                ))
+            }
+            Ok(_) => Ok(format!(
+                "kept config {} — it differs from the starter airlock writes \
+                 (edited by hand?); remove it yourself if you want",
+                locations.config.display()
+            )),
+        };
+    }
+    match fs::metadata(&locations.config) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "cannot read {}: {error}",
+                locations.config.display()
+            ));
+        }
+        Ok(_) => {
+            return Ok(format!(
+                "starter config: {} left untouched (already present)",
+                locations.config.display()
+            ));
+        }
+    }
+    if let Some(dir) = locations.config.parent() {
+        fs::create_dir_all(dir)
+            .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
+    }
+    write_atomic(&locations.config, DEFAULT_CONFIG)?;
+    Ok(format!(
+        "starter config: wrote a commented {} — uncomment to customize; \
+         deleting it entirely also means defaults",
+        locations.config.display()
+    ))
+}
+
 /// Resolves the real [`Locations`]: the XDG config and data base
 /// directories, plus the fixed system default path.
 ///
@@ -330,6 +406,7 @@ fn default_locations() -> Result<Locations, String> {
         custom: config.join("cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom"),
         icon: data.join("icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg"),
         desktop: data.join("applications/io.github.l1br3-io.Airlock.desktop"),
+        config: config.join("airlock/config.toml"),
     })
 }
 

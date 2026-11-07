@@ -7,8 +7,11 @@ while workspaces without an entry stay isolated exactly as before. The
 same file also picks the switcher's card color — light, dark, or
 following the desktop — and how many windows the card keeps in view.
 
-Airlock reads the file; you write it. Airlock never creates, renames, or
-rearranges workspaces — names and positions come from COSMIC itself.
+Airlock reads the file; you edit it. `airlock install` drops a starter
+copy at the path below — every setting commented out, so it means the
+defaults until you uncomment something. Airlock never rewrites it after
+that, and never creates, renames, or rearranges workspaces — names and
+positions come from COSMIC itself.
 
 ## The file
 
@@ -18,8 +21,9 @@ rearranges workspaces — names and positions come from COSMIC itself.
 
 More precisely: `airlock/config.toml` under an absolute `$XDG_CONFIG_HOME`
 when one is set, else under `$HOME/.config` — the same rule the installer
-uses. No file (or an empty one) means every workspace isolated: the
-default behavior, nothing to configure.
+uses. No file, an empty one, or the all-commented starter all mean the
+same thing: every workspace isolated, the default behavior, nothing to
+configure.
 
 ## Example
 

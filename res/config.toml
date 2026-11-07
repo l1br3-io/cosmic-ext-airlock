@@ -1,0 +1,20 @@
+# Airlock settings. Read on every Alt+Tab — edits apply on the next
+# press, no restart. As shipped, every line is commented out: that means
+# the defaults. Uncomment what you want to change.
+# Full reference: docs/settings.md in the source checkout, or
+# https://github.com/l1br3-io/cosmic-ext-airlock
+
+# theme = "auto"      # card color: "auto" (match the desktop), "dark", "light"
+# rows = 8            # windows the card keeps in view on a long list: 3–10
+
+# grouping = false    # true: group the list by app — a tree view whose
+#                     # parents step with Tab
+
+# Rules below opt a workspace OUT of isolation. Workspaces without an
+# entry keep the default: Alt+Tab sees only that workspace's windows.
+#
+# [[workspace]]
+# name = "code"       # a workspace COSMIC reports with exactly this name — or:
+# index = 2           # the 2nd workspace in COSMIC's order, named or not
+#                     # (name or index, never both)
+# isolated = false    # false: Alt+Tab here cycles every window, MRU

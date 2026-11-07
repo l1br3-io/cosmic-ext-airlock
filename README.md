@@ -76,13 +76,16 @@ compositor the daemon exits with a diagnostic naming the missing protocol.
 cargo install cosmic-ext-airlock   # from crates.io → ~/.cargo/bin/airlock
 airlock install                    # the complete setup: keybind takeover
                                     # + app icon & desktop entry (user level)
+                                    # + commented starter config
 ```
 
 From a checkout, `just install` checks the build prerequisites (C toolchain,
 pkg-config, Wayland/xkbcommon headers, cargo) and installs missing ones
 through the distro's package manager and rustup. Assets ride the binary:
 `airlock install` writes the icon and desktop entry into `~/.local/share`,
-never `/usr/share`.
+never `/usr/share`, and drops a commented starter at
+`~/.config/airlock/config.toml` — only when no config is there yet; one
+that exists is yours ([settings](docs/settings.md)).
 
 The takeover touches only user-level files in
 `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1`:
@@ -98,14 +101,15 @@ The takeover touches only user-level files in
 
 ```sh
 airlock install --uninstall   # restore the previous switcher and remove
-                              # the app icon + desktop entry
+                              # the app icon, desktop entry, and unedited
+                              # starter config
 cargo uninstall cosmic-ext-airlock   # optional: remove the binary
 ```
 
 - Backups live inside the config files; the pre-install state returns
   byte-for-byte
-- An asset file you edited by hand is kept and named, never silently
-  deleted
+- An asset file — or the config — you edited by hand is kept and named,
+  never silently deleted
 - The ignore rule is per key: a slot running some other tool is never
   rewritten
 - One degradation: if cosmic-settings has stripped the backup markers,
