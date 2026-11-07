@@ -147,9 +147,38 @@ pub const HINT_COLS: u32 = 6; // len("Ctrl+9")
 pub const TREE_INDENT: u32 = 16;
 
 /// Title-band columns reserved after a parent row's title for the
-/// `×N` window-count badge (`N` up to two digits). Candidate value:
-/// the GR4 preview sheet freezes it (the LV3 pattern).
-pub const BADGE_COLS: u32 = 3;
+/// count chip: a two-digit chip (2 × `TEXT_W` + 2 × [`BADGE_PAD_X`])
+/// plus its [`BADGE_GAP`] clearing fits with columns to spare.
+/// Re-pinned 2026-11-08 (owner, in-thread) when the muted `×N` text
+/// became the chip — the budget widened from 3 columns so the chip
+/// always shows beside even a max-length title.
+pub const BADGE_COLS: u32 = 4;
+
+/// The count chip's geometry, logical px: height on the 8-grid (two
+/// steps), horizontal padding around the digit, the clearing between
+/// title end and chip, and the corner radius — half the height, the
+/// pill the selection band's [`BAND_RADIUS`] rounding already
+/// established. The chip fills with the text color and cuts its digit
+/// in the card's own background: the palette's pair, so it reads on
+/// both polarities without a new color.
+pub const BADGE_H: u32 = 16;
+/// See [`BADGE_H`]: horizontal padding around the digit, logical px.
+pub const BADGE_PAD_X: u32 = 4;
+/// See [`BADGE_H`]: clearing between the title's last column and the
+/// chip, logical px — one 8-grid step.
+pub const BADGE_GAP: u32 = 8;
+/// See [`BADGE_H`]: corner radius — half the height, a full pill.
+pub const BADGE_RADIUS: u32 = 8;
+
+/// The disclosure chevron's draw scale: the 8×8 solid-triangle glyphs
+/// paint at 2× = 16 logical px — exactly the [`HINT_GAP`] column the
+/// chevron owns — centered on the row's midline, in the full text
+/// color. Re-pinned 2026-11-08 (owner, in-thread): the muted `>`/`v`
+/// text glyphs were not noticeable; a solid triangle is the disclosure
+/// vocabulary the icon rows already speak (the [`WINDOW_GLYPH`]
+/// family), and 16 px holds its weight beside 12-px text without
+/// competing with the 32-px icons.
+pub const CHEVRON_SCALE: u32 = 2;
 
 /// Windows the card keeps in view on a long list when the config sets
 /// no `rows` — the setting's default. The budget counts *windows*, not
@@ -405,6 +434,16 @@ const ELLIPSIS_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x2A, 0x00]
 /// baseline.
 const MIDDLE_DOT_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00];
 
+/// Solid disclosure triangle, collapsed (points right) — the grouped
+/// parent's expansion mark, drawn at [`CHEVRON_SCALE`] in the text
+/// color. Solid, not a stroked `>`: the mark must read as structure at
+/// a glance, which is weight, not line art.
+const CHEVRON_RIGHT_GLYPH: [u8; 8] = [0x00, 0x06, 0x1E, 0x7E, 0x7E, 0x1E, 0x06, 0x00];
+
+/// Solid disclosure triangle, expanded (points down) — the right
+/// glyph rotated a quarter turn.
+const CHEVRON_DOWN_GLYPH: [u8; 8] = [0x00, 0x7E, 0x7E, 0x3C, 0x3C, 0x18, 0x18, 0x00];
+
 /// The number chord a row advertises in its hint band — the single
 /// source of "which N selects this row" for both the renderer (the
 /// painted label) and the input map (the wired key): Ctrl+N addresses
@@ -465,16 +504,17 @@ pub struct RowModel {
     /// flat row. Drives the child indent, the parent's badge and
     /// chevron, and nothing else — input addressing reads `handle`.
     pub kind: RowKind,
-    /// On a parent row, the app's window count the badge shows
-    /// (`×N`); zero everywhere else.
+    /// On a parent row, the app's window count the chip shows; zero
+    /// everywhere else.
     pub count: usize,
     /// The number chord the hint band paints for this row; `None` on
     /// continuation rows and rows past nine (see [`RowHint`]). Set by
     /// the model builders — the position-to-chord rule is theirs, the
     /// render and the input map only read it.
     pub hint: Option<RowHint>,
-    /// A parent row's expansion state — the chevron's collapsed `>` /
-    /// expanded `v` shape. Meaningless on every other kind.
+    /// A parent row's expansion state — the disclosure triangle's
+    /// right (collapsed) / down (expanded) direction. Meaningless on
+    /// every other kind.
     pub expanded: bool,
 }
 
@@ -995,39 +1035,92 @@ pub fn render(
             );
             lx += TEXT_W;
         }
-        // Parent badge and chevron (candidate treatments; the GR4
-        // preview sheet freezes both): the app's window count rides
-        // after the title in the muted derivation — `x3`, ASCII-stated
-        // like every other glyph — and the chevron states the expansion
-        // in the hint gap the card already reserves: `>` collapsed,
-        // `v` expanded. Leaves and children earn neither.
+        // Parent count chip and disclosure chevron — re-pinned
+        // 2026-11-08 (owner, in-thread) for prominence after the muted
+        // `x3` text and `>`/`v` glyphs proved unnoticeable. The chip is
+        // a pill filled with the text color, the bare window count cut
+        // out in the card's own background — the palette's pair, so it
+        // reads on both polarities with no new color — one BADGE_GAP
+        // clear of the title, inside the BADGE_COLS budget the model
+        // reserves for it (the fit guard is defense in depth, the
+        // title guard's precedent). The chevron is a solid triangle in
+        // the same full text color — right when collapsed, down when
+        // expanded — CHEVRON_SCALE-sized on the row's midline, in the
+        // hint-gap column every card already reserves. Leaves and
+        // children earn neither.
         if row.kind == RowKind::Parent {
-            let badge = format!("x{}", row.count);
-            for ch in badge.chars().take(BADGE_COLS as usize) {
-                if lx + TEXT_W > title_edge {
-                    break;
+            let digits: Vec<char> = row.count.to_string().chars().take(2).collect();
+            let chip_w = digits.len() as u32 * TEXT_W + 2 * BADGE_PAD_X;
+            let chip_x = lx + BADGE_GAP;
+            let chip_y = top + (ROW_H - BADGE_H) / 2;
+            if chip_x + chip_w <= title_edge {
+                // The pill: exact rounded-rect coverage, the same
+                // sampler as the selection band and the card corners —
+                // full coverage is the exact text color over whatever
+                // sits beneath (band or card).
+                for ly in chip_y..chip_y + BADGE_H {
+                    for dy in 0..scale {
+                        let y = ly * scale + dy;
+                        for cx in chip_x..chip_x + chip_w {
+                            let cov = shape_cov(
+                                cx - chip_x,
+                                ly - chip_y,
+                                chip_w,
+                                BADGE_H,
+                                BADGE_RADIUS,
+                                0,
+                            );
+                            if cov == 0 {
+                                continue;
+                            }
+                            let x0 = cx * scale;
+                            for x in x0..x0 + scale {
+                                let index = y as usize * stride as usize + x as usize * 4;
+                                if let Some(slot) = canvas.get_mut(index..index + 4) {
+                                    let dst = u32::from_le_bytes(
+                                        slot.try_into().expect("pixel is four bytes"),
+                                    );
+                                    let out = mix_pixel(dst, palette.text, cov);
+                                    slot.copy_from_slice(&out.to_le_bytes());
+                                }
+                            }
+                        }
+                    }
                 }
-                draw_glyph(
-                    canvas,
-                    stride,
-                    glyph(ch),
-                    lx * scale,
-                    text_y * scale,
-                    TEXT_W * scale / GLYPH_W,
-                    palette.muted,
-                );
-                lx += TEXT_W;
+                // The count digit, centered in the chip and cut out in
+                // the card's own background.
+                let digit_x = chip_x + (chip_w - digits.len() as u32 * TEXT_W) / 2;
+                let digit_y = chip_y + (BADGE_H - TEXT_H) / 2;
+                let mut dx = digit_x;
+                for ch in digits {
+                    draw_glyph(
+                        canvas,
+                        stride,
+                        glyph(ch),
+                        dx * scale,
+                        digit_y * scale,
+                        TEXT_W * scale / GLYPH_W,
+                        palette.background,
+                    );
+                    dx += TEXT_W;
+                }
             }
-            let chevron = if row.expanded { 'v' } else { '>' };
-            let chevron_x = title_edge + (HINT_GAP - TEXT_W) / 2;
+            let chevron = if row.expanded {
+                CHEVRON_DOWN_GLYPH
+            } else {
+                CHEVRON_RIGHT_GLYPH
+            };
+            let side = GLYPH_W * CHEVRON_SCALE;
+            let chevron_x = title_edge + (HINT_GAP - side) / 2;
+            let chevron_y = top + (ROW_H - side) / 2;
             draw_glyph(
                 canvas,
                 stride,
-                glyph(chevron),
+                chevron,
                 chevron_x * scale,
-                text_y * scale,
-                TEXT_W * scale / GLYPH_W,
-                palette.muted,
+                chevron_y * scale,
+                CHEVRON_SCALE * scale,
+                palette.text,
             );
         }
         // Hint: the row's own number chord, right-aligned in the band
@@ -3013,6 +3106,133 @@ mod tests {
         assert_eq!(
             pixel(&canvas, stride, (glyph_x + TREE_INDENT) * 2, child_y * 2),
             COLOR_TEXT
+        );
+    }
+
+    #[test]
+    fn render_draws_a_solid_chevron_at_full_strength() {
+        // The owner's 2026-11-08 prominence re-pin: the disclosure mark
+        // is a solid triangle in the text color — full strength, not
+        // the hints' muted derivation — CHEVRON_SCALE-sized on the
+        // row's midline in the hint-gap column it already owned.
+        // Collapsed points right, expanded points down; a leaf paints
+        // nothing there.
+        let collapsed =
+            build_grouped(&grouped_snap(), 3, &[], true).expect("eligible windows exist");
+        let (canvas, stride) = rendered(&collapsed, 2);
+        let side = GLYPH_W * CHEVRON_SCALE;
+        let chev_x = collapsed.width - PAD_X - HINT_GAP - HINT_COLS * TEXT_W;
+        let chev_y = PAD_Y + (ROW_H - side) / 2;
+        // Font pixel (col, row) of the chevron cell, in device px.
+        let mark = |col: u32, row: u32| {
+            (
+                (chev_x + col * CHEVRON_SCALE) * 2,
+                (chev_y + row * CHEVRON_SCALE) * 2,
+            )
+        };
+        // The right-pointing wedge: solid along the widest rows from
+        // column 1 (full strength reads as COLOR_TEXT exactly, never
+        // the hints' muted blend), card at the top-right corner.
+        let (x, y) = mark(1, 3);
+        assert_eq!(
+            pixel(&canvas, stride, x, y),
+            COLOR_TEXT,
+            "collapsed: solid at the widest row's left edge"
+        );
+        let (x, y) = mark(6, 3);
+        assert_eq!(
+            pixel(&canvas, stride, x, y),
+            COLOR_TEXT,
+            "collapsed: solid at the widest row's point"
+        );
+        let (x, y) = mark(6, 1);
+        assert_eq!(
+            pixel(&canvas, stride, x, y),
+            COLOR_BACKGROUND,
+            "collapsed: the top-right corner of the cell stays card"
+        );
+        // A leaf earns no chevron: the whole cell is card.
+        let (x, y) = (mark(1, 3).0, mark(1, 3).1 + 2 * (ROW_H + ROW_GAP) * 2);
+        assert_eq!(
+            pixel(&canvas, stride, x, y),
+            COLOR_BACKGROUND,
+            "a leaf paints nothing in the chevron column"
+        );
+
+        // Expanded: the wedge points down — solid at the bottom point
+        // and along the full top edge, card where the right-pointing
+        // shape had its own ink and vice versa.
+        let expanded =
+            build_grouped(&grouped_snap(), 3, &["app.a"], true).expect("eligible windows exist");
+        let (canvas, stride) = rendered(&expanded, 2);
+        let (x, y) = mark(3, 6);
+        assert_eq!(
+            pixel(&canvas, stride, x, y),
+            COLOR_TEXT,
+            "expanded: solid at the down-point's row"
+        );
+        let (x, y) = mark(1, 1);
+        assert_eq!(
+            pixel(&canvas, stride, x, y),
+            COLOR_TEXT,
+            "expanded: solid along the full top edge"
+        );
+        let (x, y) = mark(1, 3);
+        assert_eq!(
+            pixel(&canvas, stride, x, y),
+            COLOR_BACKGROUND,
+            "expanded: the mid-height taper keeps the card where the right wedge was solid"
+        );
+    }
+
+    #[test]
+    fn render_paints_the_count_chip_after_the_title() {
+        // The badge is a chip: a pill filled with the text color, the
+        // bare window count digit cut out in the card's own background
+        // — the palette's pair, so it reads on both polarities — a
+        // BADGE_GAP clear of the title, inside the BADGE_COLS budget
+        // the model reserves. No `x` prefix: the shape carries
+        // "count" (the accessory this re-pin removes).
+        let model = build_grouped(&grouped_snap(), 3, &[], true).expect("eligible windows exist");
+        let (canvas, stride) = rendered(&model, 2);
+        let title_end = PAD_X + ICON + ICON_GAP + "app.a".chars().count() as u32 * TEXT_W;
+        let chip_x = title_end + BADGE_GAP;
+        let chip_y = PAD_Y + (ROW_H - BADGE_H) / 2;
+        let digits = 1; // the fixture's app.a holds two windows
+        let chip_w = digits * TEXT_W + 2 * BADGE_PAD_X;
+        let mut fill = 0;
+        let mut cut = 0;
+        for y in chip_y * 2..(chip_y + BADGE_H) * 2 {
+            for x in chip_x * 2..(chip_x + chip_w) * 2 {
+                match pixel(&canvas, stride, x, y) {
+                    COLOR_TEXT => fill += 1,
+                    COLOR_BACKGROUND => cut += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert!(
+            fill > 8 * BADGE_H,
+            "the chip paints a solid pill ({fill} px)"
+        );
+        assert!(
+            cut > 2 * TEXT_W,
+            "the digit cuts through the fill in the card color ({cut} px)"
+        );
+        // The chip never crosses the title band's edge: the pixel just
+        // past the reserved budget stays card.
+        let edge = model.width - PAD_X - HINT_GAP - HINT_COLS * TEXT_W;
+        let budget_end = title_end + BADGE_COLS * TEXT_W;
+        assert!(budget_end <= edge);
+        assert_eq!(
+            pixel(
+                &canvas,
+                stride,
+                (chip_x + chip_w) * 2,
+                (chip_y + BADGE_H / 2) * 2
+            ),
+            COLOR_BACKGROUND,
+            "the chip ends inside its budget"
         );
     }
 

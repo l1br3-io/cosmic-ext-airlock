@@ -21,7 +21,9 @@ observe, not internal mechanics.
   state persists across gestures. ↑/↓ and the mouse wheel walk the
   visible rows linearly; Ctrl+N activates an app entry's window,
   Alt+N a group's Nth window, both instantly. A lone app's windows
-  are entered and cycled instead of dead-keying the step. See
+  are entered and cycled instead of dead-keying the step. An entry's
+  structure reads at a glance: a solid disclosure triangle (right =
+  collapsed, down = expanded) and a count chip beside its title. See
   docs/settings.md — Grouping.
 - **A starter config on install**: `airlock install` now drops a fully
   commented `~/.config/airlock/config.toml` — every setting documented,
