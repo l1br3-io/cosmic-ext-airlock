@@ -359,3 +359,15 @@ vm-restore name:
 [group('vm')]
 vm-status:
 	VM_NAME={{vm-name}} VM_USER={{vm-user}} scripts/vm.sh status
+
+# --- Site (GitHub Pages; site module) ---
+
+# Link/asset integrity gate for site/: every local href/src resolves
+# inside site/, anchors exist on their target page, imgs carry
+# alt/width/height, and assets stay self-contained. The commit gate for
+# anything touching site/ — silent on success, loud on breakage.
+site-check: (quietly "python3 scripts/check-site-links.py site")
+
+# Serve site/ at http://localhost:8080 for local preview (Ctrl+C stops).
+site-preview:
+    python3 -m http.server -d site 8080
