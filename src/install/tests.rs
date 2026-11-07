@@ -837,6 +837,22 @@ fn the_starter_config_parses_to_the_defaults() {
 }
 
 #[test]
+fn the_starter_documents_the_real_defaults_and_bounds() {
+    // The starter's commented literals must track the constants: a
+    // re-pin of DEFAULT_ROWS or either ROWS bound touches this test,
+    // the same tripwire settings.rs keeps on its diagnostic text.
+    let text = std::str::from_utf8(DEFAULT_CONFIG).expect("starter is UTF-8");
+    assert!(
+        text.contains(&format!("# rows = {}", crate::ui::DEFAULT_ROWS)),
+        "starter must document the default rows:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("{}–{}", crate::ui::ROWS_MIN, crate::ui::ROWS_MAX)),
+        "starter must document the accepted rows range:\n{text}"
+    );
+}
+
+#[test]
 fn install_writes_the_starter_config_when_absent() {
     let dir = TempDir::new("config-fresh");
     let locations = locations_for(dir.path());
@@ -848,8 +864,8 @@ fn install_writes_the_starter_config_when_absent() {
         DEFAULT_CONFIG
     );
     assert!(
-        report.contains("starter config"),
-        "report must name the starter: {report}"
+        report.contains("starter config: wrote"),
+        "report must say the starter was written: {report}"
     );
 }
 
@@ -880,10 +896,27 @@ fn uninstall_removes_the_starter_config() {
     write_file(&locations.system_default, SYSTEM_DEFAULT);
 
     run_at(false, &locations).expect("install");
-    run_at(true, &locations).expect("uninstall");
+    let report = run_at(true, &locations).expect("uninstall");
     assert!(
         !locations.config.exists(),
         "a byte-identical starter is airlock's to remove"
+    );
+    assert!(
+        report.contains("removed starter config") && !report.contains("kept config"),
+        "report must say removed, not kept: {report}"
+    );
+}
+
+#[test]
+fn uninstall_absent_config_reports_nothing_to_uninstall() {
+    let dir = TempDir::new("config-absent");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+
+    let report = run_at(true, &locations).expect("uninstall report");
+    assert!(
+        report.contains("nothing to uninstall: no starter config present"),
+        "the absent-config line must be pinned verbatim: {report}"
     );
 }
 
