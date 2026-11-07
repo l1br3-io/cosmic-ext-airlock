@@ -53,6 +53,10 @@ pub struct Settings {
     /// Windows the card keeps in view on a long list; missing key =
     /// [`ui::DEFAULT_ROWS`], accepted `ui::ROWS_MIN..=ui::ROWS_MAX`.
     pub rows: usize,
+    /// Whether the switcher groups its list by app — the tree view with
+    /// parents, children, and Tab stepping apps; missing key = `false`,
+    /// the flat list, so the no-config card is unchanged.
+    pub grouping: bool,
     pub workspaces: Vec<WorkspaceRule>,
 }
 
@@ -61,6 +65,7 @@ impl Default for Settings {
         Settings {
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
+            grouping: false,
             workspaces: Vec::new(),
         }
     }
@@ -174,10 +179,17 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
                 })?
         }
     };
+    let grouping = match root.get("grouping") {
+        None => false,
+        Some(value) => value.as_bool().ok_or(SettingsError::InvalidFile {
+            problem: "`grouping` must be a boolean",
+        })?,
+    };
     let Some(entries) = root.get("workspace") else {
         return Ok(Settings {
             theme,
             rows,
+            grouping,
             ..Settings::default()
         });
     };
@@ -194,6 +206,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
     Ok(Settings {
         theme,
         rows,
+        grouping,
         workspaces,
     })
 }
@@ -469,6 +482,7 @@ isolated = false
             Settings {
                 theme: ThemeSetting::Auto,
                 rows: ui::DEFAULT_ROWS,
+                grouping: false,
                 workspaces: vec![
                     WorkspaceRule {
                         reference: WorkspaceRef::Name("code".to_owned()),
@@ -785,6 +799,57 @@ isolated = false
         assert_eq!(settings.workspaces.len(), 1);
     }
 
+    // --- Grouping ---------------------------------------------------------
+
+    #[test]
+    fn parse_reads_the_grouping_key() {
+        for (config, grouping) in [
+            (&b"grouping = true\n"[..], true),
+            (b"grouping = false\n", false),
+        ] {
+            let settings = Settings::parse(config).expect("valid grouping value");
+            assert_eq!(settings.grouping, grouping);
+        }
+    }
+
+    #[test]
+    fn parse_without_a_grouping_key_defaults_to_false() {
+        // An empty file and a rules-only file alike: no `grouping`, the
+        // flat list — the no-config card is unchanged.
+        assert!(!Settings::parse(b"").expect("empty").grouping);
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert!(!rules_only.grouping);
+        assert!(!Settings::default().grouping);
+    }
+
+    #[test]
+    fn parse_rejects_a_non_boolean_grouping() {
+        // `grouping = 1` and `grouping = "yes"` both name the key in a
+        // diagnostic; the whole file fails, so last-good settings hold.
+        for config in [&b"grouping = 1\n"[..], b"grouping = \"yes\"\n"] {
+            let error = Settings::parse(config).expect_err("non-boolean grouping");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: "`grouping` must be a boolean"
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_coexists_grouping_with_the_other_keys() {
+        let config =
+            b"theme = \"light\"\nrows = 6\ngrouping = true\n\n[[workspace]]\nname = \"code\"\n";
+        let settings = Settings::parse(config).expect("valid config");
+        assert!(settings.grouping);
+        assert_eq!(settings.theme, ThemeSetting::Light);
+        assert_eq!(settings.rows, 6);
+        assert_eq!(settings.workspaces.len(), 1);
+    }
+
     // --- Resolution ------------------------------------------------------
 
     fn rule(reference: WorkspaceRef, isolated: bool) -> WorkspaceRule {
@@ -799,6 +864,7 @@ isolated = false
         let settings = Settings {
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
+            grouping: false,
             workspaces: vec![rule(WorkspaceRef::Name("browse".to_owned()), false)],
         };
         let scope = scope_for(
@@ -816,6 +882,7 @@ isolated = false
         let settings = Settings {
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
+            grouping: false,
             workspaces: vec![rule(WorkspaceRef::Position(2), false)],
         };
         let scope = scope_for(
@@ -834,6 +901,7 @@ isolated = false
         let settings = Settings {
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
+            grouping: false,
             workspaces: vec![
                 rule(WorkspaceRef::Position(1), true),
                 rule(WorkspaceRef::Name("code".to_owned()), false),
@@ -854,6 +922,7 @@ isolated = false
         let settings = Settings {
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
+            grouping: false,
             workspaces: vec![rule(WorkspaceRef::Position(1), false)],
         };
         let scope = scope_for(
@@ -871,6 +940,7 @@ isolated = false
         let settings = Settings {
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
+            grouping: false,
             workspaces: vec![rule(WorkspaceRef::Position(9), false)],
         };
         let scope = scope_for(
@@ -888,6 +958,7 @@ isolated = false
         let settings = Settings {
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
+            grouping: false,
             workspaces: vec![
                 rule(WorkspaceRef::Name("browse".to_owned()), false),
                 rule(WorkspaceRef::Name("browse".to_owned()), true),
@@ -908,6 +979,7 @@ isolated = false
         let settings = Settings {
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
+            grouping: false,
             workspaces: vec![rule(WorkspaceRef::Name("elsewhere".to_owned()), false)],
         };
         let scope = scope_for(
@@ -1078,6 +1150,7 @@ isolated = false
             Settings {
                 theme: ThemeSetting::Auto,
                 rows: ui::DEFAULT_ROWS,
+                grouping: false,
                 workspaces: vec![rule(WorkspaceRef::Name("code".to_owned()), false)]
             }
         );
