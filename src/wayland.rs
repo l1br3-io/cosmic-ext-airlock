@@ -846,15 +846,19 @@ impl App {
 
     /// The window the live model's `row` shows — the event-time
     /// resolution a Ctrl+N digit press addresses — or `None` when no
-    /// overlay is mapped, `row` is past the model's end, or the row is
-    /// a continuation affordance (not addressable by any input).
+    /// overlay is mapped, `row` is past the model's end, the row is a
+    /// continuation affordance, or the row is a divider (open
+    /// cycling's expanded entry: it resolves no input, so a hover
+    /// crossing selects nothing and a click commits nothing — the
+    /// daemon-side twin of the rule guards the row path the same way).
     fn overlay_row_handle(&self, row: usize) -> Option<Handle> {
-        self.overlay
-            .as_ref()?
-            .model()
-            .rows
-            .get(row)
-            .and_then(|row| row.handle)
+        self.overlay.as_ref().and_then(|overlay| {
+            let row = overlay.model().rows.get(row)?;
+            if ui::divider(row.kind, row.expanded, overlay.scoped) {
+                return None;
+            }
+            row.handle
+        })
     }
 
     /// The window the live model's Nth *level-1* entry (0-based)
@@ -980,6 +984,10 @@ pub struct Overlay {
     /// mode, swapped with the model so Tab/→/← always mean what the
     /// visible list shows.
     grouped: bool,
+    /// Whether that tree's cycling is scoped (levels) or open (the
+    /// dividerless walk) — swapped with the model so a divider row
+    /// resolves no input exactly while the card shows it as one.
+    scoped: bool,
     /// Device pixels per logical pixel this overlay renders at.
     scale: u32,
     /// Size granted by the compositor; `None` until the first configure.
@@ -1014,6 +1022,7 @@ impl Overlay {
         model: OverlayModel,
         palette: ui::Palette,
         grouped: bool,
+        scoped: bool,
         env: OverlayEnv<'_>,
     ) -> Result<Self, OverlayError> {
         let OverlayEnv {
@@ -1056,6 +1065,7 @@ impl Overlay {
             model,
             palette,
             grouped,
+            scoped,
             scale,
             size: None,
             close_at: Instant::now() + ui::CLOSE_AFTER,
@@ -1066,13 +1076,20 @@ impl Overlay {
     /// Swaps in a fresh model and palette. Same-sized redraws happen
     /// immediately; a size change goes through `set_size` + commit and
     /// draws on the next configure.
-    pub fn update(&mut self, model: OverlayModel, palette: ui::Palette, grouped: bool) {
+    pub fn update(
+        &mut self,
+        model: OverlayModel,
+        palette: ui::Palette,
+        grouped: bool,
+        scoped: bool,
+    ) {
         let unchanged = self.size == Some((model.width, model.height));
         self.close_at = Instant::now() + ui::CLOSE_AFTER;
         let (width, height) = (model.width, model.height);
         self.model = model;
         self.palette = palette;
         self.grouped = grouped;
+        self.scoped = scoped;
         if unchanged {
             self.draw();
         } else {
@@ -1490,9 +1507,15 @@ impl Session {
     /// `palette`, or refreshes it if it is already up. Creation failures
     /// are logged, not fatal: a press that cannot draw still cycles
     /// focus.
-    pub fn overlay_show(&mut self, model: OverlayModel, palette: ui::Palette, grouped: bool) {
+    pub fn overlay_show(
+        &mut self,
+        model: OverlayModel,
+        palette: ui::Palette,
+        grouped: bool,
+        scoped: bool,
+    ) {
         if let Some(overlay) = self.app.overlay.as_mut() {
-            overlay.update(model, palette, grouped);
+            overlay.update(model, palette, grouped, scoped);
             let rows = overlay.model().rows.len();
             eprintln!("airlock daemon: overlay updated ({rows} rows)");
             let _ = self.conn.flush();
@@ -1510,6 +1533,7 @@ impl Session {
             model,
             palette,
             grouped,
+            scoped,
             OverlayEnv {
                 compositor: &self.app.compositor,
                 layer_shell: &self.app.layer_shell,

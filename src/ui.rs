@@ -478,6 +478,15 @@ pub struct RowModel {
     pub expanded: bool,
 }
 
+/// Whether a row renders as a pure divider — an expanded group's
+/// parent while cycling is open (`scoped = false`, the
+/// `scoped_cycling` default): it holds no selection, hints no chord,
+/// and resolves no input. The model builder's hint pass and the
+/// wayland boundary's row→handle pass share this one rule.
+pub(crate) fn divider(kind: RowKind, expanded: bool, scoped: bool) -> bool {
+    !scoped && kind == RowKind::Parent && expanded
+}
+
 /// What the overlay should draw: the window's rows plus the logical
 /// pixel size the surface should have (the renderer multiplies by the
 /// render scale for device pixels).
@@ -648,19 +657,22 @@ pub fn overlay_model(
 /// position among level 1; a child hints its Alt+N chord by position
 /// within its group. A parent's badge counts its app's frozen windows
 /// and its chevron states the expansion the caller passed — expanded
-/// iff its children follow it in `visible`. Width derives from the
-/// visible rows' widest title plus the child indent and parent badge,
-/// so the card is stable under stepping and breathes only when the user
-/// expands or collapses. Returns `None` when nothing is visible or the
-/// selection is not on a visible row.
-// Eight render inputs, each a distinct concern (tree, visible window,
-// selection, snapshot, icons, scale, colors, windowing) — the flat
-// builder's seam, one level deeper.
+/// iff its children follow it in `visible`. Under open cycling
+/// (`scoped = false`, the `scoped_cycling` default) an expanded entry
+/// is a pure divider — [`divider`]: it hints nothing. Width derives
+/// from the visible rows' widest title plus the child indent and
+/// parent badge, so the card is stable under stepping and breathes
+/// only when the user expands or collapses. Returns `None` when
+/// nothing is visible or the selection is not on a visible row.
+// Nine render inputs, each a distinct concern (tree, visible window,
+// selection, cycle scope, snapshot, icons, scale, colors, windowing) —
+// the flat builder's seam, one level deeper.
 #[expect(clippy::too_many_arguments)]
 pub fn overlay_model_grouped(
     tree: &switcher::Grouping,
     visible: &[usize],
     selected: usize,
+    scoped: bool,
     snapshot: &Snapshot,
     icons: &crate::icons::Cache,
     scale: u32,
@@ -699,16 +711,31 @@ pub fn overlay_model_grouped(
                 child += 1;
             }
             kind => {
-                let hint = RowHint::ctrl(level1);
+                let ordinal = level1;
                 level1 += 1;
                 child = 0;
                 if kind == RowKind::Parent {
+                    // Children sit contiguously after their parent:
+                    // the next visible row's kind is the state.
+                    let expanded = tree
+                        .rows()
+                        .get(index + 1)
+                        .is_some_and(|next| next.kind == RowKind::Child)
+                        && visible.contains(&(index + 1));
                     // The parent's label is its app_id — the icon
                     // cache's own identity (spec OQ default; a
                     // desktop-entry display name is a cosmetic
                     // follow-up); the badge counts the app's frozen
                     // windows, expanded state included in the card
-                    // only through the chevron.
+                    // only through the chevron. Under open cycling an
+                    // expanded entry is a divider — [`divider`]: it
+                    // still counts toward the Ctrl+N ordinal (the
+                    // chord works), it just says nothing.
+                    let hint = if divider(RowKind::Parent, expanded, scoped) {
+                        None
+                    } else {
+                        RowHint::ctrl(ordinal)
+                    };
                     rows.push(RowModel {
                         title: truncate_cols(fold_title(&grow.app_id), MAX_COLS - BADGE_COLS),
                         icon: icons.bitmap(&grow.app_id, scale, palette),
@@ -717,13 +744,7 @@ pub fn overlay_model_grouped(
                         kind: RowKind::Parent,
                         count: tree.children_of(index).len(),
                         hint,
-                        // Children sit contiguously after their parent:
-                        // the next visible row's kind is the state.
-                        expanded: tree
-                            .rows()
-                            .get(index + 1)
-                            .is_some_and(|next| next.kind == RowKind::Child)
-                            && visible.contains(&(index + 1)),
+                        expanded,
                     });
                 } else {
                     rows.push(RowModel {
@@ -736,7 +757,7 @@ pub fn overlay_model_grouped(
                         handle: Some(grow.handle),
                         kind: RowKind::Leaf,
                         count: 0,
-                        hint,
+                        hint: RowHint::ctrl(ordinal),
                         expanded: false,
                     });
                 }
@@ -2682,8 +2703,13 @@ mod tests {
     /// Like [`build`], grouped: the app tree over the same snapshot,
     /// collapsed by default — `expanded` names the apps standing open,
     /// `selected` the selected *tree row* (the daemon selects rows, not
-    /// handles, in this mode).
-    fn build_grouped(snap: &Snapshot, selected: usize, expanded: &[&str]) -> Option<OverlayModel> {
+    /// handles, in this mode), `scoped` the session's cycle scope.
+    fn build_grouped(
+        snap: &Snapshot,
+        selected: usize,
+        expanded: &[&str],
+        scoped: bool,
+    ) -> Option<OverlayModel> {
         let tree = crate::switcher::Grouping::new(
             &snap.toplevels,
             snap.active.expect("fixture has an active workspace"),
@@ -2696,6 +2722,7 @@ mod tests {
             &tree,
             &visible,
             selected,
+            scoped,
             snap,
             &no_icons(),
             2,
@@ -2730,7 +2757,7 @@ mod tests {
         // Expanded: the parent's whole window set follows as children,
         // front window first, each Alt-numbered within the group.
         let snap = grouped_snap();
-        let collapsed = build_grouped(&snap, 0, &[]).expect("eligible windows exist");
+        let collapsed = build_grouped(&snap, 0, &[], true).expect("eligible windows exist");
         let rows: Vec<(&str, crate::switcher::RowKind, usize, Option<RowHint>, bool)> = collapsed
             .rows
             .iter()
@@ -2770,7 +2797,7 @@ mod tests {
                 ),
             ]
         );
-        let expanded = build_grouped(&snap, 0, &["app.a"]).expect("eligible windows exist");
+        let expanded = build_grouped(&snap, 0, &["app.a"], true).expect("eligible windows exist");
         let rows: Vec<(&str, crate::switcher::RowKind, Option<RowHint>, bool)> = expanded
             .rows
             .iter()
@@ -2821,18 +2848,63 @@ mod tests {
         // highlights the entry, selecting the front child highlights
         // the child.
         let snap = grouped_snap();
-        let model = build_grouped(&snap, 0, &["app.a"]).expect("eligible windows exist");
+        let model = build_grouped(&snap, 0, &["app.a"], true).expect("eligible windows exist");
         assert_eq!(model.rows[0].handle, Some(Handle(1)));
         assert_eq!(model.rows[1].handle, Some(Handle(1)));
         assert!(model.rows[0].selected, "the parent row is the selection");
         assert!(!model.rows[1].selected);
 
-        let model = build_grouped(&snap, 1, &["app.a"]).expect("eligible windows exist");
+        let model = build_grouped(&snap, 1, &["app.a"], true).expect("eligible windows exist");
         assert!(!model.rows[0].selected);
         assert!(
             model.rows[1].selected,
             "the front child row is the selection"
         );
+    }
+
+    #[test]
+    fn grouped_model_open_cycling_hints_nothing_on_a_divider() {
+        // Open cycling (the `scoped_cycling = false` default): an
+        // expanded group's entry is a pure divider — no highlight ever
+        // rests on it, so no chord is advertised on it. Everything else
+        // keeps its hint: collapsed entries their Ctrl+N, children
+        // their Alt+N, under either scope.
+        let snap = grouped_snap();
+        let model = build_grouped(&snap, 1, &["app.a"], false).expect("eligible windows exist");
+        let rows: Vec<(crate::switcher::RowKind, Option<RowHint>)> =
+            model.rows.iter().map(|row| (row.kind, row.hint)).collect();
+        assert_eq!(
+            rows,
+            vec![
+                (crate::switcher::RowKind::Parent, None), // the divider
+                (crate::switcher::RowKind::Child, Some(RowHint::Alt(1))),
+                (crate::switcher::RowKind::Child, Some(RowHint::Alt(2))),
+                (crate::switcher::RowKind::Leaf, Some(RowHint::Ctrl(2))),
+                (crate::switcher::RowKind::Leaf, Some(RowHint::Ctrl(3))),
+            ]
+        );
+        // The same card under scoped cycling: the entry is a real Tab
+        // target and says so.
+        let model = build_grouped(&snap, 0, &["app.a"], true).expect("eligible windows exist");
+        assert_eq!(model.rows[0].hint, Some(RowHint::Ctrl(1)));
+        // Collapsed entries hint under either scope — they are how an
+        // open-cycling Tab reaches a collapsed app.
+        let model = build_grouped(&snap, 0, &[], false).expect("eligible windows exist");
+        assert_eq!(model.rows[0].hint, Some(RowHint::Ctrl(1)));
+    }
+
+    #[test]
+    fn divider_rule_marks_expanded_parents_only_under_open_cycling() {
+        // The one rule the model builder's hint pass and the wayland
+        // boundary's row→handle pass share: an expanded parent while
+        // cycling is open. Scoped cycling has no dividers; neither does
+        // a collapsed entry, a child, or a leaf.
+        use crate::switcher::RowKind;
+        assert!(divider(RowKind::Parent, true, false));
+        assert!(!divider(RowKind::Parent, true, true));
+        assert!(!divider(RowKind::Parent, false, false));
+        assert!(!divider(RowKind::Child, true, false));
+        assert!(!divider(RowKind::Leaf, true, false));
     }
 
     #[test]
@@ -2843,7 +2915,7 @@ mod tests {
         let snap = grouped_snap();
         let flat =
             build(&snap, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
-        let grouped = build_grouped(&snap, 0, &["app.a"]).expect("eligible windows exist");
+        let grouped = build_grouped(&snap, 0, &["app.a"], true).expect("eligible windows exist");
         // Longest flat title is 7 cols; the tree budget is the parent's
         // 5 title cols + BADGE_COLS, the child's 7 + TREE_INDENT cols.
         let tree_cols = (5 + BADGE_COLS).max(7 + TREE_INDENT / TEXT_W).max(7);
@@ -2891,6 +2963,7 @@ mod tests {
             &tree,
             &visible,
             4,
+            true,
             &snap,
             &no_icons(),
             2,
@@ -2922,7 +2995,8 @@ mod tests {
         // TREE_INDENT right of the top-level column, so the pixel where
         // a parent's glyph starts is pure card on the child's row, and
         // the child's ink appears one indent over.
-        let model = build_grouped(&grouped_snap(), 0, &["app.a"]).expect("eligible windows exist");
+        let model =
+            build_grouped(&grouped_snap(), 0, &["app.a"], true).expect("eligible windows exist");
         let (canvas, stride) = rendered(&model, 2);
         let side = GLYPH_W * GLYPH_SCALE;
         let glyph_x = PAD_X + (ICON - side) / 2;

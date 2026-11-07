@@ -7,8 +7,11 @@
 # theme = "auto"      # card color: "auto" (match the desktop), "dark", "light"
 # rows = 8            # windows the card keeps in view on a long list: 3–10
 
-# grouping = false    # true: group the list by app — a tree view whose
-#                     # parents step with Tab
+# grouping = false    # true: group the list by app — a two-level tree,
+#                     # collapsed by default
+# scoped_cycling = false  # with grouping = true: keep Alt+Tab inside the
+#                     # entered group; false (the default) cycles every
+#                     # app, an expanded group's entry a plain divider
 
 # Rules below opt a workspace OUT of isolation. Workspaces without an
 # entry keep the default: Alt+Tab sees only that workspace's windows.

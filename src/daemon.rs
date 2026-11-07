@@ -103,6 +103,11 @@ pub struct Switch {
     /// open from the `grouping` setting and frozen like the rows: a
     /// config edit landing mid-gesture never regroups the open session.
     grouping: bool,
+    /// Whether grouped Alt+Tab cycles *within* the entered group
+    /// (`scoped_cycling = true`) or across every app (the default,
+    /// open cycling) — resolved once at open beside `grouping` and
+    /// frozen the same way.
+    scoped: bool,
     /// The frozen tree a grouped plain session walks: the partition of
     /// the eligible list at open, kept so every grouped input — Alt+Tab's
     /// scoped steps, →/←'s level walks, the card's rows — addresses one
@@ -174,16 +179,44 @@ impl Switch {
         self.visible.get(viewport.start + row).copied()
     }
 
+    /// Whether the tree row at `index` renders as a pure divider — an
+    /// expanded group's entry while open cycling ([`Switch::scoped`] =
+    /// `false`): it never holds the selection, hints no chord, and
+    /// resolves no pointer input (the owner's "just a divider").
+    /// Scoped sessions have no dividers — level-1 Tab targets the
+    /// entries themselves, expansion and all.
+    fn is_divider(&self, index: usize, expanded: &std::collections::HashSet<String>) -> bool {
+        !self.scoped
+            && self
+                .tree
+                .as_ref()
+                .and_then(|tree| tree.rows().get(index))
+                .is_some_and(|row| {
+                    row.kind == switcher::RowKind::Parent && expanded.contains(&row.app_id)
+                })
+    }
+
     /// Applies a pointer hover crossing: flat sessions select by the
     /// event-time handle; grouped sessions by the event-time row — both
-    /// captured against the model the user saw. Returns whether the
+    /// captured against the model the user saw. A divider row selects
+    /// nothing (open cycling): the row is addressable for the crossing
+    /// policy, inert as a target — the daemon-side twin of the
+    /// boundary's divider handle suppression. Returns whether the
     /// selection moved.
-    fn select_pointer_row(&mut self, row: usize, handle: Option<Handle>) -> bool {
+    fn select_pointer_row(
+        &mut self,
+        row: usize,
+        handle: Option<Handle>,
+        expanded: &std::collections::HashSet<String>,
+    ) -> bool {
         match &self.tree {
             Some(_) => {
                 let Some(index) = self.tree_row_at(row) else {
                     return false;
                 };
+                if self.is_divider(index, expanded) {
+                    return false;
+                }
                 self.tree_sel = index;
                 true
             }
@@ -249,14 +282,17 @@ pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> 
 ///
 /// A session's first press builds it from the MRU front — the focused
 /// window's row — so the opening Alt+Tab (Alt+Shift+Tab) is the first
-/// *scoped* step in grouped mode: the next app entry at level 1, or —
-/// when the workspace holds a single group — a step inside it. Later
+/// step of the session's cycle scope in grouped mode: the next app
+/// entry at level 1 under scoped cycling; one row of the dividerless
+/// sequence — one past the active window — under open cycling; a step
+/// inside it when the workspace holds a single group. Later
 /// presses reuse the same frozen selection basis instead of rebuilding
 /// it: walking three windows takes three presses, unlike T4's
 /// per-press rebuild which toggled between the front two. `scope`,
-/// `palette`, `rows`, and `grouping` are consumed only when the session
-/// opens; an already-open session keeps the ones it was built with.
-// Eight open-path parameters: the frozen-at-open values ride
+/// `palette`, `rows`, `grouping`, and `scoped_cycling` are consumed
+/// only when the session opens; an already-open session keeps the ones
+/// it was built with.
+// Nine open-path parameters: the frozen-at-open values ride
 // individually (see session_step's note).
 #[expect(clippy::too_many_arguments)]
 pub fn ring_step(
@@ -267,6 +303,7 @@ pub fn ring_step(
     palette: crate::ui::Palette,
     rows: usize,
     grouping: bool,
+    scoped_cycling: bool,
     expanded: &mut std::collections::HashSet<String>,
 ) -> Option<Handle> {
     if open.is_none() {
@@ -293,6 +330,7 @@ pub fn ring_step(
             palette,
             rows,
             grouping,
+            scoped: scoped_cycling,
             tree,
             tree_sel: 0,
             visible: Vec::new(),
@@ -300,6 +338,13 @@ pub fn ring_step(
         });
         if open.as_ref().is_some_and(|session| session.tree.is_some()) {
             let session = open.as_mut()?;
+            // Open cycling: row 0 may be a divider (the active app's
+            // group left expanded); the step bases itself on the
+            // active window instead — the child carrying the same
+            // window the entry implies.
+            if !session.scoped {
+                step_off_divider(session, snapshot, expanded);
+            }
             step_scope(session, snapshot, expanded, direction);
             return session.selected_handle();
         }
@@ -324,9 +369,10 @@ pub fn ring_step(
 /// [`step_and_show`]), but the selection basis never rebuilds — the same
 /// freeze philosophy as the scope and the palette, both consumed only when
 /// the session opens.
-// Nine open-path parameters: the frozen-at-open values (palette, rows,
-// grouping) each ride individually and the expansion state is daemon
-// memory the open may write — no bundle introduced (the GR3 note).
+// Ten open-path parameters: the frozen-at-open values (palette, rows,
+// grouping, scoped cycling) each ride individually and the expansion
+// state is daemon memory the open may write — no bundle introduced
+// (the GR3 note).
 #[expect(clippy::too_many_arguments)]
 pub fn session_step(
     open: &mut Option<Switch>,
@@ -337,6 +383,7 @@ pub fn session_step(
     palette: crate::ui::Palette,
     rows: usize,
     grouping: bool,
+    scoped_cycling: bool,
     expanded: &mut std::collections::HashSet<String>,
 ) -> Option<Handle> {
     // An open grouped session steps its visible rows (↓/↑ and the
@@ -350,7 +397,15 @@ pub fn session_step(
     }
     if open.is_some() || !same_app {
         return ring_step(
-            open, snapshot, direction, scope, palette, rows, grouping, expanded,
+            open,
+            snapshot,
+            direction,
+            scope,
+            palette,
+            rows,
+            grouping,
+            scoped_cycling,
+            expanded,
         );
     }
     // A new same-app session: anchor, narrow, and hold the two-window
@@ -363,9 +418,10 @@ pub fn session_step(
     }
     // The same-app exemption rides here: the session is already
     // app-scoped and renders flat, so it opens on the app's eligible
-    // windows with no tree whatever the `grouping` setting says.
+    // windows with no tree whatever the `grouping` setting says —
+    // and no cycle scope either.
     let selected = ring_step(
-        open, &view, direction, scope, palette, rows, false, expanded,
+        open, &view, direction, scope, palette, rows, false, false, expanded,
     );
     // ring_step stored the session on the filtered ring; freeze the anchor
     // into it so later steps re-filter by it.
@@ -392,11 +448,15 @@ fn step_in(order: &[usize], current: usize, direction: Direction) -> usize {
     order[(position + delta) % len]
 }
 
-/// Alt+Tab's scoped step (the owner's 2026-11-08 collapse re-decision):
-/// level 1 cycles app entries — never descending into children — and
-/// level 2 cycles the selected group's windows. A workspace holding a
-/// single group is entered and cycled inside, so the step is never a
-/// dead key. Returns whether anything moved.
+/// Alt+Tab's step. **Scoped** (`scoped_cycling = true`, the owner's
+/// 2026-11-08 collapse re-decision): level 1 cycles app entries —
+/// never descending into children — and level 2 cycles the selected
+/// group's windows. **Open cycling** (the default, the owner's rev-4
+/// scope setting): one sequence — every visible window and collapsed
+/// entry, dividers (expanded entries) skipped — so the step crosses
+/// group boundaries. Either way a workspace holding a single
+/// multi-window group and nothing else is entered and cycled inside,
+/// so the step is never a dead key. Returns whether anything moved.
 fn step_scope(
     session: &mut Switch,
     snapshot: &Snapshot,
@@ -407,9 +467,6 @@ fn step_scope(
     let Some(tree) = session.tree.as_ref() else {
         return false;
     };
-    let Some(kind) = tree.rows().get(session.tree_sel).map(|row| row.kind) else {
-        return false;
-    };
     let moved = |session: &mut Switch, target: usize| {
         if target == session.tree_sel {
             false
@@ -417,6 +474,25 @@ fn step_scope(
             session.tree_sel = target;
             true
         }
+    };
+    if !session.scoped {
+        // Open cycling: the dividerless walk over everything the card
+        // shows — expanded groups' children, collapsed entries, leaves.
+        let peers: Vec<usize> = visible
+            .iter()
+            .copied()
+            .filter(|&index| !session.is_divider(index, expanded))
+            .collect();
+        let lone_parent =
+            peers.len() == 1 && tree.rows()[peers[0]].kind == switcher::RowKind::Parent;
+        return if lone_parent {
+            enter_group(session, snapshot, expanded, direction)
+        } else {
+            moved(session, step_in(&peers, session.tree_sel, direction))
+        };
+    }
+    let Some(kind) = tree.rows().get(session.tree_sel).map(|row| row.kind) else {
+        return false;
     };
     match kind {
         // Level 2: the selected group's children only — the step is
@@ -446,6 +522,29 @@ fn step_scope(
             }
             moved(session, step_in(&peers, session.tree_sel, direction))
         }
+    }
+}
+
+/// Moves a divider selection onto its group's first shown child — the
+/// same window the divider's entry carries, so the move changes which
+/// *row* is selected, not which window. Open cycling's one such
+/// moment: a session opens on row 0, the active app's entry, and
+/// expansion persists across gestures — the opening step must base
+/// itself on the active window, never step onto the divider.
+fn step_off_divider(
+    session: &mut Switch,
+    snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
+) {
+    let visible = grouped_visible(session, snapshot, expanded);
+    if !session.is_divider(session.tree_sel, expanded) {
+        return;
+    }
+    // Children sit contiguously after their parent; the first shown
+    // child is the next row, visible exactly while the group expands.
+    let child = session.tree_sel + 1;
+    if visible.contains(&child) {
+        session.tree_sel = child;
     }
 }
 
@@ -515,10 +614,12 @@ fn enter_group(
     true
 }
 
-/// ← : a child exits to its parent row (the group stays expanded); an
-/// expanded parent collapses — the state persists across gestures; a
-/// collapsed top-level row is the W3C root no-op. Returns whether the
-/// selection or the visible list changed.
+/// ← : a child exits to its parent row (the group stays expanded under
+/// scoped cycling; under open cycling the expanded entry is a divider
+/// that cannot hold the selection, so the exit collapses the group in
+/// the same motion); an expanded parent collapses — the state persists
+/// across gestures; a collapsed top-level row is the W3C root no-op.
+/// Returns whether the selection or the visible list changed.
 fn exit_group(session: &mut Switch, expanded: &mut std::collections::HashSet<String>) -> bool {
     let Some(tree) = session.tree.as_ref() else {
         return false;
@@ -531,6 +632,9 @@ fn exit_group(session: &mut Switch, expanded: &mut std::collections::HashSet<Str
             let Some(parent) = tree.parent_of(session.tree_sel) else {
                 return false;
             };
+            if !session.scoped {
+                expanded.remove(&tree.rows()[parent].app_id);
+            }
             session.tree_sel = parent;
             true
         }
@@ -544,7 +648,8 @@ fn exit_group(session: &mut Switch, expanded: &mut std::collections::HashSet<Str
 }
 
 /// Alt+W: the level toggle — →'s enter at level 1, ←'s exit at level 2
-/// (without collapsing: the flip moves the selection only).
+/// (the exit collapses only under open cycling, exactly ←'s rule —
+/// the flip and the arrow are the same motion).
 fn toggle_level(
     session: &mut Switch,
     snapshot: &Snapshot,
@@ -555,19 +660,7 @@ fn toggle_level(
         .as_ref()
         .and_then(|tree| tree.rows().get(session.tree_sel).map(|row| row.kind));
     match kind {
-        Some(switcher::RowKind::Child) => {
-            let parent = session
-                .tree
-                .as_ref()
-                .and_then(|tree| tree.parent_of(session.tree_sel));
-            match parent {
-                Some(parent) => {
-                    session.tree_sel = parent;
-                    true
-                }
-                None => false,
-            }
-        }
+        Some(switcher::RowKind::Child) => exit_group(session, expanded),
         Some(switcher::RowKind::Parent) => {
             enter_group(session, snapshot, expanded, Direction::Next)
         }
@@ -575,10 +668,12 @@ fn toggle_level(
     }
 }
 
-/// ↓/↑ and the wheel: one *visible* row — the linear walk over
-/// everything the card shows, parents and expanded children alike,
-/// crossing group boundaries and wrapping; a collapsed group's children
-/// are skipped exactly as they are not shown.
+/// ↓/↑ and the wheel: one row of the linear walk — everything the card
+/// shows under scoped cycling (parents and expanded children alike,
+/// crossing group boundaries); under open cycling the same walk minus
+/// the dividers, matching Tab's sequence. Either way it wraps, and a
+/// collapsed group's children are skipped exactly as they are not
+/// shown.
 fn step_visible(
     session: &mut Switch,
     snapshot: &Snapshot,
@@ -586,7 +681,16 @@ fn step_visible(
     direction: Direction,
 ) {
     let visible = grouped_visible(session, snapshot, expanded);
-    session.tree_sel = step_in(&visible, session.tree_sel, direction);
+    let peers: Vec<usize> = if session.scoped {
+        visible
+    } else {
+        visible
+            .iter()
+            .copied()
+            .filter(|&index| !session.is_divider(index, expanded))
+            .collect()
+    };
+    session.tree_sel = step_in(&peers, session.tree_sel, direction);
 }
 
 /// One step request into [`step_and_show`]: the direction, and whether a
@@ -789,9 +893,10 @@ pub fn run() -> Result<(), RunError> {
                     );
                 }
                 GestureOutput::StepScope(direction) => {
-                    // Grouped Alt+Tab: the scoped step — app entries at
-                    // level 1, the group's children at level 2, the lone
-                    // group entered and cycled inside.
+                    // Grouped Alt+Tab: the session's cycle scope —
+                    // entries/children by level when scoped, the
+                    // dividerless walk across every app when open. Either
+                    // way the lone group is entered and cycled inside.
                     if open.as_mut().is_some_and(|session| {
                         step_scope(session, &snapshot, &mut expanded, direction)
                     }) {
@@ -919,9 +1024,9 @@ pub fn run() -> Result<(), RunError> {
                     if hover.observe(row).is_some()
                         && let Some(content_row) = row
                         && handle.is_some()
-                        && open
-                            .as_mut()
-                            .is_some_and(|open| open.select_pointer_row(content_row, handle))
+                        && open.as_mut().is_some_and(|open| {
+                            open.select_pointer_row(content_row, handle, &expanded)
+                        })
                     {
                         show_selection(
                             &mut session,
@@ -1128,8 +1233,14 @@ fn step_and_show(
     icons: &mut crate::icons::Cache,
     expanded: &mut std::collections::HashSet<String>,
 ) {
-    let (scope, palette, rows, grouping) = match open {
-        Some(open) => (open.scope, open.palette, open.rows, open.grouping),
+    let (scope, palette, rows, grouping, scoped_cycling) = match open {
+        Some(open) => (
+            open.scope,
+            open.palette,
+            open.rows,
+            open.grouping,
+            open.scoped,
+        ),
         None => {
             settings.refresh();
             // `auto` asks the system once per open — two small file reads
@@ -1144,6 +1255,7 @@ fn step_and_show(
                 crate::ui::Palette::resolve(settings.settings.theme, system_prefers_dark),
                 settings.settings.rows,
                 settings.settings.grouping,
+                settings.settings.scoped_cycling,
             )
         }
     };
@@ -1156,6 +1268,7 @@ fn step_and_show(
         palette,
         rows,
         grouping,
+        scoped_cycling,
         expanded,
     );
     show_selection(session, gesture, open, snapshot, expanded, icons);
@@ -1211,6 +1324,7 @@ fn show_selection(
                 tree,
                 &current.visible,
                 current.tree_sel,
+                current.scoped,
                 snapshot,
                 icons,
                 scale,
@@ -1249,9 +1363,12 @@ fn show_selection(
             }
             // The key map rides the shown card: Tab/→/←/W and the two
             // number chords mean tree walks exactly when the card
-            // paints the tree.
-            let grouped = open.as_ref().is_some_and(|session| session.tree.is_some());
-            session.overlay_show(model, palette, grouped)
+            // paints the tree, and the divider rule rides its cycle
+            // scope.
+            let open_session = open.as_ref();
+            let grouped = open_session.is_some_and(|session| session.tree.is_some());
+            let scoped = open_session.is_some_and(|session| session.scoped);
+            session.overlay_show(model, palette, grouped, scoped)
         }
         None => {
             session.overlay_hide("nothing eligible");
@@ -1436,6 +1553,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             ),
             Some(Handle(2))
@@ -1461,6 +1579,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
+                false,
                 false,
                 &mut HashSet::new(),
             ),
@@ -1488,6 +1607,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             ),
             Some(Handle(2))
@@ -1500,6 +1620,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
+                false,
                 false,
                 &mut HashSet::new(),
             ),
@@ -1514,6 +1635,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             ),
             Some(Handle(1))
@@ -1526,6 +1648,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
+                false,
                 false,
                 &mut HashSet::new(),
             ),
@@ -1556,6 +1679,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             ),
             Some(Handle(4))
@@ -1575,6 +1699,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             ),
             None
@@ -1587,6 +1712,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
+                false,
                 false,
                 &mut HashSet::new(),
             ),
@@ -1607,6 +1733,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             ),
             None
@@ -1622,6 +1749,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
+                false,
                 false,
                 &mut HashSet::new(),
             ),
@@ -1647,6 +1775,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -1670,6 +1799,7 @@ mod tests {
             Scope::CurrentWorkspace,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -1705,6 +1835,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -1730,6 +1861,7 @@ mod tests {
             Scope::CurrentWorkspace,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -1762,6 +1894,7 @@ mod tests {
             Scope::CurrentWorkspace,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -1796,6 +1929,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -1828,6 +1962,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -1851,6 +1986,7 @@ mod tests {
             Scope::CurrentWorkspace,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -1889,6 +2025,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -1919,6 +2056,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -1947,6 +2085,7 @@ mod tests {
             Scope::CurrentWorkspace,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -1983,6 +2122,7 @@ mod tests {
             Scope::CurrentWorkspace,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -2041,6 +2181,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2095,6 +2236,7 @@ mod tests {
             Scope::CurrentWorkspace,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -2178,6 +2320,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2242,6 +2385,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2299,6 +2443,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2347,6 +2492,7 @@ mod tests {
             Scope::CurrentWorkspace,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -2411,6 +2557,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2440,6 +2587,7 @@ mod tests {
             Scope::CurrentWorkspace,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -2471,6 +2619,7 @@ mod tests {
             Scope::CurrentWorkspace,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -2593,6 +2742,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             ),
             Some(Handle(3)),
@@ -2616,6 +2766,7 @@ mod tests {
                 true,
                 Palette::dark(),
                 DEFAULT_ROWS,
+                false,
                 false,
                 &mut HashSet::new(),
             ),
@@ -2644,6 +2795,7 @@ mod tests {
                     Palette::dark(),
                     DEFAULT_ROWS,
                     false,
+                    false,
                     &mut HashSet::new(),
                 ),
                 expected
@@ -2670,6 +2822,7 @@ mod tests {
                 true,
                 Palette::dark(),
                 DEFAULT_ROWS,
+                false,
                 false,
                 &mut HashSet::new(),
             ),
@@ -2698,6 +2851,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             ),
             None
@@ -2717,6 +2871,7 @@ mod tests {
             true,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -2741,6 +2896,7 @@ mod tests {
                 true,
                 Palette::dark(),
                 DEFAULT_ROWS,
+                false,
                 false,
                 &mut HashSet::new(),
             ),
@@ -2767,6 +2923,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -2778,6 +2935,7 @@ mod tests {
                 false,
                 Palette::dark(),
                 DEFAULT_ROWS,
+                false,
                 false,
                 &mut HashSet::new(),
             ),
@@ -2801,6 +2959,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             ),
             Some(Handle(2)),
@@ -2815,6 +2974,7 @@ mod tests {
                 true,
                 Palette::dark(),
                 DEFAULT_ROWS,
+                false,
                 false,
                 &mut HashSet::new(),
             ),
@@ -2846,6 +3006,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let open = open.expect("same-app session opened");
@@ -2866,6 +3027,7 @@ mod tests {
             true,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -2917,6 +3079,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             ),
             Some(Handle(2))
@@ -2930,6 +3093,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             ),
             Some(Handle(3))
@@ -2942,6 +3106,7 @@ mod tests {
                 Scope::All,
                 Palette::dark(),
                 DEFAULT_ROWS,
+                false,
                 false,
                 &mut HashSet::new(),
             ),
@@ -2967,6 +3132,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2983,6 +3149,7 @@ mod tests {
             palette: Palette::dark(),
             rows: DEFAULT_ROWS,
             grouping: false,
+            scoped: false,
             tree: None,
             tree_sel: 0,
             visible: Vec::new(),
@@ -3011,6 +3178,7 @@ mod tests {
             Scope::All,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -3048,6 +3216,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                false,
                 &mut HashSet::new(),
             );
             let open = open.expect("session opened");
@@ -3071,6 +3240,7 @@ mod tests {
             theme: crate::ui::ThemeSetting::Auto,
             rows: DEFAULT_ROWS,
             grouping: false,
+            scoped_cycling: false,
             workspaces: vec![crate::settings::WorkspaceRule {
                 reference: crate::settings::WorkspaceRef::Name("browse".to_owned()),
                 isolated: false,
@@ -3253,6 +3423,7 @@ mod tests {
             crate::ui::Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3270,6 +3441,7 @@ mod tests {
             false,
             crate::ui::Palette::light(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -3289,6 +3461,7 @@ mod tests {
             false,
             crate::ui::Palette::light(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -3322,6 +3495,7 @@ mod tests {
             Palette::dark(),
             5,
             false,
+            false,
             &mut HashSet::new(),
         );
         assert_eq!(open.as_ref().expect("session opened").rows, 5);
@@ -3336,6 +3510,7 @@ mod tests {
             false,
             Palette::dark(),
             9,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -3355,6 +3530,7 @@ mod tests {
             false,
             Palette::dark(),
             9,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -3385,6 +3561,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            false,
             &mut HashSet::new(),
         );
         assert!(!open.as_ref().expect("session opened").grouping);
@@ -3399,6 +3576,7 @@ mod tests {
             false,
             Palette::dark(),
             DEFAULT_ROWS,
+            true,
             true,
             &mut HashSet::new(),
         );
@@ -3417,6 +3595,7 @@ mod tests {
             false,
             Palette::dark(),
             DEFAULT_ROWS,
+            true,
             true,
             &mut HashSet::new(),
         );
@@ -3469,9 +3648,292 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             true,
+            true,
             &mut expanded,
         );
         (open, expanded)
+    }
+
+    /// Opens a grouped *open-cycling* session on `snap`
+    /// (`scoped_cycling = false`, the default): Tab walks the
+    /// dividerless sequence across every app.
+    fn grouped_session_open(snap: &Snapshot) -> (Option<Switch>, HashSet<String>) {
+        let mut open = None;
+        let mut expanded = HashSet::new();
+        session_step(
+            &mut open,
+            snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            DEFAULT_ROWS,
+            true,
+            false,
+            &mut expanded,
+        );
+        (open, expanded)
+    }
+
+    #[test]
+    fn open_cycling_tab_crosses_groups_skipping_dividers() {
+        // Both groups expanded: the step sequence is every window —
+        // a1, a2, b1, b2 — the two expanded entries are dividers the
+        // highlight never rests on, crossed without stopping.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session_open(&snap);
+        expanded.insert("app.a".to_string());
+        expanded.insert("app.b".to_string());
+        open.as_mut().expect("open").tree_sel = 2; // a's last child
+        assert!(step_scope(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            4,
+            "crosses into b's first child, skipping the divider"
+        );
+        assert!(step_scope(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
+        assert_eq!(open.as_ref().expect("open").tree_sel, 5);
+        assert!(step_scope(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            1,
+            "wraps to a's front child, skipping both dividers"
+        );
+    }
+
+    #[test]
+    fn open_cycling_tab_from_a_child_reaches_a_collapsed_entry() {
+        // The owner's trace: cycling "to all apps" — from inside a's
+        // windows the step reaches b's entry, the only row a collapsed
+        // group contributes.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session_open(&snap);
+        expanded.insert("app.a".to_string());
+        open.as_mut().expect("open").tree_sel = 2; // a's last child
+        assert!(step_scope(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "b's collapsed entry is the next stop"
+        );
+    }
+
+    #[test]
+    fn open_cycling_opening_press_never_lands_on_a_divider() {
+        // The active app's group stood expanded (the state persists),
+        // so row 0 is a divider: the opening press bases itself on the
+        // active window — the divider's own implied window — and steps
+        // one past it, flat-quick-tap parity. Never onto the divider.
+        let snap = grouped_two_apps();
+        let mut expanded = HashSet::new();
+        expanded.insert("app.a".to_string());
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            DEFAULT_ROWS,
+            true,
+            false,
+            &mut expanded,
+        );
+        assert_eq!(
+            open.as_ref().expect("opened").tree_sel,
+            2,
+            "one past the active a1, onto a2"
+        );
+        assert_eq!(
+            open.as_ref().expect("opened").selected_handle(),
+            Some(Handle(2))
+        );
+    }
+
+    #[test]
+    fn open_cycling_lone_group_is_still_entered_and_cycled() {
+        // One app, two windows, collapsed: the dividerless sequence
+        // holds a single entry, so the opening press enters the group
+        // (past the active window) and further presses cycle it — the
+        // step is never a dead key under either scope.
+        let snap = snapshot(
+            vec![
+                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 40),
+                app_toplevel(2, "app.a", &[1], State::default(), 30),
+            ],
+            Some(1),
+        );
+        let (mut open, mut expanded) = grouped_session_open(&snap);
+        assert_eq!(
+            open.as_ref().expect("opened").tree_sel,
+            2,
+            "the opening press enters past the active window to a2"
+        );
+        assert!(step_scope(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            1,
+            "cycles within the only group there is"
+        );
+    }
+
+    #[test]
+    fn open_cycling_left_arrow_on_a_child_collapses_and_lands_on_the_entry() {
+        // The expanded entry cannot hold the selection, so the scoped
+        // mode's two-step exit-then-collapse is one motion: ← lands on
+        // the entry with the group collapsed.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session_open(&snap);
+        expanded.insert("app.a".to_string());
+        open.as_mut().expect("open").tree_sel = 2; // a's second child
+        assert!(exit_group(open.as_mut().expect("open"), &mut expanded));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            0,
+            "lands on a's entry"
+        );
+        assert!(
+            !expanded.contains("app.a"),
+            "collapsed in the same motion, persistently"
+        );
+    }
+
+    #[test]
+    fn open_cycling_alt_w_on_a_child_collapses_too() {
+        // W's flip shares ←'s merged exit: out of the children means
+        // onto the entry, and the group cannot stay expanded under a
+        // selection that has nowhere to rest inside it.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session_open(&snap);
+        expanded.insert("app.a".to_string());
+        open.as_mut().expect("open").tree_sel = 2; // a's second child
+        assert!(toggle_level(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded
+        ));
+        assert_eq!(open.as_ref().expect("open").tree_sel, 0);
+        assert!(!expanded.contains("app.a"), "the flip collapses");
+    }
+
+    #[test]
+    fn open_cycling_visible_steps_skip_dividers() {
+        // ↓/↑ and the wheel walk the same dividerless sequence as Tab —
+        // expanded entries are crossed, never rested on.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session_open(&snap);
+        expanded.insert("app.a".to_string());
+        expanded.insert("app.b".to_string());
+        open.as_mut().expect("open").tree_sel = 2; // a's last child
+        step_visible(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Direction::Next,
+        );
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            4,
+            "skips b's divider onto its first child"
+        );
+        step_visible(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Direction::Next,
+        );
+        assert_eq!(open.as_ref().expect("open").tree_sel, 5);
+        step_visible(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Direction::Next,
+        );
+        assert_eq!(open.as_ref().expect("open").tree_sel, 1);
+    }
+
+    #[test]
+    fn open_cycling_collapsed_tab_cycles_entries_like_level_one() {
+        // Nothing expanded: the dividerless sequence is exactly the
+        // level-1 entries, so the default scope steps app entries just
+        // as the scoped one does.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session_open(&snap);
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "the opening press steps to b's entry"
+        );
+        assert!(step_scope(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
+        assert_eq!(open.as_ref().expect("open").tree_sel, 0);
+    }
+
+    #[test]
+    fn open_cycling_a_divider_holds_no_selection() {
+        // The pointer-side twin of the boundary rule: a hover crossing
+        // of a divider row selects nothing; its first child, carrying
+        // the same window, selects fine.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session_open(&snap);
+        expanded.insert("app.a".to_string());
+        let session = open.as_mut().expect("open");
+        session.visible = grouped_visible(session, &snap, &expanded);
+        session.viewport = Some(crate::ui::Viewport {
+            start: 0,
+            content: 4, // P-a1, C-a1, C-a2, P-b1 — b collapsed
+            top: false,
+            bottom: false,
+        });
+        assert!(
+            !open
+                .as_mut()
+                .expect("open")
+                .select_pointer_row(0, Some(Handle(1)), &expanded),
+            "the divider never holds the selection"
+        );
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "the refused crossing leaves the selection where it was"
+        );
+        assert!(
+            open.as_mut()
+                .expect("open")
+                .select_pointer_row(1, Some(Handle(1)), &expanded),
+            "the child row selects"
+        );
+        assert_eq!(open.as_ref().expect("open").tree_sel, 1);
     }
 
     #[test]
@@ -3497,6 +3959,7 @@ mod tests {
             false,
             Palette::dark(),
             DEFAULT_ROWS,
+            false,
             false,
             &mut HashSet::new(),
         );
@@ -3838,6 +4301,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             true,
+            true,
             &mut expanded,
         );
         let visible = grouped_visible(open.as_ref().expect("reopened"), &snap, &expanded);
@@ -3938,6 +4402,7 @@ mod tests {
             true,
             Palette::dark(),
             DEFAULT_ROWS,
+            true,
             true,
             &mut HashSet::new(),
         );

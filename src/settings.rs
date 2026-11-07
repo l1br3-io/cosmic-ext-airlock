@@ -57,6 +57,11 @@ pub struct Settings {
     /// parents, children, and Tab stepping apps; missing key = `false`,
     /// the flat list, so the no-config card is unchanged.
     pub grouping: bool,
+    /// Whether grouped Alt+Tab cycles *within* the entered group
+    /// (`true`) or across every app (`false`, the default — an expanded
+    /// group's entry is a pure divider there). Meaningful only beside
+    /// `grouping = true`; frozen at open with it.
+    pub scoped_cycling: bool,
     pub workspaces: Vec<WorkspaceRule>,
 }
 
@@ -66,6 +71,7 @@ impl Default for Settings {
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            scoped_cycling: false,
             workspaces: Vec::new(),
         }
     }
@@ -185,11 +191,18 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             problem: "`grouping` must be a boolean",
         })?,
     };
+    let scoped_cycling = match root.get("scoped_cycling") {
+        None => false,
+        Some(value) => value.as_bool().ok_or(SettingsError::InvalidFile {
+            problem: "`scoped_cycling` must be a boolean",
+        })?,
+    };
     let Some(entries) = root.get("workspace") else {
         return Ok(Settings {
             theme,
             rows,
             grouping,
+            scoped_cycling,
             ..Settings::default()
         });
     };
@@ -207,6 +220,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         theme,
         rows,
         grouping,
+        scoped_cycling,
         workspaces,
     })
 }
@@ -483,6 +497,7 @@ isolated = false
                 theme: ThemeSetting::Auto,
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
+                scoped_cycling: false,
                 workspaces: vec![
                     WorkspaceRule {
                         reference: WorkspaceRef::Name("code".to_owned()),
@@ -850,6 +865,56 @@ isolated = false
         assert_eq!(settings.workspaces.len(), 1);
     }
 
+    // --- Scoped cycling ---------------------------------------------------
+
+    #[test]
+    fn parse_reads_the_scoped_cycling_key() {
+        for (config, scoped) in [
+            (&b"scoped_cycling = true\n"[..], true),
+            (b"scoped_cycling = false\n", false),
+        ] {
+            let settings = Settings::parse(config).expect("valid scoped_cycling value");
+            assert_eq!(settings.scoped_cycling, scoped);
+        }
+    }
+
+    #[test]
+    fn parse_without_a_scoped_cycling_key_defaults_to_false() {
+        // Open cycling is the default: Tab crosses group boundaries
+        // instead of cycling inside the entered one.
+        assert!(!Settings::parse(b"").expect("empty").scoped_cycling);
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert!(!rules_only.scoped_cycling);
+        assert!(!Settings::default().scoped_cycling);
+    }
+
+    #[test]
+    fn parse_rejects_a_non_boolean_scoped_cycling() {
+        // `scoped_cycling = 1` and `scoped_cycling = "yes"` both name the
+        // key in a diagnostic; the whole file fails, so last-good
+        // settings hold.
+        for config in [&b"scoped_cycling = 1\n"[..], b"scoped_cycling = \"yes\"\n"] {
+            let error = Settings::parse(config).expect_err("non-boolean scoped_cycling");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: "`scoped_cycling` must be a boolean"
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_coexists_scoped_cycling_with_the_other_keys() {
+        let config = b"theme = \"light\"\nrows = 6\ngrouping = true\nscoped_cycling = true\n\n[[workspace]]\nname = \"code\"\n";
+        let settings = Settings::parse(config).expect("valid config");
+        assert!(settings.grouping);
+        assert!(settings.scoped_cycling);
+        assert_eq!(settings.workspaces.len(), 1);
+    }
+
     // --- Resolution ------------------------------------------------------
 
     fn rule(reference: WorkspaceRef, isolated: bool) -> WorkspaceRule {
@@ -865,6 +930,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            scoped_cycling: false,
             workspaces: vec![rule(WorkspaceRef::Name("browse".to_owned()), false)],
         };
         let scope = scope_for(
@@ -883,6 +949,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            scoped_cycling: false,
             workspaces: vec![rule(WorkspaceRef::Position(2), false)],
         };
         let scope = scope_for(
@@ -902,6 +969,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            scoped_cycling: false,
             workspaces: vec![
                 rule(WorkspaceRef::Position(1), true),
                 rule(WorkspaceRef::Name("code".to_owned()), false),
@@ -923,6 +991,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            scoped_cycling: false,
             workspaces: vec![rule(WorkspaceRef::Position(1), false)],
         };
         let scope = scope_for(
@@ -941,6 +1010,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            scoped_cycling: false,
             workspaces: vec![rule(WorkspaceRef::Position(9), false)],
         };
         let scope = scope_for(
@@ -959,6 +1029,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            scoped_cycling: false,
             workspaces: vec![
                 rule(WorkspaceRef::Name("browse".to_owned()), false),
                 rule(WorkspaceRef::Name("browse".to_owned()), true),
@@ -980,6 +1051,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            scoped_cycling: false,
             workspaces: vec![rule(WorkspaceRef::Name("elsewhere".to_owned()), false)],
         };
         let scope = scope_for(
@@ -1151,6 +1223,7 @@ isolated = false
                 theme: ThemeSetting::Auto,
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
+                scoped_cycling: false,
                 workspaces: vec![rule(WorkspaceRef::Name("code".to_owned()), false)]
             }
         );

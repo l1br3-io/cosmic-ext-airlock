@@ -336,8 +336,15 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
     // chevron pointing at its closed children.
     sheet.push(tree_card(
         vec![
-            parent_row("firefox", 3, icons[0].clone(), true, false),
-            parent_row("org.gnome.TextEditor", 2, icons[2].clone(), false, false),
+            parent_row("firefox", 3, icons[0].clone(), true, false, Some(1)),
+            parent_row(
+                "org.gnome.TextEditor",
+                2,
+                icons[2].clone(),
+                false,
+                false,
+                Some(2),
+            ),
             entry_row("kitty — solo window", icons[4].clone(), false, 3),
             entry_row("un-attributable", None, false, 4),
         ],
@@ -347,14 +354,44 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
     // window first, Alt-numbered; the other group stays collapsed.
     sheet.push(tree_card(
         vec![
-            parent_row("firefox", 3, icons[0].clone(), false, true),
+            parent_row("firefox", 3, icons[0].clone(), false, true, Some(1)),
             child_row("twitter.com/home", icons[0].clone(), true, 1),
             child_row("github.com — PR 42", icons[0].clone(), false, 2),
-            parent_row("org.gnome.TextEditor", 2, icons[2].clone(), false, false),
+            parent_row(
+                "org.gnome.TextEditor",
+                2,
+                icons[2].clone(),
+                false,
+                false,
+                Some(2),
+            ),
             entry_row("kitty — solo window", icons[4].clone(), false, 3),
             entry_row("un-attributable", None, false, 4),
         ],
         1,
+    ));
+    // Open cycling (`scoped_cycling = false`, the default): the same
+    // expanded tree, but the expanded entry is a divider — unhinted,
+    // never holding the selection — while the collapsed entry keeps
+    // its Ctrl chord (it is how Tab reaches that app). The selection
+    // lives among the windows; Tab crosses groups.
+    sheet.push(tree_card(
+        vec![
+            parent_row("firefox", 3, icons[0].clone(), false, true, None),
+            child_row("twitter.com/home", icons[0].clone(), false, 1),
+            child_row("github.com — PR 42", icons[0].clone(), true, 2),
+            parent_row(
+                "org.gnome.TextEditor",
+                2,
+                icons[2].clone(),
+                false,
+                false,
+                Some(2),
+            ),
+            entry_row("kitty — solo window", icons[4].clone(), false, 3),
+            entry_row("un-attributable", None, false, 4),
+        ],
+        2,
     ));
     sheet.push(tree_card(
         {
@@ -363,12 +400,12 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
             // default budget keeps 10 slots, the `…` rows replacing the
             // outermost slots at each truncated edge.
             let long = vec![
-                parent_row("firefox", 5, icons[0].clone(), false, true),
+                parent_row("firefox", 5, icons[0].clone(), false, true, Some(1)),
                 child_row("window one", icons[0].clone(), false, 1),
                 child_row("window two", icons[0].clone(), false, 2),
                 child_row("window three", icons[0].clone(), false, 3),
                 child_row("window four", icons[0].clone(), false, 4),
-                parent_row("org.gnome.Files", 4, icons[1].clone(), true, true),
+                parent_row("org.gnome.Files", 4, icons[1].clone(), true, true, Some(2)),
                 child_row("home dir", icons[1].clone(), false, 1),
                 child_row("downloads", icons[1].clone(), false, 2),
                 child_row("media", icons[1].clone(), false, 3),
@@ -397,14 +434,17 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
 }
 
 /// A parent row as `overlay_model_grouped` builds one: labeled by its
-/// app_id, carrying its app's window count for the badge and its
-/// expansion state for the chevron.
+/// app_id, carrying its app's window count for the badge, its
+/// expansion state for the chevron, and its Ctrl+N ordinal — `None`
+/// for the one row that hints nothing, open cycling's divider (an
+/// expanded entry while `scoped_cycling = false`).
 fn parent_row(
     app: &str,
     count: usize,
     icon: Option<Rc<IconBitmap>>,
     selected: bool,
     expanded: bool,
+    ctrl: Option<usize>,
 ) -> RowModel {
     RowModel {
         title: app.to_string(),
@@ -414,7 +454,7 @@ fn parent_row(
         kind: cosmic_ext_airlock::switcher::RowKind::Parent,
         count,
         expanded,
-        ..RowModel::default()
+        hint: ctrl.map(ui::RowHint::Ctrl),
     }
 }
 
