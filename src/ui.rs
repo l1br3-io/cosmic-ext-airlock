@@ -13,7 +13,7 @@ use cctk::sctk::seat::keyboard::Keysym;
 use cosmic_client_toolkit as cctk;
 
 use crate::ipc::Direction;
-use crate::switcher::{self, Handle, Scope, Snapshot};
+use crate::switcher::{self, Handle, RowKind, Scope, Snapshot};
 
 /// Glyph cell width in logical pixels.
 pub const GLYPH_W: u32 = 8;
@@ -136,6 +136,18 @@ pub const HINT_GAP: u32 = 16;
 /// every card carries the band regardless of row count; only rows 1..9
 /// paint in it.
 pub const HINT_COLS: u32 = 6; // len("Ctrl+9")
+
+/// Indent of a grouped child row's whole cell — icon and title — from
+/// the top-level column, logical px: two 8-grid steps, deep enough to
+/// read as nesting at a glance without re-parenting the row rhythm (the
+/// band still spans the card; only the content indents). Candidate
+/// value: the GR4 preview sheet freezes it (the LV3 pattern).
+pub const TREE_INDENT: u32 = 16;
+
+/// Title-band columns reserved after a parent row's title for the
+/// `×N` window-count badge (`N` up to two digits). Candidate value:
+/// the GR4 preview sheet freezes it (the LV3 pattern).
+pub const BADGE_COLS: u32 = 3;
 
 /// Windows the card keeps in view on a long list when the config sets
 /// no `rows` — the setting's default. The budget counts *windows*, not
@@ -403,8 +415,17 @@ pub struct RowModel {
     pub selected: bool,
     /// The window this row renders — the truth a pointer click selects.
     /// The renderer ignores it; hit-testing reads it. `None` marks a
-    /// continuation row.
+    /// continuation row. A grouped parent row carries its app's
+    /// MRU-front window, so every row-addressed input resolves to
+    /// exactly one window whatever the mode.
     pub handle: Option<Handle>,
+    /// The row's place in the grouped tree; [`RowKind::Leaf`] on every
+    /// flat row. Drives the child indent, the parent's badge and
+    /// chevron, and nothing else — input addressing reads `handle`.
+    pub kind: RowKind,
+    /// On a parent row, the app's window count the badge shows
+    /// (`×N`); zero everywhere else.
+    pub count: usize,
 }
 
 /// What the overlay should draw: the window's rows plus the logical
@@ -520,16 +541,26 @@ pub fn visible_window(len: usize, sel: usize, rows: usize, prev: Option<Viewport
 /// listing windows under `scope`, with app icons from `icons` prepared at
 /// `scale` for the card `palette` paints, windowed by `windowing` — the
 /// session's `rows` budget and the sticky viewport it carries (`None` at
-/// open).
+/// open). `grouping` re-partitions the list into the app tree (see
+/// [`switcher::Grouping`]); off, rows follow [`switcher::eligible`] order
+/// (most recently activated first) exactly as before.
 ///
-/// Rows follow [`switcher::eligible`] order (most recently activated
-/// first), then window per [`visible_window`]: a continuation row
-/// replaces the outermost slot at each truncated edge, and the model
-/// reports the window it computed for the session to carry next. Width
-/// still derives from the *full* eligible set's widest title, so the
-/// card never breathes while the window moves under stepping. Returns
-/// `None` when there is nothing to show: no active workspace, no
-/// eligible windows, or a selection that is not in the eligible set.
+/// Either way, one list, one budget: window per [`visible_window`], a
+/// continuation row replacing the outermost slot at each truncated edge,
+/// and the model reports the window it computed for the session to carry
+/// next. A grouped parent row is labeled by its `app_id` (the icon
+/// cache's own identity) and carries the app's MRU-front window; width
+/// still derives from the *full* set's widest row — title plus the
+/// child indent and the parent badge — so the card never breathes while
+/// the window moves under stepping. Returns `None` when there is nothing
+/// to show: no active workspace, no eligible windows, or a selection
+/// that is not in the eligible set.
+// Eight render inputs, each a distinct concern (list, selection, icons,
+// scale, colors, mode, windowing); the horizontal card (card-layout)
+// extends this seam rather than replacing it, so no bundle is introduced
+// here — an `expect`, so the day the count drops the attribute warns and
+// comes out.
+#[expect(clippy::too_many_arguments)]
 pub fn overlay_model(
     snapshot: &Snapshot,
     selected: Handle,
@@ -537,32 +568,87 @@ pub fn overlay_model(
     icons: &crate::icons::Cache,
     scale: u32,
     palette: &Palette,
+    grouping: bool,
     windowing: Windowing,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
-    let handles = switcher::eligible(&snapshot.toplevels, active, scope);
-    if handles.is_empty() {
+    // The row sequence to show, as (handle, kind): eligible order flat,
+    // the flattened tree grouped. Both draw from one snapshot, so the
+    // sequence a grouped daemon froze its ring over and the sequence
+    // this model builds are the same list.
+    let entries: Vec<(Handle, RowKind)> = if grouping {
+        switcher::Grouping::new(&snapshot.toplevels, active, scope)
+            .rows()
+            .iter()
+            .map(|row| (row.handle, row.kind))
+            .collect()
+    } else {
+        switcher::eligible(&snapshot.toplevels, active, scope)
+            .into_iter()
+            .map(|handle| (handle, RowKind::Leaf))
+            .collect()
+    };
+    if entries.is_empty() {
         return None;
     }
-    let sel = handles.iter().position(|&handle| handle == selected)?;
-    let mut rows = Vec::with_capacity(handles.len());
-    for handle in handles {
-        // Unreachable in practice: eligible() draws from this same snapshot.
+    let sel = entries.iter().position(|&(handle, _)| handle == selected)?;
+    let mut rows = Vec::with_capacity(entries.len());
+    for &(handle, kind) in &entries {
+        // Unreachable in practice: both sequences draw from this same
+        // snapshot.
         let toplevel = snapshot.toplevels.iter().find(|t| t.handle == handle)?;
-        let title = truncate_cols(fold_title(&display_title(
-            &toplevel.title,
-            &toplevel.app_id,
-        )));
+        // The tree's furniture rides inside the same title cap: a child
+        // leaves indent room, a parent badge room.
+        let cap = match kind {
+            RowKind::Child => MAX_COLS - TREE_INDENT / TEXT_W,
+            RowKind::Parent => MAX_COLS - BADGE_COLS,
+            RowKind::Leaf => MAX_COLS,
+        };
+        let title = truncate_cols(
+            fold_title(&display_title(&toplevel.title, &toplevel.app_id)),
+            cap,
+        );
         rows.push(RowModel {
             title,
             icon: icons.bitmap(&toplevel.app_id, scale, palette),
             selected: handle == selected,
             handle: Some(handle),
+            kind,
+            count: 0,
         });
+    }
+    // Parent rows show the app's window count; a parent is its own
+    // app's first row, its children follow contiguously.
+    for index in 0..rows.len() {
+        if entries[index].1 == RowKind::Parent {
+            let mut windows = 1;
+            while entries
+                .get(index + windows)
+                .is_some_and(|&(_, kind)| kind == RowKind::Child)
+            {
+                windows += 1;
+            }
+            rows[index].count = windows;
+            // The parent's label is its app_id — the icon cache's own
+            // identity (spec OQ default; a desktop-entry display name
+            // is a cosmetic follow-up).
+            if let Some(toplevel) = snapshot
+                .toplevels
+                .iter()
+                .find(|t| t.handle == entries[index].0)
+            {
+                rows[index].title =
+                    truncate_cols(fold_title(&toplevel.app_id), MAX_COLS - BADGE_COLS);
+            }
+        }
     }
     let cols = rows
         .iter()
-        .map(|row| row.title.chars().count() as u32)
+        .map(|row| {
+            row.title.chars().count() as u32
+                + (row.kind == RowKind::Child) as u32 * (TREE_INDENT / TEXT_W)
+                + (row.kind == RowKind::Parent) as u32 * BADGE_COLS
+        })
         .max()
         .unwrap_or(0);
     let viewport = visible_window(rows.len(), sel, windowing.rows, windowing.prev);
@@ -597,6 +683,7 @@ fn continuation_row() -> RowModel {
         icon: None,
         selected: false,
         handle: None,
+        ..RowModel::default()
     }
 }
 
@@ -735,11 +822,15 @@ pub fn render(
             }
         }
         // Icon cell: a bitmap prepared at ICON × scale blits 1:1; a
-        // mismatched size or a missing icon draws the generic glyph.
+        // mismatched size or a missing icon draws the generic glyph. A
+        // child row indents its whole cell — icon and title move
+        // together, one TREE_INDENT right of the top-level column.
+        let indent = (row.kind == RowKind::Child) as u32 * TREE_INDENT;
+        let cell_x = PAD_X + indent;
         let cell_y = top + (ROW_H - ICON) / 2;
         match row.icon.as_deref() {
             Some(bitmap) if bitmap.side == ICON * scale => {
-                blit_bitmap(canvas, stride, bitmap, PAD_X * scale, cell_y * scale);
+                blit_bitmap(canvas, stride, bitmap, cell_x * scale, cell_y * scale);
             }
             _ => {
                 let side = GLYPH_W * GLYPH_SCALE;
@@ -747,7 +838,7 @@ pub fn render(
                     canvas,
                     stride,
                     WINDOW_GLYPH,
-                    (PAD_X + (ICON - side) / 2) * scale,
+                    (cell_x + (ICON - side) / 2) * scale,
                     (cell_y + (ICON - side) / 2) * scale,
                     GLYPH_SCALE * scale,
                     palette.text,
@@ -760,7 +851,7 @@ pub fn render(
         // for `cols`; this guard is the defense in depth).
         let text_y = top + (ROW_H - TEXT_H) / 2;
         let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * TEXT_W);
-        let mut lx = PAD_X + ICON + ICON_GAP;
+        let mut lx = cell_x + ICON + ICON_GAP;
         for ch in row.title.chars() {
             if lx + TEXT_W > title_edge {
                 break;
@@ -775,6 +866,40 @@ pub fn render(
                 palette.text,
             );
             lx += TEXT_W;
+        }
+        // Parent badge and chevron (candidate treatments; the GR4
+        // preview sheet freezes both): the app's window count rides
+        // after the title in the muted derivation — `x3`, ASCII-stated
+        // like every other glyph — and '>' marks the enter axis in the
+        // hint gap the card already reserves. Leaves and children earn
+        // neither.
+        if row.kind == RowKind::Parent {
+            let badge = format!("x{}", row.count);
+            for ch in badge.chars().take(BADGE_COLS as usize) {
+                if lx + TEXT_W > title_edge {
+                    break;
+                }
+                draw_glyph(
+                    canvas,
+                    stride,
+                    glyph(ch),
+                    lx * scale,
+                    text_y * scale,
+                    TEXT_W * scale / GLYPH_W,
+                    palette.muted,
+                );
+                lx += TEXT_W;
+            }
+            let chevron_x = title_edge + (HINT_GAP - TEXT_W) / 2;
+            draw_glyph(
+                canvas,
+                stride,
+                glyph('>'),
+                chevron_x * scale,
+                text_y * scale,
+                TEXT_W * scale / GLYPH_W,
+                palette.muted,
+            );
         }
         // Hint: the row's Ctrl+N chord, right-aligned in the band the
         // card always reserves and vertically centered on the titles'
@@ -1113,10 +1238,13 @@ fn display_title(title: &str, app_id: &str) -> String {
     }
 }
 
-/// Caps a title at [`MAX_COLS`] columns, marking the cut with `…`.
-fn truncate_cols(title: String) -> String {
-    if title.chars().count() > MAX_COLS as usize {
-        let keep: String = title.chars().take(MAX_COLS as usize - 1).collect();
+/// Caps a title at `cap` columns, marking the cut with `…`. The cap is
+/// [`MAX_COLS`] for flat rows; grouped rows pay for the child indent and
+/// the parent badge out of the same budget, so the card's width ceiling
+/// holds in the tree too.
+fn truncate_cols(title: String, cap: u32) -> String {
+    if title.chars().count() > cap as usize {
+        let keep: String = title.chars().take(cap as usize - 1).collect();
         format!("{keep}…")
     } else {
         title
@@ -1161,6 +1289,19 @@ pub enum GestureKey {
     /// the model's end — flows through and no-ops at the daemon,
     /// leaving the session intact.
     SelectHandle(Option<Handle>),
+    /// Tab in grouped mode: the app step — next/previous *parent* row,
+    /// skipping the current app's children (the GNOME mirror). Flat
+    /// mode keeps [`GestureKey::Tab`] stepping rows; the mapping, not
+    /// the machine, carries the mode.
+    TabApps,
+    /// → in grouped mode: enter the selected parent's children (the W3C
+    /// expand axis, all-expanded v1). The daemon resolves the target
+    /// against the frozen tree.
+    EnterChild,
+    /// ← in grouped mode: exit to the selected child's parent row (the
+    /// W3C collapse axis's exit half). The daemon resolves the target
+    /// against the frozen tree.
+    ExitParent,
     Escape,
     Other,
 }
@@ -1249,6 +1390,18 @@ pub enum GestureOutput {
     /// Move the selection one window in this direction and refresh the
     /// overlay.
     Step(Direction),
+    /// Move the selection to the next/previous *parent* row and refresh
+    /// — grouped mode's Tab. The daemon resolves the jump against the
+    /// session's frozen tree; flat sessions never see this output.
+    StepParent(Direction),
+    /// → in grouped mode: move the selection to the selected parent's
+    /// first child. The daemon resolves against the frozen tree; a
+    /// leaf's enter is the W3C no-op.
+    EnterChild,
+    /// ← in grouped mode: move the selection to the selected child's
+    /// parent row. The daemon resolves against the frozen tree; a
+    /// top-level row's exit is the W3C no-op.
+    ExitParent,
     /// Activate the selection and unmap the overlay.
     Commit,
     /// Select and activate the captured window in one motion — the
@@ -1301,6 +1454,17 @@ impl Gesture {
                     GestureOutput::Commit
                 }
                 GestureKey::Arrow(direction) => GestureOutput::Step(direction),
+                // Grouped mode's key vocabulary. The machine cannot
+                // resolve any of them — the targets live in the
+                // daemon's frozen tree — so it forwards them as
+                // stepping outputs exactly as it forwards arrows.
+                GestureKey::TabApps => GestureOutput::StepParent(if shift {
+                    Direction::Previous
+                } else {
+                    Direction::Next
+                }),
+                GestureKey::EnterChild => GestureOutput::EnterChild,
+                GestureKey::ExitParent => GestureOutput::ExitParent,
                 // Select-and-activate in one motion, addressing the
                 // event-time handle; the session stays open — the daemon
                 // closes it via `close()` only when the activation
@@ -1364,19 +1528,56 @@ impl Gesture {
     }
 }
 
-/// Normalizes a grabbed key press into gesture input.
+/// Normalizes a grabbed key press into gesture input, grouping-aware.
 ///
 /// Shift+Tab arrives as ISO_Left_Tab on most layouts and as Tab plus the
 /// shift modifier on others: both step backwards. `shift_held` and
 /// `ctrl_held` are the seat's last reported modifier states — Ctrl
 /// classifies digit presses, exactly as shift classifies Tab.
-pub fn key_input(keysym: Keysym, shift_held: bool, ctrl_held: bool) -> GestureInput {
+///
+/// `grouped` re-binds the tree axes per the W3C vertical treeview: Tab
+/// steps apps ([`GestureKey::TabApps`]), → enters a parent
+/// ([`GestureKey::EnterChild`]), ← exits to the parent
+/// ([`GestureKey::ExitParent`]). Flat mode (`grouped = false`) keeps
+/// today's mapping byte for byte — Left/Right ride with Up/Down as step
+/// aliases, Tab steps rows — pinned by the flat regression tests. The
+/// boundary passes the live model's own mode flag, so the keysym the
+/// user pressed maps against the list they see.
+pub fn key_input(keysym: Keysym, shift_held: bool, ctrl_held: bool, grouped: bool) -> GestureInput {
     let (key, shift) = match keysym {
-        Keysym::ISO_Left_Tab => (GestureKey::Tab, true),
-        Keysym::Tab => (GestureKey::Tab, shift_held),
+        Keysym::ISO_Left_Tab => (
+            if grouped {
+                GestureKey::TabApps
+            } else {
+                GestureKey::Tab
+            },
+            true,
+        ),
+        Keysym::Tab => (
+            if grouped {
+                GestureKey::TabApps
+            } else {
+                GestureKey::Tab
+            },
+            shift_held,
+        ),
         Keysym::Return | Keysym::KP_Enter | Keysym::ISO_Enter => (GestureKey::Commit, shift_held),
-        Keysym::Up | Keysym::Left => (GestureKey::Arrow(Direction::Previous), false),
-        Keysym::Down | Keysym::Right => (GestureKey::Arrow(Direction::Next), false),
+        Keysym::Up => (GestureKey::Arrow(Direction::Previous), false),
+        Keysym::Down => (GestureKey::Arrow(Direction::Next), false),
+        Keysym::Left => {
+            if grouped {
+                (GestureKey::ExitParent, shift_held)
+            } else {
+                (GestureKey::Arrow(Direction::Previous), false)
+            }
+        }
+        Keysym::Right => {
+            if grouped {
+                (GestureKey::EnterChild, shift_held)
+            } else {
+                (GestureKey::Arrow(Direction::Next), false)
+            }
+        }
         Keysym::Escape => (GestureKey::Escape, shift_held),
         // Ctrl+digits map with or without shift held; without Ctrl the
         // number row stays Other — it must never surprise-activate.
@@ -1632,6 +1833,7 @@ mod tests {
             &no_icons(),
             2,
             &Palette::dark(),
+            false,
             Windowing {
                 rows: DEFAULT_ROWS,
                 prev: None,
@@ -2317,8 +2519,176 @@ mod tests {
             &no_icons(),
             2,
             &Palette::dark(),
+            false,
             Windowing { rows, prev },
         )
+    }
+
+    /// Like [`build`], grouped: the app-partitioned tree view.
+    fn build_grouped(snap: &Snapshot, selected: Handle, scope: Scope) -> Option<OverlayModel> {
+        overlay_model(
+            snap,
+            selected,
+            scope,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            true,
+            Windowing {
+                rows: DEFAULT_ROWS,
+                prev: None,
+            },
+        )
+    }
+
+    // --- Grouped model ----------------------------------------------------
+
+    /// The grouped fixture the model tests read: MRU a1, b1, a2, u —
+    /// two windows of app a, one of b, one un-attributable.
+    fn grouped_snap() -> Snapshot {
+        snapshot(
+            vec![
+                toplevel(1, "a-front", "app.a", &[1], switcher::State::ACTIVATED, 40),
+                toplevel(2, "b-only", "app.b", &[1], switcher::State::default(), 30),
+                toplevel(3, "a-back", "app.a", &[1], switcher::State::default(), 20),
+                toplevel(4, "nowhere", "", &[1], switcher::State::default(), 10),
+            ],
+            Some(1),
+        )
+    }
+
+    #[test]
+    fn grouped_model_lists_parents_then_children_and_leaves() {
+        // MRU a1, b1, a2, u partitions to: parent a (labeled by its
+        // app_id), a's second window as its child, b's single window as
+        // a leaf under its own window title (leaves are window rows,
+        // not app rows), and the un-attributable window as a top-level
+        // leaf.
+        let model = build_grouped(&grouped_snap(), Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
+        let rows: Vec<(&str, crate::switcher::RowKind, usize)> = model
+            .rows
+            .iter()
+            .map(|row| (row.title.as_str(), row.kind, row.count))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("app.a", crate::switcher::RowKind::Parent, 2),
+                ("a-back", crate::switcher::RowKind::Child, 0),
+                ("b-only", crate::switcher::RowKind::Leaf, 0),
+                ("nowhere", crate::switcher::RowKind::Leaf, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn grouped_model_parents_carry_the_front_window_handle() {
+        // A parent row resolves to exactly one window — its app's
+        // MRU-front — so Ctrl+N, clicks, and commit on the parent row
+        // address that window (the input-integrity contract).
+        let model = build_grouped(&grouped_snap(), Handle(3), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
+        assert_eq!(model.rows[0].handle, Some(Handle(1)));
+        assert!(!model.rows[0].selected, "the parent is not the selection");
+        assert_eq!(model.rows[1].handle, Some(Handle(3)));
+        assert!(model.rows[1].selected, "the selected child marks its row");
+    }
+
+    #[test]
+    fn grouped_model_sizes_for_indent_and_badge() {
+        // The card widens for the tree: a child's indent columns and a
+        // parent's count-badge columns join the flat title budget. Same
+        // title lengths everywhere isolate the tree columns.
+        let flat = build(&grouped_snap(), Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
+        let grouped = build_grouped(&grouped_snap(), Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
+        // Longest flat title is 7 cols; the tree budget is the parent's
+        // 5 title cols + BADGE_COLS, the child's 5 + TREE_INDENT cols.
+        let tree_cols = (5 + BADGE_COLS).max(5 + TREE_INDENT / TEXT_W).max(7);
+        assert_eq!(
+            grouped.width,
+            2 * PAD_X + ICON + ICON_GAP + tree_cols * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
+        );
+        assert_eq!(flat.width, grouped.width - (tree_cols - 7) * TEXT_W);
+    }
+
+    #[test]
+    fn grouped_model_windows_the_flattened_sequence() {
+        // One list, one budget: `rows`/`…` apply over parents and
+        // children together through the same windowing rule — here a
+        // 7-row tree at budget 3 keeps 5 slots with the bottom edge
+        // truncated, selection mid-list.
+        let snap = snapshot(
+            vec![
+                toplevel(1, "a1", "app.a", &[1], switcher::State::ACTIVATED, 70),
+                toplevel(2, "a2", "app.a", &[1], switcher::State::default(), 60),
+                toplevel(3, "a3", "app.a", &[1], switcher::State::default(), 50),
+                toplevel(4, "b1", "app.b", &[1], switcher::State::default(), 40),
+                toplevel(5, "b2", "app.b", &[1], switcher::State::default(), 30),
+                toplevel(6, "c1", "app.c", &[1], switcher::State::default(), 20),
+                toplevel(7, "u1", "", &[1], switcher::State::default(), 10),
+            ],
+            Some(1),
+        );
+        // Flattened: P-a1, C-a2, C-a3, P-b1, C-b2, C-c1(leaf), U-leaf.
+        // Selecting the b parent (index 3) at budget 3: 5 slots from 0,
+        // bottom truncated, the `…` row replacing the 6th slot.
+        let model = overlay_model(
+            &snap,
+            Handle(4),
+            Scope::CurrentWorkspace,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            true,
+            Windowing {
+                rows: 3,
+                prev: None,
+            },
+        )
+        .expect("eligible windows exist");
+        let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
+        assert_eq!(
+            handles,
+            vec![
+                Some(Handle(1)),
+                Some(Handle(2)),
+                Some(Handle(3)),
+                Some(Handle(4)),
+                None, // the `…` continuation slot
+            ]
+        );
+        assert!(model.viewport.bottom);
+        assert_eq!(model.viewport.content, 4);
+    }
+
+    #[test]
+    fn grouped_render_indents_the_child_row() {
+        // The child's whole cell — generic window glyph included — sits
+        // TREE_INDENT right of the top-level column, so the pixel where
+        // a parent's glyph starts is pure card on the child's row, and
+        // the child's ink appears one indent over.
+        let model = build_grouped(&grouped_snap(), Handle(1), Scope::CurrentWorkspace)
+            .expect("eligible windows exist");
+        let (canvas, stride) = rendered(&model, 2);
+        let side = GLYPH_W * GLYPH_SCALE;
+        let glyph_x = PAD_X + (ICON - side) / 2;
+        let glyph_y = PAD_Y + (ROW_H - ICON) / 2 + (ICON - side) / 2;
+        let child_y = glyph_y + (ROW_H + ROW_GAP);
+        // Parent row: glyph ink at the top-level origin.
+        assert_eq!(pixel(&canvas, stride, glyph_x * 2, glyph_y * 2), COLOR_TEXT);
+        // Child row: that origin is card background…
+        assert_eq!(
+            pixel(&canvas, stride, glyph_x * 2, child_y * 2),
+            COLOR_BACKGROUND
+        );
+        // …and the ink sits one TREE_INDENT to the right.
+        assert_eq!(
+            pixel(&canvas, stride, (glyph_x + TREE_INDENT) * 2, child_y * 2),
+            COLOR_TEXT
+        );
     }
 
     #[test]
@@ -2671,6 +3041,7 @@ mod tests {
                     icon: None,
                     selected: false,
                     handle: Some(Handle(index as u64 + 1)),
+                    ..Default::default()
                 })
                 .collect(),
             width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
@@ -2920,6 +3291,7 @@ mod tests {
                 icon: Some(Rc::new(icon)),
                 selected: false,
                 handle: Some(Handle(1)),
+                ..Default::default()
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
@@ -2954,6 +3326,7 @@ mod tests {
                 icon: Some(Rc::new(bogus)),
                 selected: false,
                 handle: Some(Handle(1)),
+                ..Default::default()
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
@@ -3213,6 +3586,7 @@ mod tests {
                         icon: None,
                         selected: index == selected,
                         handle: Some(Handle(index as u64 + 1)),
+                        ..Default::default()
                     })
                     .collect(),
                 width: 2 * PAD_X + ICON + ICON_GAP + 8 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
@@ -3268,6 +3642,7 @@ mod tests {
                     icon: None,
                     selected: false,
                     handle: Some(Handle(index as u64 + 1)),
+                    ..Default::default()
                 })
                 .collect(),
             width: 2 * PAD_X + ICON + ICON_GAP + 10 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
@@ -3300,6 +3675,7 @@ mod tests {
                 icon: None,
                 selected: false,
                 handle: Some(Handle(1)),
+                ..Default::default()
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + 4 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
@@ -3333,12 +3709,14 @@ mod tests {
                     icon: None,
                     selected: true,
                     handle: Some(Handle(1)),
+                    ..Default::default()
                 },
                 RowModel {
                     title: "Bottom".into(),
                     icon: None,
                     selected: false,
                     handle: Some(Handle(2)),
+                    ..Default::default()
                 },
             ],
             width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
@@ -3374,6 +3752,7 @@ mod tests {
                 icon: None,
                 selected: false,
                 handle: Some(Handle(1)),
+                ..Default::default()
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
@@ -3422,6 +3801,7 @@ mod tests {
                     icon: None,
                     selected: i == 0,
                     handle: Some(Handle(i as u64 + 1)),
+                    ..Default::default()
                 })
                 .collect(),
             width: 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
@@ -3907,7 +4287,7 @@ mod tests {
     #[test]
     fn key_input_maps_tab_escape_and_backtab() {
         assert_eq!(
-            key_input(Keysym::Tab, false, false),
+            key_input(Keysym::Tab, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: false
@@ -3915,7 +4295,7 @@ mod tests {
         );
         // Shift held at the seat steers a plain Tab backwards.
         assert_eq!(
-            key_input(Keysym::Tab, true, false),
+            key_input(Keysym::Tab, true, false, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: true
@@ -3923,21 +4303,21 @@ mod tests {
         );
         // ISO_Left_Tab is Shift+Tab by another name.
         assert_eq!(
-            key_input(Keysym::ISO_Left_Tab, false, false),
+            key_input(Keysym::ISO_Left_Tab, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: true
             }
         );
         assert_eq!(
-            key_input(Keysym::Escape, false, false),
+            key_input(Keysym::Escape, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Escape,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Return, false, false),
+            key_input(Keysym::Return, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Commit,
                 shift: false
@@ -3950,7 +4330,7 @@ mod tests {
         // Return, KP_Enter, and ISO_Enter are one key by three names.
         for keysym in [Keysym::Return, Keysym::KP_Enter, Keysym::ISO_Enter] {
             assert_eq!(
-                key_input(keysym, false, false),
+                key_input(keysym, false, false, false),
                 GestureInput::Press {
                     key: GestureKey::Commit,
                     shift: false
@@ -3970,7 +4350,7 @@ mod tests {
             (Keysym::Right, Direction::Next),
         ] {
             assert_eq!(
-                key_input(keysym, true, false),
+                key_input(keysym, true, false, false),
                 GestureInput::Press {
                     key: GestureKey::Arrow(direction),
                     shift: false
@@ -3982,7 +4362,7 @@ mod tests {
     #[test]
     fn key_input_leaves_unknown_keysyms_alone() {
         assert_eq!(
-            key_input(Keysym::Delete, true, false),
+            key_input(Keysym::Delete, true, false, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: true
@@ -4007,7 +4387,7 @@ mod tests {
         ];
         for (keysym, row) in digits {
             assert_eq!(
-                key_input(keysym, false, true),
+                key_input(keysym, false, true, false),
                 GestureInput::Press {
                     key: GestureKey::Select(row),
                     shift: false
@@ -4033,7 +4413,7 @@ mod tests {
         ];
         for (keysym, row) in digits {
             assert_eq!(
-                key_input(keysym, false, true),
+                key_input(keysym, false, true, false),
                 GestureInput::Press {
                     key: GestureKey::Select(row),
                     shift: false
@@ -4047,14 +4427,14 @@ mod tests {
         // The number row must never surprise-activate: without Ctrl held
         // a digit is just an unknown key, top row and keypad alike.
         assert_eq!(
-            key_input(Keysym::_3, false, false),
+            key_input(Keysym::_3, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::KP_5, false, false),
+            key_input(Keysym::KP_5, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: false
@@ -4067,7 +4447,7 @@ mod tests {
         // Shift is ignored for digits: the chord still selects, and the
         // seat's shift state is carried as-is.
         assert_eq!(
-            key_input(Keysym::_4, true, true),
+            key_input(Keysym::_4, true, true, false),
             GestureInput::Press {
                 key: GestureKey::Select(3),
                 shift: true
@@ -4080,21 +4460,21 @@ mod tests {
         // No Ctrl+0-as-10 (OQ 2), and Ctrl on a non-digit key is not a
         // selection.
         assert_eq!(
-            key_input(Keysym::_0, false, true),
+            key_input(Keysym::_0, false, true, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::KP_0, false, true),
+            key_input(Keysym::KP_0, false, true, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Delete, false, true),
+            key_input(Keysym::Delete, false, true, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: false
@@ -4107,26 +4487,202 @@ mod tests {
         // Existing key semantics are byte-identical whatever Ctrl does:
         // the digit arm never swallows another gesture key.
         assert_eq!(
-            key_input(Keysym::Tab, false, true),
+            key_input(Keysym::Tab, false, true, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Escape, false, true),
+            key_input(Keysym::Escape, false, true, false),
             GestureInput::Press {
                 key: GestureKey::Escape,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Return, false, true),
+            key_input(Keysym::Return, false, true, false),
             GestureInput::Press {
                 key: GestureKey::Commit,
                 shift: false
             }
         );
+    }
+
+    #[test]
+    fn grouped_key_input_maps_tab_to_the_app_step() {
+        // Tab is the app step in grouped mode — Tab steps parents, the
+        // GNOME mirror — with shift steering backwards exactly as flat.
+        assert_eq!(
+            key_input(Keysym::Tab, false, false, true),
+            GestureInput::Press {
+                key: GestureKey::TabApps,
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Tab, true, false, true),
+            GestureInput::Press {
+                key: GestureKey::TabApps,
+                shift: true
+            }
+        );
+        // ISO_Left_Tab is Shift+Tab by another name, grouped or flat.
+        assert_eq!(
+            key_input(Keysym::ISO_Left_Tab, false, false, true),
+            GestureInput::Press {
+                key: GestureKey::TabApps,
+                shift: true
+            }
+        );
+    }
+
+    #[test]
+    fn grouped_key_input_maps_left_right_to_the_tree_walk() {
+        // The W3C vertical tree axes: → enters a multi-window app's
+        // children, ← exits to the parent. The flat step aliases are
+        // gone in grouped mode — the vertical step axis is ↑/↓ alone.
+        assert_eq!(
+            key_input(Keysym::Right, false, false, true),
+            GestureInput::Press {
+                key: GestureKey::EnterChild,
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Left, false, false, true),
+            GestureInput::Press {
+                key: GestureKey::ExitParent,
+                shift: false
+            }
+        );
+        // Up/Down keep stepping visible rows whatever the mode.
+        assert_eq!(
+            key_input(Keysym::Up, false, false, true),
+            GestureInput::Press {
+                key: GestureKey::Arrow(Direction::Previous),
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Down, false, false, true),
+            GestureInput::Press {
+                key: GestureKey::Arrow(Direction::Next),
+                shift: false
+            }
+        );
+    }
+
+    #[test]
+    fn flat_key_input_keeps_the_left_right_step_aliases() {
+        // The regression pin: grouping off reproduces today's mapping
+        // byte for byte — Left/Right step like Up/Down, Tab steps rows.
+        assert_eq!(
+            key_input(Keysym::Left, false, false, false),
+            GestureInput::Press {
+                key: GestureKey::Arrow(Direction::Previous),
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Right, false, false, false),
+            GestureInput::Press {
+                key: GestureKey::Arrow(Direction::Next),
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Tab, false, false, false),
+            GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: false
+            }
+        );
+    }
+
+    #[test]
+    fn grouped_key_input_keeps_digits_and_commit_unchanged() {
+        // Ctrl+N and the Enter family mean the same thing over a tree:
+        // visible rows are rows, commit is commit.
+        assert_eq!(
+            key_input(Keysym::_3, false, true, true),
+            GestureInput::Press {
+                key: GestureKey::Select(2),
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Return, false, false, true),
+            GestureInput::Press {
+                key: GestureKey::Commit,
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Escape, false, false, true),
+            GestureInput::Press {
+                key: GestureKey::Escape,
+                shift: false
+            }
+        );
+    }
+
+    #[test]
+    fn the_app_step_moves_the_selection_between_parents() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::TabApps,
+                shift: false
+            }),
+            GestureOutput::StepParent(Direction::Next)
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::TabApps,
+                shift: true
+            }),
+            GestureOutput::StepParent(Direction::Previous)
+        );
+    }
+
+    #[test]
+    fn the_tree_walk_keys_forward_to_the_daemon() {
+        // The machine cannot resolve tree jumps — the daemon holds the
+        // frozen tree — so it forwards them while showing, exactly as it
+        // forwards arrow steps.
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::EnterChild,
+                shift: false
+            }),
+            GestureOutput::EnterChild
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::ExitParent,
+                shift: false
+            }),
+            GestureOutput::ExitParent
+        );
+    }
+
+    #[test]
+    fn the_grouped_keys_mean_nothing_between_sessions() {
+        let mut gesture = Gesture::default();
+        for key in [
+            GestureKey::TabApps,
+            GestureKey::EnterChild,
+            GestureKey::ExitParent,
+        ] {
+            assert_eq!(
+                gesture.feed(GestureInput::Press { key, shift: false }),
+                GestureOutput::Nothing
+            );
+        }
     }
 
     #[test]
@@ -4148,7 +4704,7 @@ mod tests {
         ];
         for (keysym, row) in digits {
             assert_eq!(
-                key_input(keysym, false, true),
+                key_input(keysym, false, true, false),
                 GestureInput::Press {
                     key: GestureKey::Select(row),
                     shift: false

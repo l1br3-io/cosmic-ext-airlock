@@ -235,11 +235,12 @@ impl Ring {
 // tests here and public in the dev lib target — an `allow`, not an
 // `expect`, for exactly that reason (see `ui::Gesture::showing`).
 #[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
     /// A top-level row nothing nests under: a single-window app (the W3C
     /// end-node rule — no chevron, no count) or an un-attributable
     /// window, which never groups.
+    #[default]
     Leaf,
     /// A multi-window app's top-level row, immediately followed by its
     /// [`RowKind::Child`] rows.

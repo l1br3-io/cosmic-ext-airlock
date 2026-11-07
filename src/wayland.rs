@@ -523,7 +523,10 @@ impl KeyboardHandler for App {
         event: KeyEvent,
     ) {
         if self.overlay.is_some() {
-            let input = ui::key_input(event.keysym, self.shift_held, self.ctrl_held);
+            // The key map rides the shown card: Tab/→/← mean tree walks
+            // exactly when the visible list paints the tree.
+            let grouped = self.overlay.as_ref().is_some_and(|overlay| overlay.grouped);
+            let input = ui::key_input(event.keysym, self.shift_held, self.ctrl_held, grouped);
             // The Select twin: `key_input` stays pure (a keysym → row
             // translation), and the row resolves to its window here, at
             // event receipt against the live model — the keyboard twin
@@ -899,6 +902,10 @@ pub struct Overlay {
     /// The card colors `model` renders with; swapped with the model so a
     /// redraw never mixes a new model with the previous palette.
     palette: ui::Palette,
+    /// Whether the shown card paints the grouped tree — the key map's
+    /// mode, swapped with the model so Tab/→/← always mean what the
+    /// visible list shows.
+    grouped: bool,
     /// Device pixels per logical pixel this overlay renders at.
     scale: u32,
     /// Size granted by the compositor; `None` until the first configure.
@@ -932,6 +939,7 @@ impl Overlay {
     pub fn new(
         model: OverlayModel,
         palette: ui::Palette,
+        grouped: bool,
         env: OverlayEnv<'_>,
     ) -> Result<Self, OverlayError> {
         let OverlayEnv {
@@ -973,6 +981,7 @@ impl Overlay {
             pool,
             model,
             palette,
+            grouped,
             scale,
             size: None,
             close_at: Instant::now() + ui::CLOSE_AFTER,
@@ -983,12 +992,13 @@ impl Overlay {
     /// Swaps in a fresh model and palette. Same-sized redraws happen
     /// immediately; a size change goes through `set_size` + commit and
     /// draws on the next configure.
-    pub fn update(&mut self, model: OverlayModel, palette: ui::Palette) {
+    pub fn update(&mut self, model: OverlayModel, palette: ui::Palette, grouped: bool) {
         let unchanged = self.size == Some((model.width, model.height));
         self.close_at = Instant::now() + ui::CLOSE_AFTER;
         let (width, height) = (model.width, model.height);
         self.model = model;
         self.palette = palette;
+        self.grouped = grouped;
         if unchanged {
             self.draw();
         } else {
@@ -1405,9 +1415,9 @@ impl Session {
     /// `palette`, or refreshes it if it is already up. Creation failures
     /// are logged, not fatal: a press that cannot draw still cycles
     /// focus.
-    pub fn overlay_show(&mut self, model: OverlayModel, palette: ui::Palette) {
+    pub fn overlay_show(&mut self, model: OverlayModel, palette: ui::Palette, grouped: bool) {
         if let Some(overlay) = self.app.overlay.as_mut() {
-            overlay.update(model, palette);
+            overlay.update(model, palette, grouped);
             let rows = overlay.model().rows.len();
             eprintln!("airlock daemon: overlay updated ({rows} rows)");
             let _ = self.conn.flush();
@@ -1424,6 +1434,7 @@ impl Session {
         let overlay = Overlay::new(
             model,
             palette,
+            grouped,
             OverlayEnv {
                 compositor: &self.app.compositor,
                 layer_shell: &self.app.layer_shell,

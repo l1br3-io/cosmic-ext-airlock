@@ -174,6 +174,7 @@ fn row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
         // but a content row must carry one: a handleless row renders as
         // the continuation affordance.
         handle: Some(Handle::default()),
+        ..RowModel::default()
     }
 }
 
@@ -185,6 +186,7 @@ fn dots_row() -> RowModel {
         icon: None,
         selected: false,
         handle: None,
+        ..RowModel::default()
     }
 }
 
@@ -325,7 +327,126 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
     sheet.push(windowed(30, 15, rows, None, icons));
     sheet.push(windowed(30, 15, ui::ROWS_MIN, None, icons));
     sheet.push(windowed(30, 15, ui::ROWS_MAX, None, icons));
+    // The grouped family (grouping): a mixed tree with the selection on
+    // its parent, the same tree with the selection on a child, and the
+    // tree pushed past the `rows` budget so the `…` windowing rides the
+    // flattened sequence. Candidate tokens (indent, badge, chevron) —
+    // the GR4 sheet freezes them.
+    sheet.push(tree_card(
+        vec![
+            parent_row("firefox", 3, icons[0].clone(), true),
+            child_row("twitter.com/home", icons[0].clone(), false),
+            child_row("github.com — PR 42", icons[0].clone(), false),
+            parent_row("org.gnome.TextEditor", 2, icons[2].clone(), false),
+            child_row("overlay-preview.rs", icons[2].clone(), false),
+            row("kitty — solo window", icons[4].clone(), false),
+            row("un-attributable", None, false),
+        ],
+        0,
+    ));
+    sheet.push(tree_card(
+        vec![
+            parent_row("firefox", 3, icons[0].clone(), false),
+            child_row("twitter.com/home", icons[0].clone(), true),
+            child_row("github.com — PR 42", icons[0].clone(), false),
+            parent_row("org.gnome.TextEditor", 2, icons[2].clone(), false),
+            child_row("overlay-preview.rs", icons[2].clone(), false),
+            row("kitty — solo window", icons[4].clone(), false),
+            row("un-attributable", None, false),
+        ],
+        1,
+    ));
+    sheet.push(tree_card(
+        {
+            // The budget window over the flattened sequence, hand-rolled
+            // exactly as `overlay_model` windows it: a 12-row tree at the
+            // default budget keeps 10 slots, the `…` rows replacing the
+            // outermost slots at each truncated edge.
+            let long = vec![
+                parent_row("firefox", 5, icons[0].clone(), false),
+                child_row("window one", icons[0].clone(), false),
+                child_row("window two", icons[0].clone(), false),
+                child_row("window three", icons[0].clone(), false),
+                child_row("window four", icons[0].clone(), false),
+                parent_row("org.gnome.Files", 4, icons[1].clone(), true),
+                child_row("home dir", icons[1].clone(), false),
+                child_row("downloads", icons[1].clone(), false),
+                child_row("media", icons[1].clone(), false),
+                row("kitty — solo window", icons[4].clone(), false),
+                row("code — airlock", icons[5].clone(), false),
+                row("un-attributable", None, false),
+            ];
+            let vp = ui::visible_window(long.len(), 5, ui::DEFAULT_ROWS, None);
+            let mut windowed_rows = Vec::new();
+            if vp.top {
+                windowed_rows.push(dots_row());
+            }
+            windowed_rows.extend(
+                long.into_iter()
+                    .skip(vp.start + vp.top as usize)
+                    .take(vp.content),
+            );
+            if vp.bottom {
+                windowed_rows.push(dots_row());
+            }
+            windowed_rows
+        },
+        5,
+    ));
     sheet
+}
+
+/// A parent row as `overlay_model` builds one grouped: labeled by its
+/// app_id, carrying its app's window count for the badge.
+fn parent_row(app: &str, count: usize, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
+    RowModel {
+        title: app.to_string(),
+        icon,
+        selected,
+        handle: Some(Handle::default()),
+        kind: cosmic_ext_airlock::switcher::RowKind::Parent,
+        count,
+    }
+}
+
+/// A child row: a window title nested under its parent.
+fn child_row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
+    RowModel {
+        kind: cosmic_ext_airlock::switcher::RowKind::Child,
+        ..row(title, icon, selected)
+    }
+}
+
+/// Composes one grouped card, sized the way `overlay_model` sizes it:
+/// the title budget carries the child indent and the parent badge
+/// columns beside the titles themselves.
+fn tree_card(rows: Vec<RowModel>, selected: usize) -> OverlayModel {
+    let shown = rows.len() as u32;
+    let mut model = OverlayModel {
+        rows,
+        ..OverlayModel::default()
+    };
+    model.rows[selected].selected = true;
+    let cols = model
+        .rows
+        .iter()
+        .map(|row| {
+            row.title.chars().count() as u32
+                + (row.kind == cosmic_ext_airlock::switcher::RowKind::Child) as u32
+                    * (ui::TREE_INDENT / ui::TEXT_W)
+                + (row.kind == cosmic_ext_airlock::switcher::RowKind::Parent) as u32
+                    * ui::BADGE_COLS
+        })
+        .max()
+        .unwrap_or(1);
+    model.width = 2 * ui::PAD_X
+        + ui::ICON
+        + ui::ICON_GAP
+        + cols * ui::TEXT_W
+        + ui::HINT_GAP
+        + ui::HINT_COLS * ui::TEXT_W;
+    model.height = ui::card_height(shown);
+    model
 }
 
 fn single() -> OverlayModel {
