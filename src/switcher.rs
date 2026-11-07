@@ -234,29 +234,31 @@ impl Ring {
 // the binary until the grouped overlay consumes it, exercised by the
 // tests here and public in the dev lib target — an `allow`, not an
 // `expect`, for exactly that reason (see `ui::Gesture::showing`).
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
     /// A top-level row nothing nests under: a single-window app (the W3C
     /// end-node rule — no chevron, no count) or an un-attributable
-    /// window, which never groups.
+    /// window, which never groups. Always visible whatever the
+    /// expansion state.
     #[default]
     Leaf,
-    /// A multi-window app's top-level row, immediately followed by its
-    /// [`RowKind::Child`] rows.
+    /// A multi-window app's top-level row — the level-1 "layer" entry.
+    /// Its children sit contiguously after it in [`Grouping::rows`] and
+    /// join the visible sequence only while the app is expanded.
     Parent,
-    /// A window nested under the nearest preceding parent of its app.
+    /// A window nested under the nearest preceding parent of its app —
+    /// a level-2 row.
     Child,
 }
 
 /// One row of the grouped switcher list: the window the row commits to,
 /// plus its place in the app tree.
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupedRow {
     /// The window this row resolves to at commit time. A parent carries
-    /// its app's MRU-front eligible window — GNOME's `cachedWindows[0]`
-    /// semantics — so Alt-release on a parent row activates that window.
+    /// its app's MRU-front eligible window — the entry's implied
+    /// window, `[alt]+1` — so Alt-release on a parent row activates
+    /// that window.
     pub handle: Handle,
     /// The app the row belongs to: the grouping key for parents and
     /// children, empty for un-attributable top-level leaves.
@@ -264,15 +266,15 @@ pub struct GroupedRow {
     pub kind: RowKind,
 }
 
-/// The eligible list re-partitioned into an app → windows tree, flattened
-/// to the all-expanded row sequence: parent rows in MRU first-appearance
-/// order, each followed by its children in MRU order, top-level leaves at
-/// their own first-appearance positions. All parents expanded is the v1
-/// model — no collapse state exists, and the sequence freezes at open
-/// exactly as the flat list does.
+/// The eligible list re-partitioned into an app → windows tree: parent
+/// rows in MRU first-appearance order, each followed by its children in
+/// MRU order, top-level leaves at their own first-appearance positions.
+/// The window set freezes at open exactly as the flat list does.
 ///
-/// Windows of `app` in [`eligible`] order, or the empty count it never
-/// gets: an empty app_id groups nothing (the [`app_anchor`] rule), so
+/// Expansion is *caller state*, not tree state: groups render collapsed
+/// until the app's id appears in the caller's expanded set, and
+/// [`Grouping::visible`] cuts the frozen rows down to what the card
+/// shows. An empty app_id groups nothing (the [`app_anchor`] rule), so
 /// unattributable windows stay top-level leaf rows.
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -317,16 +319,20 @@ impl Grouping {
                     kind: RowKind::Leaf,
                 });
             } else if emitted.insert(app.as_str()) {
-                // First appearance fronts its app's block; the parent
-                // carries this, the MRU-front window. The app's other
-                // windows follow as children, MRU within the parent.
+                // First appearance fronts its app's block as the parent
+                // — the level-1 layer entry, carrying the app's
+                // MRU-front window as its implied window. The app's
+                // *whole* window set follows as children in MRU order,
+                // front window first: the parent commits what the
+                // sketch numbers `[alt]+1`, so that window is the first
+                // child the card shows.
                 rows.push(GroupedRow {
                     handle,
                     app_id: app.clone(),
                     kind: RowKind::Parent,
                 });
                 for (&sibling, sibling_app) in handles.iter().zip(&apps) {
-                    if sibling != handle && sibling_app == app {
+                    if sibling_app == app {
                         rows.push(GroupedRow {
                             handle: sibling,
                             app_id: app.clone(),
@@ -342,10 +348,62 @@ impl Grouping {
     }
 
     /// The flattened row sequence — parents each followed by their
-    /// children, top-level leaves at their own positions — the sequence
-    /// ↑/↓ stepping and the `rows` budget apply over.
+    /// children, top-level leaves at their own positions — the frozen
+    /// window set every walk addresses.
     pub fn rows(&self) -> &[GroupedRow] {
         &self.rows
+    }
+
+    /// The rows the card shows under `expanded`: every level-1 row,
+    /// plus the children of each expanded app in their frozen order —
+    /// the sequence ↓/↑ stepping, the `rows` budget, and pointer rows
+    /// apply over. A collapsed group contributes only its parent row.
+    pub fn visible(&self, expanded: &std::collections::HashSet<String>) -> Vec<usize> {
+        let mut visible = Vec::with_capacity(self.rows.len());
+        let mut parent_app: Option<&str> = None;
+        for (index, row) in self.rows.iter().enumerate() {
+            match row.kind {
+                RowKind::Child => {
+                    // Children ride along only while their app is
+                    // expanded; `parent_app` tracks the block they
+                    // belong to (children sit contiguously under theirs).
+                    if let Some(app) = parent_app
+                        && expanded.contains(app)
+                    {
+                        visible.push(index);
+                    }
+                }
+                _ => {
+                    parent_app = (row.kind == RowKind::Parent).then_some(row.app_id.as_str());
+                    visible.push(index);
+                }
+            }
+        }
+        visible
+    }
+
+    /// The children of the parent at `parent`: the contiguous
+    /// [`RowKind::Child`] block after it, in frozen MRU order — empty
+    /// for leaves and out-of-range positions.
+    pub fn children_of(&self, parent: usize) -> Vec<usize> {
+        if self
+            .rows
+            .get(parent)
+            .is_none_or(|row| row.kind != RowKind::Parent)
+        {
+            return Vec::new();
+        }
+        let mut children = Vec::new();
+        let mut index = parent + 1;
+        while self
+            .rows
+            .get(index)
+            .is_some_and(|row| row.kind == RowKind::Child)
+        {
+            children.push(index);
+            index += 1;
+        }
+        children
     }
 
     /// Index of the parent row the child at `from` nests under — ←'s
@@ -360,18 +418,6 @@ impl Grouping {
         self.rows[..child]
             .iter()
             .rposition(|row| row.kind == RowKind::Parent)
-    }
-
-    /// Index of `parent`'s first child — the row right after it, since a
-    /// parent's children are contiguous — →'s enter. `None` for leaves
-    /// and out-of-range positions; a parent by construction always has
-    /// at least one child.
-    pub fn first_child(&self, parent: usize) -> Option<usize> {
-        if self.rows.get(parent)?.kind != RowKind::Parent {
-            return None;
-        }
-        let child = parent + 1;
-        (self.rows.get(child)?.kind == RowKind::Child).then_some(child)
     }
 }
 
@@ -842,8 +888,9 @@ mod tests {
     #[test]
     fn grouped_partitions_multi_window_apps_into_parent_then_children() {
         // MRU order: a1, b1, a2, c1, a3, b2. Parents appear in MRU
-        // first-appearance order (a, then b); children follow their
-        // parent MRU within the app; single-window c is a leaf.
+        // first-appearance order (a, then b); the app's whole window
+        // set follows as children, front window first, MRU within the
+        // app; single-window c is a leaf.
         let toplevels = vec![
             app_window(1, "a", &[1], State::ACTIVATED, 30),
             app_window(2, "b", &[1], State::default(), 25),
@@ -857,9 +904,11 @@ mod tests {
             shape(&grouping),
             vec![
                 (RowKind::Parent, Handle(1)),
+                (RowKind::Child, Handle(1)),
                 (RowKind::Child, Handle(3)),
                 (RowKind::Child, Handle(5)),
                 (RowKind::Parent, Handle(2)),
+                (RowKind::Child, Handle(2)),
                 (RowKind::Child, Handle(6)),
                 (RowKind::Leaf, Handle(4)),
             ]
@@ -883,6 +932,7 @@ mod tests {
             vec![
                 (RowKind::Leaf, Handle(1)),
                 (RowKind::Parent, Handle(2)),
+                (RowKind::Child, Handle(2)),
                 (RowKind::Child, Handle(3)),
                 (RowKind::Leaf, Handle(4)),
             ]
@@ -935,6 +985,7 @@ mod tests {
             shape(&grouping),
             vec![
                 (RowKind::Parent, Handle(1)),
+                (RowKind::Child, Handle(1)),
                 (RowKind::Child, Handle(2)),
                 (RowKind::Child, Handle(3)),
             ]
@@ -960,6 +1011,7 @@ mod tests {
             shape(&everywhere),
             vec![
                 (RowKind::Parent, Handle(1)),
+                (RowKind::Child, Handle(1)),
                 (RowKind::Child, Handle(2)),
                 (RowKind::Leaf, Handle(3)),
             ]
@@ -989,10 +1041,16 @@ mod tests {
 
     #[test]
     fn parent_of_a_child_is_the_row_that_heads_its_block() {
+        // The fixture's tree: P-a1, C-a1, C-a2, C-a3, P-b1, C-b1,
+        // C-b2, L-c1 — every child's parent is the row heading its
+        // contiguous block.
         let grouping = grouped_fixture();
-        assert_eq!(grouping.parent_of(1), Some(0));
-        assert_eq!(grouping.parent_of(2), Some(0));
-        assert_eq!(grouping.parent_of(4), Some(3));
+        for child in 1..=3 {
+            assert_eq!(grouping.parent_of(child), Some(0));
+        }
+        for child in 5..=6 {
+            assert_eq!(grouping.parent_of(child), Some(4));
+        }
     }
 
     #[test]
@@ -1000,8 +1058,8 @@ mod tests {
         // Only a child nests; parents and leaves are top-level.
         let grouping = grouped_fixture();
         assert_eq!(grouping.parent_of(0), None);
-        assert_eq!(grouping.parent_of(3), None);
-        assert_eq!(grouping.parent_of(5), None);
+        assert_eq!(grouping.parent_of(4), None);
+        assert_eq!(grouping.parent_of(7), None);
     }
 
     #[test]
@@ -1011,31 +1069,8 @@ mod tests {
     }
 
     #[test]
-    fn first_child_of_a_multi_window_parent_is_the_row_after_it() {
-        // A parent's children are contiguous, so its first child sits
-        // immediately below it — →'s target.
-        let grouping = grouped_fixture();
-        assert_eq!(grouping.first_child(0), Some(1));
-        assert_eq!(grouping.first_child(3), Some(4));
-    }
-
-    #[test]
-    fn first_child_of_a_leaf_is_none() {
-        // The W3C end-node rule: → does nothing on a leaf.
-        let grouping = grouped_fixture();
-        assert_eq!(grouping.first_child(5), None);
-    }
-
-    #[test]
-    fn first_child_of_an_out_of_range_position_is_none() {
-        let grouping = grouped_fixture();
-        assert_eq!(grouping.first_child(9), None);
-    }
-
-    #[test]
     fn walks_on_an_empty_grouping_are_none() {
         let grouping = Grouping::new(&[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(grouping.parent_of(0), None);
-        assert_eq!(grouping.first_child(0), None);
     }
 }

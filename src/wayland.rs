@@ -48,7 +48,7 @@ use cctk::workspace::{WorkspaceHandler, WorkspaceState};
 
 use crate::ipc::Direction;
 use crate::switcher::{Handle, Snapshot, Toplevel, Workspace, WorkspaceId};
-use crate::ui::{self, GestureInput, GestureKey, OverlayModel, PointerInput};
+use crate::ui::{self, GestureInput, GestureKey, OverlayModel, PointerInput, RowKind};
 
 /// A required protocol the compositor does not offer at a sufficient version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -537,10 +537,12 @@ impl KeyboardHandler for App {
                 self.alt_held,
                 grouped,
             );
-            // The Select twin: `key_input` stays pure (a keysym → row
-            // translation), and the row resolves to its window here, at
-            // event receipt against the live model — the keyboard twin
-            // of the pointer boundary's capture. Everything else queues
+            // The Select twins: `key_input` stays pure (a keysym →
+            // address translation), and every address resolves to its
+            // window here, at event receipt against the live model —
+            // the keyboard twin of the pointer boundary's capture. A
+            // row (flat Ctrl+N), a level-1 entry (grouped Ctrl+N), a
+            // group child (grouped Alt+N); everything else queues
             // unchanged.
             let input = match input {
                 GestureInput::Press {
@@ -548,6 +550,20 @@ impl KeyboardHandler for App {
                     shift,
                 } => GestureInput::Press {
                     key: GestureKey::SelectHandle(self.overlay_row_handle(row)),
+                    shift,
+                },
+                GestureInput::Press {
+                    key: GestureKey::SelectApp(n),
+                    shift,
+                } => GestureInput::Press {
+                    key: GestureKey::SelectHandle(self.overlay_app_handle(n)),
+                    shift,
+                },
+                GestureInput::Press {
+                    key: GestureKey::SelectAlt(n),
+                    shift,
+                } => GestureInput::Press {
+                    key: GestureKey::SelectHandle(self.overlay_child_handle(n)),
                     shift,
                 },
                 other => other,
@@ -838,6 +854,53 @@ impl App {
             .model()
             .rows
             .get(row)
+            .and_then(|row| row.handle)
+    }
+
+    /// The window the live model's Nth *level-1* entry (0-based)
+    /// resolves to — the event-time resolution a grouped Ctrl+N digit
+    /// press addresses: an app entry carries its implied window (the
+    /// app's MRU-front), a leaf itself. `None` past the ninth entry or
+    /// with no overlay mapped.
+    fn overlay_app_handle(&self, n: usize) -> Option<Handle> {
+        self.overlay
+            .as_ref()?
+            .model()
+            .rows
+            .iter()
+            .filter(|row| row.kind != RowKind::Child)
+            .nth(n)
+            .and_then(|row| row.handle)
+    }
+
+    /// The window the selected group's Nth child (0-based) resolves to
+    /// — the event-time resolution a grouped Alt+N digit press
+    /// addresses. The group is the one the selection is on (a parent
+    /// row, or the parent of the selected child), and its children
+    /// must be on the card: an unshown child is never hinted, so never
+    /// wired. `None` on a leaf, a collapsed group, past the ninth
+    /// child, or with no overlay mapped.
+    fn overlay_child_handle(&self, n: usize) -> Option<Handle> {
+        let rows = &self.overlay.as_ref()?.model().rows;
+        // The group the selection is on: the selected child's parent,
+        // or a selected parent itself.
+        let parent = rows.iter().position(|row| row.selected).and_then(|sel| {
+            if rows[sel].kind == RowKind::Child {
+                rows[..sel]
+                    .iter()
+                    .rposition(|row| row.kind == RowKind::Parent)
+            } else if rows[sel].kind == RowKind::Parent {
+                Some(sel)
+            } else {
+                None // a leaf: no group to address
+            }
+        })?;
+        // Children sit contiguously after their parent; a collapsed
+        // group shows none, and the lookup yields None by construction.
+        rows[parent + 1..]
+            .iter()
+            .take_while(|row| row.kind == RowKind::Child)
+            .nth(n)
             .and_then(|row| row.handle)
     }
 }

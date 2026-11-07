@@ -7,15 +7,23 @@ observe, not internal mechanics.
 
 ### Added
 
+- **App grouping** — the `grouping = true` setting re-partitions the
+  switcher into a two-level tree. Level 1 is the app layer, collapsed
+  by default: the card opens on app entries alone, each committing its
+  app's most recently used window. Alt+Tab / Alt+Shift+Tab cycle the
+  current level — app entries, or one group's windows once entered; →
+  or Alt+W expands and enters a group (landing one past the window you
+  just left when it's your own app), ← exits a child or collapses an
+  entry, and each app's expanded/collapsed state persists across
+  gestures. ↑/↓ and the mouse wheel walk the visible rows linearly;
+  Ctrl+N activates an app entry's window, Alt+N a group's Nth window,
+  both instantly. A lone app's windows are entered and cycled instead
+  of dead-keying the step. See docs/settings.md — Grouping.
 - **A starter config on install**: `airlock install` now drops a fully
   commented `~/.config/airlock/config.toml` — every setting documented,
   nothing enabled, so behavior is unchanged until you uncomment a line.
   An existing config is never touched, and `--uninstall` removes the
   starter only if you never edited it.
-- **Alt+W enters a group's children** (`grouping = true`): the right
-  arrow's twin for hands that never leave the Alt row — on the selected
-  parent it walks down into the children, landing on the app's most
-  recently used window.
 
 ### Changed
 
@@ -24,20 +32,6 @@ observe, not internal mechanics.
   `?` (a macOS-built `café.txt` shows `cafe.txt`). Punctuation folds as
   before; anything with no ASCII form — CJK, Cyrillic, ligatures like
   `æ` — still renders as `?`.
-
-### Fixed
-
-- **Alt+Tab is never a dead key under `grouping`**: with exactly one
-  multi-window app on the workspace, the grouped card's Tab stepped
-  *parent rows only* and wrapped the lone parent onto itself — no
-  press moved the selection, and a quick tap re-activated the same
-  window. Alt+Tab / Alt+Shift+Tab now behave as ↓ / ↑ in grouped mode
-  too, stepping visible rows parent-and-child alike, so a quick tap
-  activates the MRU-second window exactly as the flat card always has.
-- **The `grouping` setting has its reference at last**: the
-  docs/settings.md section planned when the setting shipped — the app
-  tree's shape, the re-bound keys (→ or Alt+W enters a parent's
-  children, ← exits), and the read-at-gesture-start contract.
 - The `…` overflow marker sits centered on the card again (it drifted
   2 px right), and the selection band's ends round to match the card's
   corners instead of ending as clipped stripes; the card edge now

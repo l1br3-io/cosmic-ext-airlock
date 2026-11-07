@@ -332,27 +332,27 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
     // tree pushed past the `rows` budget so the `…` windowing rides the
     // flattened sequence. Candidate tokens (indent, badge, chevron) —
     // the GR4 sheet freezes them.
+    // Collapsed, the default: level-1 entries only, every group's
+    // chevron pointing at its closed children.
     sheet.push(tree_card(
         vec![
-            parent_row("firefox", 3, icons[0].clone(), true),
-            child_row("twitter.com/home", icons[0].clone(), false),
-            child_row("github.com — PR 42", icons[0].clone(), false),
-            parent_row("org.gnome.TextEditor", 2, icons[2].clone(), false),
-            child_row("overlay-preview.rs", icons[2].clone(), false),
-            row("kitty — solo window", icons[4].clone(), false),
-            row("un-attributable", None, false),
+            parent_row("firefox", 3, icons[0].clone(), true, false),
+            parent_row("org.gnome.TextEditor", 2, icons[2].clone(), false, false),
+            entry_row("kitty — solo window", icons[4].clone(), false, 3),
+            entry_row("un-attributable", None, false, 4),
         ],
         0,
     ));
+    // Expanded: the selected group's whole window set below it, front
+    // window first, Alt-numbered; the other group stays collapsed.
     sheet.push(tree_card(
         vec![
-            parent_row("firefox", 3, icons[0].clone(), false),
-            child_row("twitter.com/home", icons[0].clone(), true),
-            child_row("github.com — PR 42", icons[0].clone(), false),
-            parent_row("org.gnome.TextEditor", 2, icons[2].clone(), false),
-            child_row("overlay-preview.rs", icons[2].clone(), false),
-            row("kitty — solo window", icons[4].clone(), false),
-            row("un-attributable", None, false),
+            parent_row("firefox", 3, icons[0].clone(), false, true),
+            child_row("twitter.com/home", icons[0].clone(), true, 1),
+            child_row("github.com — PR 42", icons[0].clone(), false, 2),
+            parent_row("org.gnome.TextEditor", 2, icons[2].clone(), false, false),
+            entry_row("kitty — solo window", icons[4].clone(), false, 3),
+            entry_row("un-attributable", None, false, 4),
         ],
         1,
     ));
@@ -363,18 +363,18 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
             // default budget keeps 10 slots, the `…` rows replacing the
             // outermost slots at each truncated edge.
             let long = vec![
-                parent_row("firefox", 5, icons[0].clone(), false),
-                child_row("window one", icons[0].clone(), false),
-                child_row("window two", icons[0].clone(), false),
-                child_row("window three", icons[0].clone(), false),
-                child_row("window four", icons[0].clone(), false),
-                parent_row("org.gnome.Files", 4, icons[1].clone(), true),
-                child_row("home dir", icons[1].clone(), false),
-                child_row("downloads", icons[1].clone(), false),
-                child_row("media", icons[1].clone(), false),
-                row("kitty — solo window", icons[4].clone(), false),
-                row("code — airlock", icons[5].clone(), false),
-                row("un-attributable", None, false),
+                parent_row("firefox", 5, icons[0].clone(), false, true),
+                child_row("window one", icons[0].clone(), false, 1),
+                child_row("window two", icons[0].clone(), false, 2),
+                child_row("window three", icons[0].clone(), false, 3),
+                child_row("window four", icons[0].clone(), false, 4),
+                parent_row("org.gnome.Files", 4, icons[1].clone(), true, true),
+                child_row("home dir", icons[1].clone(), false, 1),
+                child_row("downloads", icons[1].clone(), false, 2),
+                child_row("media", icons[1].clone(), false, 3),
+                entry_row("kitty — solo window", icons[4].clone(), false, 3),
+                entry_row("code — airlock", icons[5].clone(), false, 4),
+                entry_row("un-attributable", None, false, 5),
             ];
             let vp = ui::visible_window(long.len(), 5, ui::DEFAULT_ROWS, None);
             let mut windowed_rows = Vec::new();
@@ -396,9 +396,16 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
     sheet
 }
 
-/// A parent row as `overlay_model` builds one grouped: labeled by its
-/// app_id, carrying its app's window count for the badge.
-fn parent_row(app: &str, count: usize, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
+/// A parent row as `overlay_model_grouped` builds one: labeled by its
+/// app_id, carrying its app's window count for the badge and its
+/// expansion state for the chevron.
+fn parent_row(
+    app: &str,
+    count: usize,
+    icon: Option<Rc<IconBitmap>>,
+    selected: bool,
+    expanded: bool,
+) -> RowModel {
     RowModel {
         title: app.to_string(),
         icon,
@@ -406,13 +413,25 @@ fn parent_row(app: &str, count: usize, icon: Option<Rc<IconBitmap>>, selected: b
         handle: Some(Handle::default()),
         kind: cosmic_ext_airlock::switcher::RowKind::Parent,
         count,
+        expanded,
+        ..RowModel::default()
     }
 }
 
-/// A child row: a window title nested under its parent.
-fn child_row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
+/// A child row: a window title nested under its parent, Alt-numbered
+/// within its group.
+fn child_row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool, n: usize) -> RowModel {
     RowModel {
         kind: cosmic_ext_airlock::switcher::RowKind::Child,
+        hint: Some(ui::RowHint::Alt(n)),
+        ..row(title, icon, selected)
+    }
+}
+
+/// Stamps a level-1 row's Ctrl+N hint (the Nth entry) on a plain row.
+fn entry_row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool, n: usize) -> RowModel {
+    RowModel {
+        hint: Some(ui::RowHint::Ctrl(n)),
         ..row(title, icon, selected)
     }
 }

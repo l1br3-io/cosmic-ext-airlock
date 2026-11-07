@@ -103,17 +103,113 @@ pub struct Switch {
     /// open from the `grouping` setting and frozen like the rows: a
     /// config edit landing mid-gesture never regroups the open session.
     grouping: bool,
-    /// The frozen tree a grouped plain session walks: the partition its
-    /// ring was built over, kept beside it so →/←'s (and Alt+W's) tree
-    /// steps address the same frozen list. `None` for flat sessions and
-    /// same-app sessions (the exemption — already app-scoped, rendered
-    /// flat).
+    /// The frozen tree a grouped plain session walks: the partition of
+    /// the eligible list at open, kept so every grouped input — Alt+Tab's
+    /// scoped steps, →/←'s level walks, the card's rows — addresses one
+    /// frozen window set. `None` for flat sessions and same-app sessions
+    /// (the exemption — already app-scoped, rendered flat).
     tree: Option<switcher::Grouping>,
+    /// The selected row of the frozen tree — a parent or leaf (level 1)
+    /// or a child (level 2). The level is the row's kind; the selection
+    /// is the tree index, stable for the session's life. Meaningless
+    /// whenever `tree` is `None` (those sessions select through `ring`).
+    tree_sel: usize,
+    /// The tree rows the card is showing right now, recomputed on every
+    /// show from the frozen tree, the expansion state, and liveness —
+    /// the exact sequence the model rendered, so pointer rows map back
+    /// to tree rows without handle guessing.
+    visible: Vec<usize>,
     /// The window the card is showing over the session's list — derived
     /// state carried between rebuilds so the sticky rule can continue
     /// it, never persisted across gestures: sessions are built fresh
     /// with `None`, and every open starts top-aligned on the MRU head.
     viewport: Option<crate::ui::Viewport>,
+}
+
+impl Switch {
+    /// The window the selection resolves to: the selected tree row's
+    /// handle for a grouped session (a parent carries its app's
+    /// MRU-front window — the entry's implied window), the ring's for
+    /// every flat one.
+    fn selected_handle(&self) -> Option<Handle> {
+        match &self.tree {
+            Some(tree) => tree.rows().get(self.tree_sel).map(|row| row.handle),
+            None => self.ring.selected(),
+        }
+    }
+
+    /// Selects `handle`'s row — the flow pointer clicks and number
+    /// chords share. Flat sessions select their ring; a grouped session
+    /// selects the first visible row carrying the handle (a parent
+    /// precedes its children, so an ambiguous handle — a group's front
+    /// window — lands on the parent row). A handle not on the card
+    /// selects nothing and leaves the session exactly as it was.
+    fn select_handle(&mut self, handle: Handle) -> Option<Handle> {
+        if let Some(tree) = &self.tree {
+            let index = self
+                .visible
+                .iter()
+                .copied()
+                .find(|&index| tree.rows()[index].handle == handle)?;
+            self.tree_sel = index;
+            Some(handle)
+        } else {
+            self.ring.select(handle)
+        }
+    }
+
+    /// The tree row a pointer crossing of model row `row` addresses.
+    /// Content rows map through the stored visible sequence and the
+    /// viewport the last model reported; continuation rows and rows
+    /// past the window are `None`. The row index is exact where a
+    /// handle alone is ambiguous — a group's front window is both its
+    /// parent row and its first child, and hovering the child must
+    /// select the child.
+    fn tree_row_at(&self, row: usize) -> Option<usize> {
+        let viewport = self.viewport?;
+        let top = viewport.top as usize;
+        if row < top || row >= top + viewport.content {
+            return None; // a continuation row or past the window
+        }
+        self.visible.get(viewport.start + row).copied()
+    }
+
+    /// Applies a pointer hover crossing: flat sessions select by the
+    /// event-time handle; grouped sessions by the event-time row — both
+    /// captured against the model the user saw. Returns whether the
+    /// selection moved.
+    fn select_pointer_row(&mut self, row: usize, handle: Option<Handle>) -> bool {
+        match &self.tree {
+            Some(_) => {
+                let Some(index) = self.tree_row_at(row) else {
+                    return false;
+                };
+                self.tree_sel = index;
+                true
+            }
+            None => handle.is_some_and(|handle| self.ring.select(handle).is_some()),
+        }
+    }
+}
+
+/// The tree rows a grouped session can address right now: [`Grouping`'s
+/// visible sequence](switcher::Grouping::visible) under the daemon's
+/// persistent expansion state, minus windows that left the eligible set
+/// since the freeze — dead rows drop off the card instead of ghosting,
+/// and a dead *selection* closes the session through `session_holds`
+/// before this ever runs.
+fn grouped_visible(
+    session: &Switch,
+    snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
+) -> Vec<usize> {
+    let Some(tree) = session.tree.as_ref() else {
+        return Vec::new();
+    };
+    tree.visible(expanded)
+        .into_iter()
+        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, session.scope))
+        .collect()
 }
 
 /// Whether an open session still matches reality: the workspace it was
@@ -123,8 +219,7 @@ pub struct Switch {
 pub fn session_holds(open: &Switch, snapshot: &Snapshot) -> bool {
     snapshot.active == Some(open.workspace)
         && open
-            .ring
-            .selected()
+            .selected_handle()
             .is_some_and(|handle| switcher::switchable(snapshot, handle, open.scope))
 }
 
@@ -134,8 +229,7 @@ pub fn session_holds(open: &Switch, snapshot: &Snapshot) -> bool {
 /// mid-gesture commits as a no-op instead of crossing workspaces; an All
 /// session may legitimately activate a window on another workspace.
 pub fn commit_target(open: &Switch, snapshot: &Snapshot) -> Option<Handle> {
-    open.ring
-        .selected()
+    open.selected_handle()
         .filter(|&handle| switcher::switchable(snapshot, handle, open.scope))
 }
 
@@ -151,15 +245,20 @@ pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> 
         .copied()
 }
 
-/// Starts or advances the gesture session's selection ring by one step.
+/// Starts or advances the gesture session's selection by one step.
 ///
-/// A session's first press builds the ring from the MRU front — the focused
-/// window — so one step lands on the MRU-second (or wraps to the least
-/// recent). Later presses reuse the same ring instead of rebuilding it:
-/// walking three windows takes three presses, unlike T4's per-press rebuild
-/// which toggled between the front two. `scope`, `palette`, `rows`, and
-/// `grouping` are consumed only when the session opens; an already-open
-/// session keeps the ones it was built with.
+/// A session's first press builds it from the MRU front — the focused
+/// window's row — so the opening Alt+Tab (Alt+Shift+Tab) is the first
+/// *scoped* step in grouped mode: the next app entry at level 1, or —
+/// when the workspace holds a single group — a step inside it. Later
+/// presses reuse the same frozen selection basis instead of rebuilding
+/// it: walking three windows takes three presses, unlike T4's
+/// per-press rebuild which toggled between the front two. `scope`,
+/// `palette`, `rows`, and `grouping` are consumed only when the session
+/// opens; an already-open session keeps the ones it was built with.
+// Eight open-path parameters: the frozen-at-open values ride
+// individually (see session_step's note).
+#[expect(clippy::too_many_arguments)]
 pub fn ring_step(
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
@@ -168,21 +267,21 @@ pub fn ring_step(
     palette: crate::ui::Palette,
     rows: usize,
     grouping: bool,
+    expanded: &mut std::collections::HashSet<String>,
 ) -> Option<Handle> {
     if open.is_none() {
         let active = snapshot.active?;
-        // A grouped session opens on the flattened tree: ring and tree
-        // freeze together, so every later walk — Alt+Tab's row steps,
-        // →/←'s tree steps, the model's rows — addresses one frozen
-        // list. Flat sessions keep the eligible list, no tree. Either
-        // way the opening press steps one row: Alt+Tab behaves as ↓
-        // (Alt+Shift+Tab as ↑) in both modes — the owner's 2026-11-07
-        // re-decision — so a quick tap activates the MRU-second window
-        // exactly as the flat card always has.
+        // A grouped session opens on the frozen tree with its selection
+        // on row 0 — the focused window's entry, its app's parent when
+        // the app is multi-window — and the opening press steps *within
+        // its level*: the next app entry (a quick tap activates the
+        // MRU-second app's front window), or into the only group there
+        // is. Flat sessions keep the eligible-list ring, no tree.
         let (handles, tree) = if grouping {
-            let tree = switcher::Grouping::new(&snapshot.toplevels, active, scope);
-            let handles = tree.rows().iter().map(|row| row.handle).collect();
-            (handles, Some(tree))
+            (
+                Vec::new(), // grouped selections live on the tree, not a ring
+                Some(switcher::Grouping::new(&snapshot.toplevels, active, scope)),
+            )
         } else {
             (switcher::eligible(&snapshot.toplevels, active, scope), None)
         };
@@ -195,8 +294,15 @@ pub fn ring_step(
             rows,
             grouping,
             tree,
+            tree_sel: 0,
+            visible: Vec::new(),
             viewport: None,
         });
+        if open.as_ref().is_some_and(|session| session.tree.is_some()) {
+            let session = open.as_mut()?;
+            step_scope(session, snapshot, expanded, direction);
+            return session.selected_handle();
+        }
     }
     match direction {
         Direction::Next => open.as_mut()?.ring.step(1),
@@ -212,14 +318,15 @@ pub fn ring_step(
 /// opens the ring on that app's eligible windows alone. Fewer than two of
 /// them makes the press a silent no-op: no session is stored, nothing is
 /// selected, and the next press starts fresh. An already-open session steps
-/// its frozen ring whatever key stepped it; a same-app session re-filters
-/// the fresh snapshot by its frozen anchor (see [`step_and_show`]), but the
-/// ring itself never rebuilds — the same freeze philosophy as the scope and
-/// the palette, both consumed only when the session opens.
-// Eight open-path parameters: the frozen-at-open values (palette, rows,
-// grouping) each ride individually. The grouped mode (GR3) re-shapes this
-// seam, so no bundle is introduced here — an `expect`, so the day the
-// count drops the attribute warns and comes out.
+/// its frozen selection whatever key stepped it — a grouped session's ↓/↑
+/// and wheel steps walk its visible rows ([`step_visible`]); a same-app
+/// session re-filters the fresh snapshot by its frozen anchor (see
+/// [`step_and_show`]), but the selection basis never rebuilds — the same
+/// freeze philosophy as the scope and the palette, both consumed only when
+/// the session opens.
+// Nine open-path parameters: the frozen-at-open values (palette, rows,
+// grouping) each ride individually and the expansion state is daemon
+// memory the open may write — no bundle introduced (the GR3 note).
 #[expect(clippy::too_many_arguments)]
 pub fn session_step(
     open: &mut Option<Switch>,
@@ -230,12 +337,21 @@ pub fn session_step(
     palette: crate::ui::Palette,
     rows: usize,
     grouping: bool,
+    expanded: &mut std::collections::HashSet<String>,
 ) -> Option<Handle> {
-    // An open session steps its frozen ring; the snapshot, scope,
-    // palette, rows, and grouping only matter when a session opens.
-    // Plain opens go straight through.
+    // An open grouped session steps its visible rows (↓/↑ and the
+    // wheel); the snapshot, scope, palette, rows, and grouping only
+    // matter when a session opens. Plain opens go straight through.
+    if let Some(session) = open.as_mut()
+        && session.tree.is_some()
+    {
+        step_visible(session, snapshot, expanded, direction);
+        return session.selected_handle();
+    }
     if open.is_some() || !same_app {
-        return ring_step(open, snapshot, direction, scope, palette, rows, grouping);
+        return ring_step(
+            open, snapshot, direction, scope, palette, rows, grouping, expanded,
+        );
     }
     // A new same-app session: anchor, narrow, and hold the two-window
     // floor — one window of the app is nothing to cycle.
@@ -248,7 +364,9 @@ pub fn session_step(
     // The same-app exemption rides here: the session is already
     // app-scoped and renders flat, so it opens on the app's eligible
     // windows with no tree whatever the `grouping` setting says.
-    let selected = ring_step(open, &view, direction, scope, palette, rows, false);
+    let selected = ring_step(
+        open, &view, direction, scope, palette, rows, false, expanded,
+    );
     // ring_step stored the session on the filtered ring; freeze the anchor
     // into it so later steps re-filter by it.
     if let Some(session) = open.as_mut() {
@@ -257,56 +375,218 @@ pub fn session_step(
     selected
 }
 
-/// Resolves one tree walk for the open session: `target` computed from
-/// the frozen tree and the selection's position in it, then the frozen
-/// ring stepped by the wrapped delta. A `None` target — the walk's own
-/// no-op — leaves everything untouched. Returns whether the selection
-/// moved (the caller refreshes only then).
-fn tree_walk(
-    open: &mut Option<Switch>,
-    target: impl Fn(&switcher::Grouping, usize) -> Option<usize>,
-) -> bool {
-    let Some(session) = open.as_ref() else {
-        return false;
+/// The next/previous member of `order` after `current` (wrapping), or
+/// `current` itself when `order` holds nothing else to move to.
+fn step_in(order: &[usize], current: usize, direction: Direction) -> usize {
+    let Some(position) = order.iter().position(|&index| index == current) else {
+        return current;
     };
+    let len = order.len();
+    if len < 2 {
+        return current;
+    }
+    let delta = match direction {
+        Direction::Next => 1,
+        Direction::Previous => len - 1,
+    };
+    order[(position + delta) % len]
+}
+
+/// Alt+Tab's scoped step (the owner's 2026-11-08 collapse re-decision):
+/// level 1 cycles app entries — never descending into children — and
+/// level 2 cycles the selected group's windows. A workspace holding a
+/// single group is entered and cycled inside, so the step is never a
+/// dead key. Returns whether anything moved.
+fn step_scope(
+    session: &mut Switch,
+    snapshot: &Snapshot,
+    expanded: &mut std::collections::HashSet<String>,
+    direction: Direction,
+) -> bool {
+    let visible = grouped_visible(session, snapshot, expanded);
     let Some(tree) = session.tree.as_ref() else {
         return false;
     };
-    let Some(current) = session
-        .ring
-        .selected()
-        .and_then(|handle| tree.rows().iter().position(|row| row.handle == handle))
-    else {
+    let Some(kind) = tree.rows().get(session.tree_sel).map(|row| row.kind) else {
         return false;
     };
-    let Some(target) = target(tree, current) else {
-        return false;
+    let moved = |session: &mut Switch, target: usize| {
+        if target == session.tree_sel {
+            false
+        } else {
+            session.tree_sel = target;
+            true
+        }
     };
-    let len = tree.rows().len();
-    let delta = (target + len - current) % len;
-    if delta == 0 {
-        return false; // the walk's own wrap-to-self: nothing moves
+    match kind {
+        // Level 2: the selected group's children only — the step is
+        // scoped within its parent by contract.
+        switcher::RowKind::Child => {
+            let Some(parent) = tree.parent_of(session.tree_sel) else {
+                return false;
+            };
+            let peers: Vec<usize> = tree
+                .children_of(parent)
+                .into_iter()
+                .filter(|index| visible.contains(index))
+                .collect();
+            moved(session, step_in(&peers, session.tree_sel, direction))
+        }
+        // Level 1: app entries. A lone multi-window group is entered
+        // and cycled inside; anything else simply has no peer to move
+        // to.
+        _ => {
+            let peers: Vec<usize> = visible
+                .iter()
+                .copied()
+                .filter(|&index| tree.rows()[index].kind != switcher::RowKind::Child)
+                .collect();
+            if peers.len() == 1 && tree.rows()[peers[0]].kind == switcher::RowKind::Parent {
+                return enter_group(session, snapshot, expanded, direction);
+            }
+            moved(session, step_in(&peers, session.tree_sel, direction))
+        }
     }
-    let Some(session) = open.as_mut() else {
+}
+
+/// → (and Alt+W at level 1, and Tab into a lone group): expand the
+/// selected parent — the expansion persists across gestures — and land
+/// on its enter target: the group's most recently used window, one past
+/// the gesture's still-active window when that is the front (entering
+/// your own app never lands you back on the window you just left; the
+/// owner's Firefox trace). The W3C end-node rule keeps a leaf's enter a
+/// no-op. Returns whether anything moved.
+fn enter_group(
+    session: &mut Switch,
+    snapshot: &Snapshot,
+    expanded: &mut std::collections::HashSet<String>,
+    direction: Direction,
+) -> bool {
+    let Some(tree) = session.tree.as_ref() else {
         return false;
     };
-    session.ring.step(delta);
+    let parent = session.tree_sel;
+    let Some(app) = tree.rows().get(parent).map(|row| row.app_id.clone()) else {
+        return false;
+    };
+    if tree
+        .rows()
+        .get(parent)
+        .is_none_or(|row| row.kind != switcher::RowKind::Parent)
+    {
+        return false; // a leaf's enter: the W3C no-op
+    }
+    // The group's frozen children, liveness-filtered — not the visible
+    // list, which still shows the group collapsed: entering is what
+    // expands it.
+    let children: Vec<usize> = tree
+        .children_of(parent)
+        .into_iter()
+        .filter(|index| switcher::switchable(snapshot, tree.rows()[*index].handle, session.scope))
+        .collect();
+    let Some(front) = children.first().copied() else {
+        return false; // every child died mid-gesture: nothing to enter
+    };
+    // Expanding is part of entering — the card shows what was walked
+    // into, and the state persists for the next gesture.
+    expanded.insert(app);
+    // The gesture's starting window: the frozen tree's MRU front (the
+    // session opened on it). Entering past it mirrors how the opening
+    // Alt+Tab steps past the active window.
+    let active = tree.rows()[0].handle;
+    let target = match children
+        .iter()
+        .position(|&index| tree.rows()[index].handle == active)
+    {
+        None => match direction {
+            Direction::Next => front,
+            Direction::Previous => *children.last().unwrap_or(&front),
+        },
+        Some(position) => {
+            let len = children.len();
+            let delta = match direction {
+                Direction::Next => 1,
+                Direction::Previous => len - 1,
+            };
+            children[(position + delta) % len]
+        }
+    };
+    session.tree_sel = target;
     true
 }
 
-/// →, Alt+W, and ← over the frozen tree: `enter` resolves the selected
-/// parent's first child, exit the selected child's parent row. The W3C
-/// no-ops — → on a leaf (the end-node rule), ← on a top-level row (the
-/// root rule) — resolve to no target and nothing moves. Returns whether
-/// the selection moved.
-fn tree_step(open: &mut Option<Switch>, enter: bool) -> bool {
-    tree_walk(open, |tree, current| {
-        if enter {
-            tree.first_child(current)
-        } else {
-            tree.parent_of(current)
+/// ← : a child exits to its parent row (the group stays expanded); an
+/// expanded parent collapses — the state persists across gestures; a
+/// collapsed top-level row is the W3C root no-op. Returns whether the
+/// selection or the visible list changed.
+fn exit_group(session: &mut Switch, expanded: &mut std::collections::HashSet<String>) -> bool {
+    let Some(tree) = session.tree.as_ref() else {
+        return false;
+    };
+    let Some(row) = tree.rows().get(session.tree_sel) else {
+        return false;
+    };
+    match row.kind {
+        switcher::RowKind::Child => {
+            let Some(parent) = tree.parent_of(session.tree_sel) else {
+                return false;
+            };
+            session.tree_sel = parent;
+            true
         }
-    })
+        switcher::RowKind::Parent => {
+            // Collapsing changes the card even though the selection
+            // holds — the caller must refresh either way.
+            expanded.remove(&row.app_id)
+        }
+        switcher::RowKind::Leaf => false,
+    }
+}
+
+/// Alt+W: the level toggle — →'s enter at level 1, ←'s exit at level 2
+/// (without collapsing: the flip moves the selection only).
+fn toggle_level(
+    session: &mut Switch,
+    snapshot: &Snapshot,
+    expanded: &mut std::collections::HashSet<String>,
+) -> bool {
+    let kind = session
+        .tree
+        .as_ref()
+        .and_then(|tree| tree.rows().get(session.tree_sel).map(|row| row.kind));
+    match kind {
+        Some(switcher::RowKind::Child) => {
+            let parent = session
+                .tree
+                .as_ref()
+                .and_then(|tree| tree.parent_of(session.tree_sel));
+            match parent {
+                Some(parent) => {
+                    session.tree_sel = parent;
+                    true
+                }
+                None => false,
+            }
+        }
+        Some(switcher::RowKind::Parent) => {
+            enter_group(session, snapshot, expanded, Direction::Next)
+        }
+        _ => false,
+    }
+}
+
+/// ↓/↑ and the wheel: one *visible* row — the linear walk over
+/// everything the card shows, parents and expanded children alike,
+/// crossing group boundaries and wrapping; a collapsed group's children
+/// are skipped exactly as they are not shown.
+fn step_visible(
+    session: &mut Switch,
+    snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
+    direction: Direction,
+) {
+    let visible = grouped_visible(session, snapshot, expanded);
+    session.tree_sel = step_in(&visible, session.tree_sel, direction);
 }
 
 /// One step request into [`step_and_show`]: the direction, and whether a
@@ -454,6 +734,10 @@ pub fn run() -> Result<(), RunError> {
     // means, the session is the selection over the eligible list.
     let mut gesture = Gesture::default();
     let mut open: Option<Switch> = None;
+    // Which grouped apps stand expanded — daemon memory, deliberately
+    // not config: groups collapse by default at login, and every
+    // expand/collapse a gesture makes persists into the next one.
+    let mut expanded: std::collections::HashSet<String> = std::collections::HashSet::new();
     // Hover-selection policy for the overlay's pointer inputs, reset
     // whenever no session is open (see the pointer drain).
     let mut hover = PointerHover::default();
@@ -501,31 +785,74 @@ pub fn run() -> Result<(), RunError> {
                         },
                         &mut settings,
                         &mut icons,
+                        &mut expanded,
                     );
                 }
-                GestureOutput::EnterChild => {
-                    // → (or Alt+W) enters the selected parent's first
-                    // child; on a leaf the W3C end-node rule makes it a
-                    // no-op.
-                    if tree_step(&mut open, true) {
+                GestureOutput::StepScope(direction) => {
+                    // Grouped Alt+Tab: the scoped step — app entries at
+                    // level 1, the group's children at level 2, the lone
+                    // group entered and cycled inside.
+                    if open.as_mut().is_some_and(|session| {
+                        step_scope(session, &snapshot, &mut expanded, direction)
+                    }) {
                         show_selection(
                             &mut session,
                             &mut gesture,
                             &mut open,
                             &snapshot,
+                            &expanded,
+                            &mut icons,
+                        );
+                    }
+                }
+                GestureOutput::ToggleLevel => {
+                    // Alt+W: flip one level — enter at level 1, exit at
+                    // level 2 — never touching the expansion state.
+                    if open
+                        .as_mut()
+                        .is_some_and(|session| toggle_level(session, &snapshot, &mut expanded))
+                    {
+                        show_selection(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            &expanded,
+                            &mut icons,
+                        );
+                    }
+                }
+                GestureOutput::EnterChild => {
+                    // → expands the selected parent (persistently) and
+                    // enters its children; on a leaf the W3C end-node
+                    // rule makes it a no-op.
+                    if open.as_mut().is_some_and(|session| {
+                        enter_group(session, &snapshot, &mut expanded, Direction::Next)
+                    }) {
+                        show_selection(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            &expanded,
                             &mut icons,
                         );
                     }
                 }
                 GestureOutput::ExitParent => {
-                    // ← exits to the selected child's parent; on a
-                    // top-level row the W3C root rule makes it a no-op.
-                    if tree_step(&mut open, false) {
+                    // ← exits a child to its parent row; an expanded
+                    // parent collapses; a collapsed top-level row is the
+                    // W3C root no-op.
+                    if open
+                        .as_mut()
+                        .is_some_and(|session| exit_group(session, &mut expanded))
+                    {
                         show_selection(
                             &mut session,
                             &mut gesture,
                             &mut open,
                             &snapshot,
+                            &expanded,
                             &mut icons,
                         );
                     }
@@ -542,11 +869,12 @@ pub fn run() -> Result<(), RunError> {
                     open = None;
                 }
                 GestureOutput::Activate { handle } => {
-                    // Ctrl+1..9: select and commit in one motion, the
-                    // same flow a pointer click takes — addressing the
-                    // handle the boundary captured at the key press. A
-                    // `None` handle (a continuation or out-of-range row)
-                    // no-ops with the session and gesture untouched.
+                    // Ctrl+1..9, Alt+1..9, and clicks: select and commit
+                    // in one motion, the same flow each shares —
+                    // addressing the handle the boundary captured at the
+                    // key press or click. A `None` handle (a continuation
+                    // or out-of-range row) no-ops with the session and
+                    // gesture untouched.
                     if let Some(handle) = handle {
                         activate_row(&mut session, &mut gesture, &mut open, &snapshot, handle)?;
                     }
@@ -576,25 +904,31 @@ pub fn run() -> Result<(), RunError> {
                 }
                 PointerInput::Hover { row, handle } => {
                     // A crossing selects by the event-time target — the
-                    // handle captured against the model the user saw —
-                    // and only a handle the frozen ring still holds moves
+                    // row and handle captured against the model the user
+                    // saw — and only a row the session still shows moves
                     // the selection (a window opened mid-gesture is not
                     // hoverable into the session). A continuation-row
                     // crossing (handle `None`) still counts as a row
                     // observation for the crossing policy and selects
-                    // nothing; rows the ring refuses leave the overlay
-                    // untouched.
+                    // nothing; rows the session refuses leave the
+                    // overlay untouched. Grouped sessions resolve the
+                    // row through their stored visible sequence — the
+                    // row index is exact where a handle alone is
+                    // ambiguous (a group's front window is both its
+                    // parent row and its first child).
                     if hover.observe(row).is_some()
-                        && let Some(handle) = handle
+                        && let Some(content_row) = row
+                        && handle.is_some()
                         && open
                             .as_mut()
-                            .is_some_and(|open| open.ring.select(handle).is_some())
+                            .is_some_and(|open| open.select_pointer_row(content_row, handle))
                     {
                         show_selection(
                             &mut session,
                             &mut gesture,
                             &mut open,
                             &snapshot,
+                            &expanded,
                             &mut icons,
                         );
                     }
@@ -618,6 +952,7 @@ pub fn run() -> Result<(), RunError> {
                             },
                             &mut settings,
                             &mut icons,
+                            &mut expanded,
                         );
                     }
                 }
@@ -678,6 +1013,7 @@ pub fn run() -> Result<(), RunError> {
                                         },
                                         &mut settings,
                                         &mut icons,
+                                        &mut expanded,
                                     );
                                 }
                             }
@@ -730,16 +1066,16 @@ fn commit_session(
     Ok(())
 }
 
-/// Selects `handle`'s window and commits the session in one motion —
-/// the flow a pointer click and a Ctrl+N activation share. The handle
+/// Selects `handle`'s row and commits the session in one motion — the
+/// flow a pointer click and the Ctrl+N / Alt+N chords share. The handle
 /// was captured at event receipt against the model the user saw; the
-/// frozen ring must still hold it — a window opened mid-gesture is not
-/// addressable into the session. Anything else leaves the session and
-/// overlay exactly as they are. On success the gesture session is
+/// frozen session must still hold it — a window opened mid-gesture is
+/// not addressable into the session. Anything else leaves the session
+/// and overlay exactly as they are. On success the gesture session is
 /// closed explicitly: a click never reached the gesture machine, and a
-/// Ctrl+N deliberately left it open (an unaddressable row must not
-/// spend it) — either way a later Alt-release cannot re-commit and a
-/// Tab cannot reopen the spent session.
+/// chord deliberately left it open (an unaddressable row must not spend
+/// it) — either way a later Alt-release cannot re-commit and a Tab
+/// cannot reopen the spent session.
 fn activate_row(
     session: &mut wayland::Session,
     gesture: &mut Gesture,
@@ -749,7 +1085,7 @@ fn activate_row(
 ) -> Result<(), RunError> {
     if open
         .as_mut()
-        .is_some_and(|open| open.ring.select(handle).is_some())
+        .is_some_and(|open| open.select_handle(handle).is_some())
     {
         commit_session(session, open, snapshot)?;
         gesture.close();
@@ -779,6 +1115,9 @@ fn activate_row(
 /// scale: every app already seen by the daemon is a cache hit, and a
 /// first-seen app rasterizes once (~1 ms, benchmarked in `src/icons.rs`)
 /// — icon I/O never lands on the warm-press path twice for the same app.
+// Nine parameters: the serve loop's own plumbing (settings, icons,
+// expansion memory) beside the step — see session_step's note.
+#[expect(clippy::too_many_arguments)]
 fn step_and_show(
     session: &mut wayland::Session,
     gesture: &mut Gesture,
@@ -787,6 +1126,7 @@ fn step_and_show(
     step: Step,
     settings: &mut LiveSettings,
     icons: &mut crate::icons::Cache,
+    expanded: &mut std::collections::HashSet<String>,
 ) {
     let (scope, palette, rows, grouping) = match open {
         Some(open) => (open.scope, open.palette, open.rows, open.grouping),
@@ -816,23 +1156,26 @@ fn step_and_show(
         palette,
         rows,
         grouping,
+        expanded,
     );
-    show_selection(session, gesture, open, snapshot, icons);
+    show_selection(session, gesture, open, snapshot, expanded, icons);
 }
 
 /// Builds and shows the overlay for the open session's current selection
 /// — or closes the session when there is nothing eligible left to show.
 ///
 /// Shared by [`step_and_show`] (after a step moved the selection) and the
-/// pointer hover arm (which moves it without stepping): a same-app
+/// pointer / tree-key arms (which move it without stepping): a same-app
 /// session re-filters the fresh snapshot by its frozen anchor, a plain
-/// one lists every eligible window. Icons are already cached, so this is
-/// a rebuild-and-repaint, never new I/O.
+/// flat one lists every eligible window, and a grouped one paints its
+/// frozen tree cut to the current expansion. Icons are already cached,
+/// so this is a rebuild-and-repaint, never new I/O.
 fn show_selection(
     session: &mut wayland::Session,
     gesture: &mut Gesture,
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
     icons: &mut crate::icons::Cache,
 ) {
     // The card this session paints: the palette frozen at open. A closed
@@ -850,31 +1193,50 @@ fn show_selection(
         scale,
         &palette,
     );
-    let model = open.as_ref().and_then(|current| {
-        // The tree flag renders the mode the session froze: grouped
-        // plain sessions paint the tree, same-app sessions stay flat
-        // (the exemption), flat sessions never grew one.
-        let grouping = current.tree.is_some();
-        let model_of = |list: &Snapshot| {
-            current.ring.selected().and_then(|handle| {
-                crate::ui::overlay_model(
-                    list,
-                    handle,
-                    current.scope,
-                    icons,
-                    scale,
-                    &palette,
-                    grouping,
-                    crate::ui::Windowing {
-                        rows: current.rows,
-                        prev: current.viewport,
-                    },
-                )
-            })
+    // A grouped session stores the visible sequence its card renders —
+    // the exact list the pointer's row indexes address — beside the
+    // model that rendered it.
+    if let Some(current) = open.as_mut() {
+        current.visible = grouped_visible(current, snapshot, expanded);
+    }
+    let model = open.as_mut().and_then(|current| {
+        let windowing = crate::ui::Windowing {
+            rows: current.rows,
+            prev: current.viewport,
         };
-        match current.app.as_deref() {
-            Some(app) => model_of(&switcher::app_view(snapshot, app, current.scope)),
-            None => model_of(snapshot),
+        match (&current.tree, current.app.as_deref()) {
+            // Grouped plain session: the frozen tree cut to the stored
+            // visible sequence, selection by tree row.
+            (Some(tree), None) => crate::ui::overlay_model_grouped(
+                tree,
+                &current.visible,
+                current.tree_sel,
+                snapshot,
+                icons,
+                scale,
+                &palette,
+                windowing,
+            ),
+            // Flat and same-app sessions (the exemption): the flat
+            // card over the (possibly re-filtered) snapshot, selection
+            // by ring.
+            _ => {
+                let list = match current.app.as_deref() {
+                    Some(app) => switcher::app_view(snapshot, app, current.scope),
+                    None => snapshot.clone(),
+                };
+                current.ring.selected().and_then(|handle| {
+                    crate::ui::overlay_model(
+                        &list,
+                        handle,
+                        current.scope,
+                        icons,
+                        scale,
+                        &palette,
+                        windowing,
+                    )
+                })
+            }
         }
     });
     match model {
@@ -885,8 +1247,9 @@ fn show_selection(
             if let Some(session) = open.as_mut() {
                 session.viewport = Some(model.viewport);
             }
-            // The key map rides the shown card: Tab/→/← mean tree
-            // walks exactly when the card paints the tree.
+            // The key map rides the shown card: Tab/→/←/W and the two
+            // number chords mean tree walks exactly when the card
+            // paints the tree.
             let grouped = open.as_ref().is_some_and(|session| session.tree.is_some());
             session.overlay_show(model, palette, grouped)
         }
@@ -911,6 +1274,7 @@ mod tests {
     use super::*;
     use crate::switcher::WorkspaceId;
     use crate::ui::{DEFAULT_ROWS, GestureKey, OverlayModel, Palette, RowModel};
+    use std::collections::HashSet;
 
     fn toplevel(handle: u64, workspaces: &[u64], state: State, last_activated: u64) -> Toplevel {
         Toplevel {
@@ -1071,7 +1435,8 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(2))
         );
@@ -1096,7 +1461,8 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(3))
         );
@@ -1121,7 +1487,8 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(2))
         );
@@ -1133,7 +1500,8 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(3))
         );
@@ -1145,7 +1513,8 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(1))
         );
@@ -1157,7 +1526,8 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(3))
         );
@@ -1185,7 +1555,8 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(4))
         );
@@ -1203,7 +1574,8 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             None
         );
@@ -1215,7 +1587,8 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             None
         );
@@ -1233,7 +1606,8 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             None
         );
@@ -1248,7 +1622,8 @@ mod tests {
                 Scope::CurrentWorkspace,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(1))
         );
@@ -1272,6 +1647,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("session opened");
         assert!(session_holds(&open, &snap));
@@ -1295,6 +1671,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("session opened");
 
@@ -1328,6 +1705,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("session opened");
 
@@ -1353,6 +1731,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("session opened");
 
@@ -1384,6 +1763,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("session opened");
 
@@ -1416,6 +1796,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("session opened");
 
@@ -1447,6 +1828,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("session opened");
         assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
@@ -1470,6 +1852,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("session opened");
 
@@ -1506,6 +1889,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.selected(), Some(Handle(2)));
@@ -1535,6 +1919,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.select(Handle(4)), None);
@@ -1563,6 +1948,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.select(Handle(2)), Some(Handle(2)));
@@ -1598,6 +1984,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
 
@@ -1654,6 +2041,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
 
@@ -1708,6 +2096,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.selected(), Some(Handle(3)));
@@ -1789,6 +2178,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
 
@@ -1852,6 +2242,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
 
@@ -1908,6 +2299,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("session opened");
         assert_eq!(open.ring.selected(), Some(Handle(2)));
@@ -1956,6 +2348,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("session opened");
         assert_eq!(open.ring.selected(), Some(Handle(3)));
@@ -2018,6 +2411,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
         assert_eq!(open.ring.select(Handle(4)), None);
@@ -2047,6 +2441,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
         let mut hover = PointerHover::default();
@@ -2077,6 +2472,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
         let mut hover = PointerHover::default();
@@ -2196,7 +2592,8 @@ mod tests {
                 true,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(3)),
             "the browser never enters the ring; the app's own MRU-second lands first"
@@ -2219,7 +2616,8 @@ mod tests {
                 true,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(4))
         );
@@ -2245,7 +2643,8 @@ mod tests {
                     true,
                     Palette::dark(),
                     DEFAULT_ROWS,
-                    false
+                    false,
+                    &mut HashSet::new(),
                 ),
                 expected
             );
@@ -2271,7 +2670,8 @@ mod tests {
                 true,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             None
         );
@@ -2297,7 +2697,8 @@ mod tests {
                 true,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             None
         );
@@ -2317,6 +2718,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
 
         // Mid-gesture, focus moves to the browser: the next press must
@@ -2339,7 +2741,8 @@ mod tests {
                 true,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(4))
         );
@@ -2364,6 +2767,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         assert_eq!(
             session_step(
@@ -2374,7 +2778,8 @@ mod tests {
                 false,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(4))
         );
@@ -2395,7 +2800,8 @@ mod tests {
                 false,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(2)),
             "a plain session steps the full ring: the global MRU-second"
@@ -2409,7 +2815,8 @@ mod tests {
                 true,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(3)),
             "the frozen plain ring keeps walking; the anchor never applies"
@@ -2439,6 +2846,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("same-app session opened");
         assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
@@ -2459,6 +2867,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("same-app session opened");
 
@@ -2507,7 +2916,8 @@ mod tests {
                 Scope::All,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(2))
         );
@@ -2519,7 +2929,8 @@ mod tests {
                 Scope::All,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(3))
         );
@@ -2531,7 +2942,8 @@ mod tests {
                 Scope::All,
                 Palette::dark(),
                 DEFAULT_ROWS,
-                false
+                false,
+                &mut HashSet::new(),
             ),
             Some(Handle(1))
         );
@@ -2555,6 +2967,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         let open = open.expect("session opened");
         // The selection lives on workspace 2; under All that is commitable.
@@ -2571,6 +2984,8 @@ mod tests {
             rows: DEFAULT_ROWS,
             grouping: false,
             tree: None,
+            tree_sel: 0,
+            visible: Vec::new(),
             viewport: None,
         };
         assert_eq!(commit_target(&confined, &snap), None);
@@ -2597,6 +3012,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         assert!(
             open.as_ref().is_some_and(|open| open.viewport.is_none()),
@@ -2632,6 +3048,7 @@ mod tests {
                 Palette::dark(),
                 DEFAULT_ROWS,
                 false,
+                &mut HashSet::new(),
             );
             let open = open.expect("session opened");
             assert!(session_holds(&open, &snap), "holds under {scope:?}");
@@ -2836,6 +3253,7 @@ mod tests {
             crate::ui::Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         assert_eq!(
             open.as_ref().expect("session opened").palette,
@@ -2853,6 +3271,7 @@ mod tests {
             crate::ui::Palette::light(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         assert_eq!(
             open.as_ref().expect("session still open").palette,
@@ -2871,6 +3290,7 @@ mod tests {
             crate::ui::Palette::light(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         assert_eq!(
             open.as_ref().expect("fresh session opened").palette,
@@ -2902,6 +3322,7 @@ mod tests {
             Palette::dark(),
             5,
             false,
+            &mut HashSet::new(),
         );
         assert_eq!(open.as_ref().expect("session opened").rows, 5);
 
@@ -2916,6 +3337,7 @@ mod tests {
             Palette::dark(),
             9,
             false,
+            &mut HashSet::new(),
         );
         assert_eq!(
             open.as_ref().expect("session still open").rows,
@@ -2934,6 +3356,7 @@ mod tests {
             Palette::dark(),
             9,
             false,
+            &mut HashSet::new(),
         );
         assert_eq!(open.as_ref().expect("fresh session opened").rows, 9);
     }
@@ -2962,6 +3385,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         assert!(!open.as_ref().expect("session opened").grouping);
 
@@ -2976,6 +3400,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             true,
+            &mut HashSet::new(),
         );
         assert!(
             !open.as_ref().expect("session still open").grouping,
@@ -2993,16 +3418,17 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             true,
+            &mut HashSet::new(),
         );
         assert!(open.as_ref().expect("fresh session opened").grouping);
     }
 
     // --- Grouped sessions --------------------------------------------------
 
-    /// Two two-window apps, MRU a1, a2, b1, b2 — the fixture whose
-    /// grouped tree reads [a-parent a1, a-child a2, b-parent b1,
-    /// b-child b2]: the last-active app fronts the list, each parent
-    /// fronting its own group.
+    /// Two two-window apps, MRU a1, a2, b1, b2. The frozen tree reads
+    /// [P-a1, C-a1, C-a2, P-b1, C-b1, C-b2] — the last-active app
+    /// fronts the list, each parent fronting its own group with its
+    /// whole window set as children (front window first).
     fn grouped_two_apps() -> Snapshot {
         snapshot(
             vec![
@@ -3015,25 +3441,52 @@ mod tests {
         )
     }
 
-    #[test]
-    fn a_grouped_quick_tap_selects_the_mru_second_window_like_flat() {
-        // The owner's 2026-11-07 re-decision: Alt+Tab behaves as ↓, so
-        // one quick tap activates the MRU-second window — here a2, a
-        // child row — exactly as the flat card always has. Grouped and
-        // flat quick-taps agree on every fixture.
-        let snap = grouped_two_apps();
+    /// One multi-window app beside one single-window app: MRU a1, a2,
+    /// c1. Tree: [P-a1, C-a1, C-a2, L-c1] — the lone-parent shape that
+    /// dead-keyed the first grouped Tab.
+    fn grouped_lone_parent() -> Snapshot {
+        snapshot(
+            vec![
+                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 40),
+                app_toplevel(2, "app.a", &[1], State::default(), 30),
+                app_toplevel(3, "app.c", &[1], State::default(), 20),
+            ],
+            Some(1),
+        )
+    }
+
+    /// Opens a grouped session on `snap` (one opening Alt+Tab) and
+    /// returns it with its expansion state.
+    fn grouped_session(snap: &Snapshot) -> (Option<Switch>, HashSet<String>) {
         let mut open = None;
-        let grouped = session_step(
+        let mut expanded = HashSet::new();
+        session_step(
             &mut open,
-            &snap,
+            snap,
             Direction::Next,
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
             DEFAULT_ROWS,
             true,
+            &mut expanded,
         );
-        assert_eq!(grouped, Some(Handle(2)), "quick-tap lands on the a2 row");
+        (open, expanded)
+    }
+
+    #[test]
+    fn a_grouped_quick_tap_selects_the_second_apps_front_window() {
+        // The opening Alt+Tab steps to the next *app entry* — level 1,
+        // never descending — so a quick tap activates the MRU-second
+        // app's front window: here b1 (the implied [alt]+1 of the b
+        // entry), where the flat ring would step to a2.
+        let snap = grouped_two_apps();
+        let (open, _) = grouped_session(&snap);
+        assert_eq!(
+            open.as_ref().expect("opened").selected_handle(),
+            Some(Handle(3)),
+            "quick-tap lands on b's front window"
+        );
 
         let mut flat = None;
         let flat_target = session_step(
@@ -3045,6 +3498,7 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             false,
+            &mut HashSet::new(),
         );
         assert_eq!(flat_target, Some(Handle(2)), "flat keeps the MRU-second");
     }
@@ -3052,292 +3506,422 @@ mod tests {
     #[test]
     fn the_last_active_app_fronts_its_group_as_the_top_parent_row() {
         // The owner's stated contract: the most recently active app
-        // sits at the top of the list as its group's parent, carrying
-        // that app's own most recently active window. The fixture's
-        // focused window is a1, so row 0 is a's parent holding a1.
+        // sits at the top of the list as its group's parent — a pure
+        // layer entry whose implied window is the app's own most
+        // recently active window, its first child.
         let snap = grouped_two_apps();
-        let mut open = None;
-        session_step(
-            &mut open,
-            &snap,
-            Direction::Next,
-            Scope::CurrentWorkspace,
-            false,
-            Palette::dark(),
-            DEFAULT_ROWS,
-            true,
-        );
+        let (open, expanded) = grouped_session(&snap);
         let session = open.as_ref().expect("opened");
         let tree = session.tree.as_ref().expect("grouped session");
         assert_eq!(tree.rows()[0].kind, switcher::RowKind::Parent);
+        assert_eq!(tree.rows()[0].app_id, "app.a");
         assert_eq!(
             tree.rows()[0].handle,
             Handle(1),
-            "the last-active app's parent fronts the list, carrying its front window"
+            "the entry carries its app's front window"
         );
-        assert_eq!(
-            session.ring.selected(),
-            Some(Handle(2)),
-            "the session opened on row 0 and stepped once, like ↓"
-        );
+        // Expanded, the first child is that same window — [alt]+1.
+        let mut expanded = expanded;
+        expanded.insert("app.a".to_string());
+        let visible = grouped_visible(session, &snap, &expanded);
+        assert_eq!(tree.rows()[1].kind, switcher::RowKind::Child);
+        assert_eq!(tree.rows()[1].handle, Handle(1));
+        assert!(visible.contains(&1), "expansion shows the front child");
     }
 
     #[test]
-    fn grouped_sessions_step_the_flattened_tree() {
-        // Alt+Tab and ↑/↓ walk parents and children as one sequence:
-        // the ring holds the flattened tree, so a plain step from the
-        // opening a2 row reaches b1's parent, then b2, then wraps
-        // around to a1. No row kind gates the step.
-        let snap = grouped_two_apps();
-        let mut open = None;
-        session_step(
-            &mut open,
-            &snap,
-            Direction::Next,
-            Scope::CurrentWorkspace,
-            false,
-            Palette::dark(),
-            DEFAULT_ROWS,
-            true,
-        );
+    fn alt_tab_cycles_app_entries_and_never_descends() {
+        // Level 1 steps between app entries — parents and leaves
+        // alike, wrapping — and never lands on a child by itself.
+        // A lone multi-window group beside a leaf still has two
+        // entries, so the step moves; the first grouped Tab's
+        // dead-key shape cannot return.
+        let snap = grouped_lone_parent();
+        let (mut open, mut expanded) = grouped_session(&snap);
         assert_eq!(
-            open.as_ref().expect("opened").ring.selected(),
-            Some(Handle(2))
-        );
-        for expected in [Handle(3), Handle(4), Handle(1)] {
-            assert_eq!(
-                session_step(
-                    &mut open,
-                    &snap,
-                    Direction::Next,
-                    Scope::CurrentWorkspace,
-                    false,
-                    Palette::dark(),
-                    DEFAULT_ROWS,
-                    true,
-                ),
-                Some(expected)
-            );
-        }
-        // From inside a's children, the step goes to the very next row —
-        // b's parent — not past it: Tab no longer skips children.
-        open.as_mut().expect("open").ring.select(Handle(2)); // a's child
-        assert_eq!(
-            session_step(
-                &mut open,
-                &snap,
-                Direction::Next,
-                Scope::CurrentWorkspace,
-                false,
-                Palette::dark(),
-                DEFAULT_ROWS,
-                true,
-            ),
+            open.as_ref().expect("open").selected_handle(),
             Some(Handle(3)),
-            "stepping from a's child reaches b's parent, one row down"
+            "opening press: a's entry → c's leaf"
+        );
+        assert!(step_scope(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").selected_handle(),
+            Some(Handle(1)),
+            "wraps back to a's entry"
+        );
+        assert!(step_scope(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Previous
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").selected_handle(),
+            Some(Handle(3)),
+            "Previous returns to c's leaf"
         );
     }
 
     #[test]
-    fn grouped_alt_tab_steps_visible_rows_even_with_a_lone_parent() {
-        // The CP-GR1 VM finding, re-decided by the owner 2026-11-07:
-        // one multi-window app beside single-window apps leaves exactly
-        // one parent row, and a parent-only Tab wraps that lone parent
-        // onto itself — Alt+Tab moved nothing at all. The contract now:
-        // Alt+Tab / Alt+Shift+Tab behave as ↓ / ↑, stepping visible
-        // rows whatever their kind, exactly like the flat card.
+    fn a_lone_group_is_entered_and_cycled_inside() {
+        // The workspace holds one app with two windows and nothing
+        // else: level 1 has a single entry, so Alt+Tab enters the
+        // group — skipping the still-active window, like the opening
+        // step of the flat switcher — and further presses cycle the
+        // group's windows. The step is never a dead key.
         let snap = snapshot(
             vec![
                 app_toplevel(1, "app.a", &[1], State::ACTIVATED, 40),
                 app_toplevel(2, "app.a", &[1], State::default(), 30),
-                app_toplevel(3, "app.c", &[1], State::default(), 20),
             ],
             Some(1),
         );
-        let mut open = None;
-        // The opening press steps from row 0 (a1, the focused window)
-        // to row 1 — a2, a's child and the MRU-second window.
-        let selected = session_step(
-            &mut open,
-            &snap,
-            Direction::Next,
-            Scope::CurrentWorkspace,
-            false,
-            Palette::dark(),
-            DEFAULT_ROWS,
-            true,
-        );
-        assert_eq!(selected, Some(Handle(2)), "the opening press steps a row");
-        // The next press reaches c1's leaf — no parent gates the step.
+        let (mut open, mut expanded) = grouped_session(&snap);
         assert_eq!(
-            session_step(
-                &mut open,
-                &snap,
-                Direction::Next,
-                Scope::CurrentWorkspace,
-                false,
-                Palette::dark(),
-                DEFAULT_ROWS,
-                true,
-            ),
-            Some(Handle(3)),
-            "the second press reaches the single-window app's leaf"
-        );
-        // Alt+Shift+Tab walks back up the same rows.
-        assert_eq!(
-            session_step(
-                &mut open,
-                &snap,
-                Direction::Previous,
-                Scope::CurrentWorkspace,
-                false,
-                Palette::dark(),
-                DEFAULT_ROWS,
-                true,
-            ),
+            open.as_ref().expect("opened").selected_handle(),
             Some(Handle(2)),
-            "the previous press steps back one row"
+            "the opening press enters past the active window to a2"
         );
-    }
-
-    #[test]
-    fn tab_without_parents_steps_rows_like_flat() {
-        // All single-window apps: the tree is all leaves, and the
-        // row-step contract makes grouped stepping identical to flat —
-        // the opening press reaches the MRU-second window exactly as
-        // grouping-off would, and the next press steps on down.
-        let snap = snapshot(
-            vec![
-                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 30),
-                app_toplevel(2, "app.b", &[1], State::default(), 20),
-                app_toplevel(3, "app.c", &[1], State::default(), 10),
-            ],
-            Some(1),
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            2,
+            "the selection sits on the second child row"
         );
-        let mut open = None;
-        let opened = session_step(
-            &mut open,
+        assert!(step_scope(
+            open.as_mut().expect("open"),
             &snap,
-            Direction::Next,
-            Scope::CurrentWorkspace,
-            false,
-            Palette::dark(),
-            DEFAULT_ROWS,
-            true,
-        );
-        assert_eq!(opened, Some(Handle(2)), "no parents: flat quick-tap");
+            &mut expanded,
+            Direction::Next
+        ));
         assert_eq!(
-            session_step(
-                &mut open,
-                &snap,
-                Direction::Next,
-                Scope::CurrentWorkspace,
-                false,
-                Palette::dark(),
-                DEFAULT_ROWS,
-                true,
-            ),
-            Some(Handle(3)),
-            "no parents: Tab steps one row"
-        );
-    }
-
-    #[test]
-    fn enter_child_jumps_to_the_first_child_and_no_ops_elsewhere() {
-        // → on a parent lands on its first child; on a leaf the W3C
-        // end-node rule makes it a silent no-op.
-        let snap = grouped_two_apps();
-        let mut open = None;
-        session_step(
-            &mut open,
-            &snap,
-            Direction::Next,
-            Scope::CurrentWorkspace,
-            false,
-            Palette::dark(),
-            DEFAULT_ROWS,
-            true,
-        );
-        open.as_mut().expect("opened").ring.select(Handle(1)); // a's parent
-        assert!(tree_step(&mut open, true));
-        assert_eq!(
-            open.as_ref().expect("open").ring.selected(),
-            Some(Handle(2)),
-            "→ enters a's first child — the app's most recently active window"
-        );
-        // b's parent's first child is b2.
-        open.as_mut().expect("open").ring.select(Handle(3));
-        assert!(tree_step(&mut open, true));
-        assert_eq!(
-            open.as_ref().expect("open").ring.selected(),
-            Some(Handle(4))
-        );
-
-        // A leaf never enters. The lone single-window fixture:
-        let leaves = snapshot(
-            vec![
-                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 30),
-                app_toplevel(2, "app.b", &[1], State::default(), 20),
-            ],
-            Some(1),
-        );
-        let mut flat_tree = None;
-        session_step(
-            &mut flat_tree,
-            &leaves,
-            Direction::Next,
-            Scope::CurrentWorkspace,
-            false,
-            Palette::dark(),
-            DEFAULT_ROWS,
-            true,
-        );
-        assert!(!tree_step(&mut flat_tree, true));
-        assert_eq!(
-            flat_tree.as_ref().expect("open").ring.selected(),
-            Some(Handle(2)),
-            "→ on a leaf moves nothing"
-        );
-    }
-
-    #[test]
-    fn exit_parent_returns_to_the_parent_and_no_ops_on_top_level() {
-        // ← on a child lands on its parent; on a parent or leaf — a
-        // top-level row — the W3C root rule makes it a no-op.
-        let snap = grouped_two_apps();
-        let mut open = None;
-        session_step(
-            &mut open,
-            &snap,
-            Direction::Next,
-            Scope::CurrentWorkspace,
-            false,
-            Palette::dark(),
-            DEFAULT_ROWS,
-            true,
-        );
-        open.as_mut().expect("opened").ring.select(Handle(2)); // a's child
-        assert!(tree_step(&mut open, false));
-        assert_eq!(
-            open.as_ref().expect("open").ring.selected(),
+            open.as_ref().expect("open").selected_handle(),
             Some(Handle(1)),
-            "← exits to a's parent"
+            "the cycle wraps to the front child"
         );
-        open.as_mut().expect("open").ring.select(Handle(4)); // b's child
-        assert!(tree_step(&mut open, false));
-        assert_eq!(
-            open.as_ref().expect("open").ring.selected(),
-            Some(Handle(3))
-        );
+    }
 
-        // Top-level rows never exit.
-        open.as_mut().expect("open").ring.select(Handle(3)); // b's parent
-        assert!(!tree_step(&mut open, false));
+    #[test]
+    fn level_two_tab_cycles_within_its_group_only() {
+        // Scoped within its parent: from inside a's children, Alt+Tab
+        // reaches a's other windows and wraps — b's rows are not peers.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session(&snap);
+        // A selected child implies its group stands expanded — only
+        // entering ever selects a child.
+        expanded.insert("app.a".to_string());
+        open.as_mut().expect("open").tree_sel = 1; // a's front child
+        assert!(step_scope(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
         assert_eq!(
-            open.as_ref().expect("open").ring.selected(),
-            Some(Handle(3)),
-            "← on a parent moves nothing"
+            open.as_ref().expect("open").tree_sel,
+            2,
+            "steps to a's second child"
         );
+        assert!(step_scope(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            1,
+            "wraps within the group, never reaching b"
+        );
+    }
+
+    #[test]
+    fn visible_steps_walk_the_shown_rows_linearly() {
+        // ↓/↑ and the wheel walk the *visible* sequence: collapsed, the
+        // children are skipped exactly as they are not shown; expanded,
+        // the walk threads through them and across group boundaries.
+        let snap = grouped_lone_parent();
+        let (mut open, expanded) = grouped_session(&snap);
+        // Collapsed: [P-a1, L-c1] — the step from c1 wraps to a1.
+        step_visible(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Direction::Previous,
+        );
+        assert_eq!(open.as_ref().expect("open").tree_sel, 0);
+        // Expanded: [P-a1, C-a1, C-a2, L-c1] — the walk threads the
+        // children, one row per step.
+        let mut expanded = expanded;
+        expanded.insert("app.a".to_string());
+        step_visible(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Direction::Next,
+        );
+        assert_eq!(open.as_ref().expect("open").tree_sel, 1);
+        step_visible(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Direction::Next,
+        );
+        assert_eq!(open.as_ref().expect("open").tree_sel, 2);
+        step_visible(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Direction::Next,
+        );
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "crosses to the leaf"
+        );
+    }
+
+    #[test]
+    fn entering_owns_group_skips_the_active_window() {
+        // The owner's Firefox trace: entering your own app's group
+        // never lands on the window the gesture started from — the
+        // selection steps one past it (a2), exactly as the opening
+        // Alt+Tab steps past the active window.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session(&snap);
+        // The opening press moved the selection to b; walk back to a's
+        // entry and enter it.
+        open.as_mut().expect("open").tree_sel = 0; // a's entry; active = a1
+        assert!(enter_group(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            2,
+            "enters past the active a1 onto a2"
+        );
+        assert!(
+            expanded.contains("app.a"),
+            "entering expands the group, persistently"
+        );
+    }
+
+    #[test]
+    fn entering_another_group_lands_on_its_front_window() {
+        // Any other app's group: → lands on its most recently used
+        // window — the implied [alt]+1 — and expands it too.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session(&snap);
+        // The opening press left the selection on b's entry.
+        assert!(enter_group(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            4,
+            "b's front child ([alt]+1)"
+        );
+        assert!(expanded.contains("app.b"));
+    }
+
+    #[test]
+    fn entering_a_leaf_is_the_w3c_no_op() {
+        // The end-node rule: a single-window app has no children to
+        // enter, and nothing expands.
+        let snap = grouped_lone_parent();
+        let (mut open, mut expanded) = grouped_session(&snap);
+        // The opening press left the selection on c's leaf.
+        assert!(!enter_group(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next
+        ));
+        assert_eq!(open.as_ref().expect("open").tree_sel, 3);
+        assert!(expanded.is_empty());
+    }
+
+    #[test]
+    fn alt_w_flips_one_level_without_collapsing() {
+        // W enters at level 1 (the → twin) and exits at level 2
+        // (←'s twin, but the group stays expanded — the flip moves
+        // the selection only).
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session(&snap);
+        // b's entry (the opening press): W enters its children.
+        assert!(toggle_level(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded
+        ));
+        assert_eq!(open.as_ref().expect("open").tree_sel, 4);
+        // W again: back out to the entry, group still expanded.
+        assert!(toggle_level(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded
+        ));
+        assert_eq!(open.as_ref().expect("open").tree_sel, 3);
+        assert!(
+            expanded.contains("app.b"),
+            "the toggle never collapses — only ← does"
+        );
+    }
+
+    #[test]
+    fn left_arrow_exits_a_child_and_collapses_a_parent() {
+        // ← on a child returns to its parent row; on an expanded
+        // parent it collapses the group (the state persists); on a
+        // collapsed entry and on a leaf it is the W3C root no-op.
+        let snap = grouped_two_apps();
+        let (mut open, expanded) = grouped_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 2; // a's second child
+        let mut expanded = expanded;
+        assert!(exit_group(open.as_mut().expect("open"), &mut expanded));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            0,
+            "exits to a's entry"
+        );
+        // A collapsed entry's exit moves nothing.
+        assert!(!exit_group(open.as_mut().expect("open"), &mut expanded));
+        // Expanded entry: the exit collapses it, selection holding.
+        expanded.insert("app.a".to_string());
+        assert!(exit_group(open.as_mut().expect("open"), &mut expanded));
+        assert_eq!(open.as_ref().expect("open").tree_sel, 0);
+        assert!(!expanded.contains("app.a"), "collapsed, persistently");
+        // A leaf's exit moves nothing either.
+        open.as_mut().expect("open").tree_sel = 3; // b's entry, collapsed
+        let _ = &mut expanded;
+        open.as_mut().expect("open").tree_sel = 5; // b's second child
+        assert!(exit_group(open.as_mut().expect("open"), &mut expanded));
+        open.as_mut().expect("open").tree_sel = 4;
+    }
+
+    #[test]
+    fn expansion_state_persists_across_gestures() {
+        // Collapsed by default at the first gesture; whatever the
+        // gesture expanded, the next gesture's card shows expanded.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session(&snap);
+        enter_group(
+            open.as_mut().expect("open"),
+            &snap,
+            &mut expanded,
+            Direction::Next,
+        );
+        let second = grouped_visible(open.as_ref().expect("open"), &snap, &expanded);
+        assert!(
+            second.contains(&4) && second.contains(&5),
+            "b's children show"
+        );
+        // A fresh session over the same expansion state starts
+        // expanded where the last one left it.
+        open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            DEFAULT_ROWS,
+            true,
+            &mut expanded,
+        );
+        let visible = grouped_visible(open.as_ref().expect("reopened"), &snap, &expanded);
+        assert!(
+            visible.contains(&4),
+            "the next gesture inherits the expansion"
+        );
+    }
+
+    #[test]
+    fn the_grouped_tree_freezes_at_open() {
+        // A window of a new app activating mid-gesture changes nothing:
+        // the frozen tree has no row for it, so it is neither visible
+        // on the card nor addressable into the session — regrouping
+        // waits for the next session.
+        let snap = grouped_two_apps();
+        let (mut open, expanded) = grouped_session(&snap);
+        let mut drifted = grouped_two_apps();
+        drifted
+            .toplevels
+            .push(app_toplevel(5, "app.c", &[1], State::ACTIVATED, 99));
+        let visible = grouped_visible(open.as_ref().expect("open"), &drifted, &expanded);
+        assert!(
+            !visible.iter().any(|&index| index > 5),
+            "app.c never joined the card"
+        );
+        assert_eq!(
+            open.as_mut()
+                .expect("open")
+                .select_handle(Handle(5))
+                .map(|_| ()),
+            None,
+            "a window opened mid-gesture cannot be selected into the session"
+        );
+    }
+
+    #[test]
+    fn a_group_front_window_selects_its_parent_row() {
+        // The parent and its first child carry the same window; a
+        // handle-only selection (a click, a Ctrl+N commit) resolves to
+        // the parent row — the entry — and commits the same window
+        // either way.
+        let snap = grouped_two_apps();
+        let (mut open, expanded) = grouped_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.visible = grouped_visible(session, &snap, &expanded);
+        assert!(
+            open.as_mut()
+                .expect("open")
+                .select_handle(Handle(1))
+                .is_some()
+        );
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            0,
+            "the ambiguous front window selects the entry row"
+        );
+    }
+
+    #[test]
+    fn pointer_rows_map_through_the_stored_visible_sequence() {
+        // A hover crossing addresses its model row exactly: content
+        // rows map through visible + viewport; continuation rows are
+        // inert. The row index is what disambiguates a group's front
+        // window from its entry.
+        let snap = grouped_two_apps();
+        let (mut open, expanded) = grouped_session(&snap);
+        let mut expanded = expanded;
+        expanded.insert("app.a".to_string());
+        expanded.insert("app.b".to_string());
+        let session = open.as_mut().expect("open");
+        session.visible = grouped_visible(session, &snap, &expanded);
+        // A synthetic viewport: rows 1..3 of the 6-row visible list,
+        // the bottom slot a continuation row.
+        session.viewport = Some(crate::ui::Viewport {
+            start: 1,
+            content: 2,
+            top: false,
+            bottom: true,
+        });
+        let session = open.as_ref().expect("open");
+        assert_eq!(session.tree_row_at(0), Some(1));
+        assert_eq!(session.tree_row_at(1), Some(2));
+        assert_eq!(session.tree_row_at(2), None, "the bottom `…` row is inert");
     }
 
     #[test]
@@ -3355,53 +3939,10 @@ mod tests {
             Palette::dark(),
             DEFAULT_ROWS,
             true,
+            &mut HashSet::new(),
         );
         let session = open.as_ref().expect("session opened");
         assert!(session.tree.is_none(), "same-app sessions carry no tree");
         assert_eq!(session.ring.selected(), Some(Handle(3)));
-    }
-
-    #[test]
-    fn the_grouped_tree_freezes_at_open() {
-        // A window of a new app activating mid-gesture changes nothing:
-        // the frozen tree has no row for it, the frozen ring holds no
-        // handle for it — regrouping waits for the next session.
-        let snap = grouped_two_apps();
-        let mut open = None;
-        session_step(
-            &mut open,
-            &snap,
-            Direction::Next,
-            Scope::CurrentWorkspace,
-            false,
-            Palette::dark(),
-            DEFAULT_ROWS,
-            true,
-        );
-        open.as_mut().expect("opened").ring.select(Handle(3)); // b's parent
-
-        let mut drifted = grouped_two_apps();
-        drifted
-            .toplevels
-            .push(app_toplevel(5, "app.c", &[1], State::ACTIVATED, 99));
-        assert_eq!(
-            session_step(
-                &mut open,
-                &drifted,
-                Direction::Next,
-                Scope::CurrentWorkspace,
-                false,
-                Palette::dark(),
-                DEFAULT_ROWS,
-                true,
-            ),
-            Some(Handle(4)),
-            "the step stays inside the frozen ring — app.c is unreachable"
-        );
-        assert_eq!(
-            open.as_mut().expect("open").ring.select(Handle(5)),
-            None,
-            "a window opened mid-gesture cannot be selected into the session"
-        );
     }
 }

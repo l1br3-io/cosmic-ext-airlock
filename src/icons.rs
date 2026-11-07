@@ -745,7 +745,6 @@ mod tests {
             &cache,
             2,
             &ui::Palette::dark(),
-            false,
             ui::Windowing {
                 rows: ui::DEFAULT_ROWS,
                 prev: None,
@@ -766,7 +765,6 @@ mod tests {
             &cache,
             3,
             &ui::Palette::dark(),
-            false,
             ui::Windowing {
                 rows: ui::DEFAULT_ROWS,
                 prev: None,

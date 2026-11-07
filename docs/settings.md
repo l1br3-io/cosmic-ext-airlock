@@ -129,31 +129,45 @@ apply.
 
 ## Grouping
 
-`grouping = true` re-partitions the same MRU window list into an app
-tree: one parent row per application — ordered by each app's
-most-recently-used window — with that app's windows beneath it in MRU
-order, all parents expanded. A window COSMIC cannot attribute to an
-application never groups; it stays a top-level row. A parent row
-carries its app's frontmost window, so committing it (Alt-release or
-Enter) activates that window.
+`grouping = true` re-partitions the same MRU window list into a
+two-level tree. Level 1 is the app layer: one entry per application —
+ordered by each app's most-recently-used window — plus one row per
+window COSMIC cannot attribute to any app. An entry is a pure label,
+never a window itself, but committing it (Alt-release or Enter)
+activates its app's most recently used window — the same window its
+first child shows.
+
+Groups start **collapsed**: the card opens showing only the level-1
+entries. Expanding is part of entering (→ below), and the expanded or
+collapsed state of every app **persists across gestures** for as long
+as the daemon runs.
 
 The keys re-bind to the tree:
 
-- **Alt+Tab / Alt+Shift+Tab** behave as **↓ / ↑** — next and previous
-  visible row, parent or child alike, wrapping (the arrow keys do the
-  same)
-- **→** (or **Alt+W**) enters the selected parent's children, landing
-  on its most recently used window; **←** exits back to the parent row
-- **↑ / ↓** step visible rows, through the tree's flattened order
-- **Ctrl+1..9** still picks the Nth visible row — child rows included
+- **Alt+Tab / Alt+Shift+Tab** cycle the current **level** — app
+  entries on level 1 (never descending), the selected group's windows
+  on level 2. A workspace holding a single app's windows is entered
+  and cycled inside, so the step always does something.
+- **→** (or **Alt+W** at level 1) expands the selected group and
+  enters its windows, landing on the most recently used one — one past
+  the window you just left when entering your own app. **←** on a
+  child returns to its entry; on an expanded entry it collapses the
+  group.
+- **Alt+W** flips one level either way: down at level 1, back out at
+  level 2.
+- **↑ / ↓ and the mouse wheel** walk the *visible* rows linearly —
+  parents and expanded children together, across groups, wrapping.
+- **Ctrl+1..9** activates the Nth level-1 entry's window instantly;
+  **Alt+1..9** (shown on the expanded children) activates the selected
+  group's Nth window instantly.
 - Flat mode (`false`, the default) is unchanged: Tab steps rows and
-  ←/→ ride with ↑/↓ as step aliases
+  ←/→ ride with ↑/↓ as step aliases.
 
-The `rows` budget applies to the tree's rows, parent and child alike.
-`grouping` is read when a gesture starts like every setting: a
-session keeps the list shape it opened with until Alt is released. A
-non-boolean value (`grouping = 1`, `grouping = "yes"`) is named in a
-diagnostic and the last-good settings apply.
+The `rows` budget applies to the visible rows. `grouping` is read when
+a gesture starts like every setting: a session keeps the window list
+it opened with until Alt is released. A non-boolean value
+(`grouping = 1`, `grouping = "yes"`) is named in a diagnostic and the
+last-good settings apply.
 
 ## What `isolated = false` changes
 

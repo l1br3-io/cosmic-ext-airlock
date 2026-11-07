@@ -13,7 +13,9 @@ use cctk::sctk::seat::keyboard::Keysym;
 use cosmic_client_toolkit as cctk;
 
 use crate::ipc::Direction;
-use crate::switcher::{self, Handle, RowKind, Scope, Snapshot};
+use crate::switcher::{self, Handle, Scope, Snapshot};
+
+pub use crate::switcher::RowKind;
 
 /// Glyph cell width in logical pixels.
 pub const GLYPH_W: u32 = 8;
@@ -403,6 +405,46 @@ const ELLIPSIS_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x2A, 0x00]
 /// baseline.
 const MIDDLE_DOT_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00];
 
+/// The number chord a row advertises in its hint band — the single
+/// source of "which N selects this row" for both the renderer (the
+/// painted label) and the input map (the wired key): Ctrl+N addresses
+/// level-1 entries, Alt+N a group's children, and a row with no hint
+/// (`None`, rows past nine, continuation rows) is not number-addressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowHint {
+    /// `Ctrl+N` — the Nth level-1 entry (1-based), flat rows included
+    /// (the flat card's every-row numbering is the same rule over a
+    /// one-level tree).
+    Ctrl(usize),
+    /// `Alt+N` — the Nth child (1-based) of the group this row's card
+    /// block shows.
+    Alt(usize),
+}
+
+impl RowHint {
+    /// The Ctrl+N chord for the level-1 entry at `index` (0-based):
+    /// `None` past the ninth — the tenth entry is not number-addressed,
+    /// and no chord is ever shown for it.
+    fn ctrl(index: usize) -> Option<Self> {
+        (index < MAX_HINTS).then_some(RowHint::Ctrl(index + 1))
+    }
+
+    /// The Alt+N chord for the group's child at `index` (0-based):
+    /// `None` past the ninth.
+    fn alt(index: usize) -> Option<Self> {
+        (index < MAX_HINTS).then_some(RowHint::Alt(index + 1))
+    }
+
+    /// The label the hint band paints, right-aligned in the reserved
+    /// `HINT_COLS` territory.
+    fn label(self) -> String {
+        match self {
+            RowHint::Ctrl(n) => format!("Ctrl+{n}"),
+            RowHint::Alt(n) => format!("Alt+{n}"),
+        }
+    }
+}
+
 /// One rendered row: a title, an optional app icon, and whether it is
 /// the selection. `icon: None` draws the generic window glyph. A
 /// continuation row at a truncated edge is the same shape with `handle:
@@ -426,6 +468,14 @@ pub struct RowModel {
     /// On a parent row, the app's window count the badge shows
     /// (`×N`); zero everywhere else.
     pub count: usize,
+    /// The number chord the hint band paints for this row; `None` on
+    /// continuation rows and rows past nine (see [`RowHint`]). Set by
+    /// the model builders — the position-to-chord rule is theirs, the
+    /// render and the input map only read it.
+    pub hint: Option<RowHint>,
+    /// A parent row's expansion state — the chevron's collapsed `>` /
+    /// expanded `v` shape. Meaningless on every other kind.
+    pub expanded: bool,
 }
 
 /// What the overlay should draw: the window's rows plus the logical
@@ -537,30 +587,19 @@ pub fn visible_window(len: usize, sel: usize, rows: usize, prev: Option<Viewport
     }
 }
 
-/// Builds the overlay contents for `snapshot` with `selected` highlighted,
-/// listing windows under `scope`, with app icons from `icons` prepared at
-/// `scale` for the card `palette` paints, windowed by `windowing` — the
-/// session's `rows` budget and the sticky viewport it carries (`None` at
-/// open). `grouping` re-partitions the list into the app tree (see
-/// [`switcher::Grouping`]); off, rows follow [`switcher::eligible`] order
-/// (most recently activated first) exactly as before.
+/// Builds the flat overlay contents for `snapshot` with `selected`
+/// highlighted, listing windows under `scope`, with app icons from
+/// `icons` prepared at `scale` for the card `palette` paints, windowed
+/// by `windowing` — the session's `rows` budget and the sticky viewport
+/// it carries (`None` at open). Rows follow [`switcher::eligible`]
+/// order (most recently activated first); every row hints its Ctrl+N
+/// chord ([`RowHint::Ctrl`]).
 ///
-/// Either way, one list, one budget: window per [`visible_window`], a
-/// continuation row replacing the outermost slot at each truncated edge,
-/// and the model reports the window it computed for the session to carry
-/// next. A grouped parent row is labeled by its `app_id` (the icon
-/// cache's own identity) and carries the app's MRU-front window; width
-/// still derives from the *full* set's widest row — title plus the
-/// child indent and the parent badge — so the card never breathes while
-/// the window moves under stepping. Returns `None` when there is nothing
-/// to show: no active workspace, no eligible windows, or a selection
-/// that is not in the eligible set.
-// Eight render inputs, each a distinct concern (list, selection, icons,
-// scale, colors, mode, windowing); the horizontal card (card-layout)
-// extends this seam rather than replacing it, so no bundle is introduced
-// here — an `expect`, so the day the count drops the attribute warns and
-// comes out.
-#[expect(clippy::too_many_arguments)]
+/// One list, one budget: window per [`visible_window`], a continuation
+/// row replacing the outermost slot at each truncated edge, and the
+/// model reports the window it computed for the session to carry next.
+/// Returns `None` when there is nothing to show: no active workspace,
+/// no eligible windows, or a selection that is not in the eligible set.
 pub fn overlay_model(
     snapshot: &Snapshot,
     selected: Handle,
@@ -568,80 +607,148 @@ pub fn overlay_model(
     icons: &crate::icons::Cache,
     scale: u32,
     palette: &Palette,
-    grouping: bool,
     windowing: Windowing,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
-    // The row sequence to show, as (handle, kind): eligible order flat,
-    // the flattened tree grouped. Both draw from one snapshot, so the
-    // sequence a grouped daemon froze its ring over and the sequence
-    // this model builds are the same list.
-    let entries: Vec<(Handle, RowKind)> = if grouping {
-        switcher::Grouping::new(&snapshot.toplevels, active, scope)
-            .rows()
-            .iter()
-            .map(|row| (row.handle, row.kind))
-            .collect()
-    } else {
-        switcher::eligible(&snapshot.toplevels, active, scope)
-            .into_iter()
-            .map(|handle| (handle, RowKind::Leaf))
-            .collect()
-    };
+    let entries = switcher::eligible(&snapshot.toplevels, active, scope);
     if entries.is_empty() {
         return None;
     }
-    let sel = entries.iter().position(|&(handle, _)| handle == selected)?;
+    let sel = entries.iter().position(|&handle| handle == selected)?;
     let mut rows = Vec::with_capacity(entries.len());
-    for &(handle, kind) in &entries {
-        // Unreachable in practice: both sequences draw from this same
+    for (index, &handle) in entries.iter().enumerate() {
+        // Unreachable in practice: the sequence draws from this same
         // snapshot.
         let toplevel = snapshot.toplevels.iter().find(|t| t.handle == handle)?;
-        // The tree's furniture rides inside the same title cap: a child
-        // leaves indent room, a parent badge room.
-        let cap = match kind {
-            RowKind::Child => MAX_COLS - TREE_INDENT / TEXT_W,
-            RowKind::Parent => MAX_COLS - BADGE_COLS,
-            RowKind::Leaf => MAX_COLS,
-        };
-        let title = truncate_cols(
-            fold_title(&display_title(&toplevel.title, &toplevel.app_id)),
-            cap,
-        );
         rows.push(RowModel {
-            title,
+            title: truncate_cols(
+                fold_title(&display_title(&toplevel.title, &toplevel.app_id)),
+                MAX_COLS,
+            ),
             icon: icons.bitmap(&toplevel.app_id, scale, palette),
-            selected: handle == selected,
+            selected: index == sel,
             handle: Some(handle),
-            kind,
+            kind: RowKind::Leaf,
             count: 0,
+            hint: RowHint::ctrl(index),
+            expanded: false,
         });
     }
-    // Parent rows show the app's window count; a parent is its own
-    // app's first row, its children follow contiguously.
-    for index in 0..rows.len() {
-        if entries[index].1 == RowKind::Parent {
-            let mut windows = 1;
-            while entries
-                .get(index + windows)
-                .is_some_and(|&(_, kind)| kind == RowKind::Child)
-            {
-                windows += 1;
+    finish_model(rows, sel, windowing)
+}
+
+/// Builds the grouped overlay contents: the session's frozen tree cut to
+/// `visible` (its expansion state, liveness-filtered by the caller),
+/// with the tree row `selected` highlighted. Titles and icons draw from
+/// `snapshot`; the window set does not — a window that appeared after
+/// the session froze never joins the card, and one that died was
+/// filtered out of `visible` by the caller.
+///
+/// Level-1 rows (app entries and leaves) hint their Ctrl+N chord by
+/// position among level 1; a child hints its Alt+N chord by position
+/// within its group. A parent's badge counts its app's frozen windows
+/// and its chevron states the expansion the caller passed — expanded
+/// iff its children follow it in `visible`. Width derives from the
+/// visible rows' widest title plus the child indent and parent badge,
+/// so the card is stable under stepping and breathes only when the user
+/// expands or collapses. Returns `None` when nothing is visible or the
+/// selection is not on a visible row.
+// Eight render inputs, each a distinct concern (tree, visible window,
+// selection, snapshot, icons, scale, colors, windowing) — the flat
+// builder's seam, one level deeper.
+#[expect(clippy::too_many_arguments)]
+pub fn overlay_model_grouped(
+    tree: &switcher::Grouping,
+    visible: &[usize],
+    selected: usize,
+    snapshot: &Snapshot,
+    icons: &crate::icons::Cache,
+    scale: u32,
+    palette: &Palette,
+    windowing: Windowing,
+) -> Option<OverlayModel> {
+    let sel = visible.iter().position(|&index| index == selected)?;
+    let mut rows = Vec::with_capacity(visible.len());
+    // The hint ordinals: level-1 position (Ctrl) and position within
+    // the open group (Alt) — the parent row resets the child count.
+    let mut level1 = 0;
+    let mut child = 0;
+    for &index in visible {
+        let grow = tree.rows().get(index)?;
+        // Unreachable in practice: the caller filtered `visible` to
+        // live windows.
+        let toplevel = snapshot
+            .toplevels
+            .iter()
+            .find(|t| t.handle == grow.handle)?;
+        match grow.kind {
+            RowKind::Child => {
+                rows.push(RowModel {
+                    title: truncate_cols(
+                        fold_title(&display_title(&toplevel.title, &toplevel.app_id)),
+                        MAX_COLS - TREE_INDENT / TEXT_W,
+                    ),
+                    icon: icons.bitmap(&toplevel.app_id, scale, palette),
+                    selected: index == selected,
+                    handle: Some(grow.handle),
+                    kind: RowKind::Child,
+                    count: 0,
+                    hint: RowHint::alt(child),
+                    expanded: false,
+                });
+                child += 1;
             }
-            rows[index].count = windows;
-            // The parent's label is its app_id — the icon cache's own
-            // identity (spec OQ default; a desktop-entry display name
-            // is a cosmetic follow-up).
-            if let Some(toplevel) = snapshot
-                .toplevels
-                .iter()
-                .find(|t| t.handle == entries[index].0)
-            {
-                rows[index].title =
-                    truncate_cols(fold_title(&toplevel.app_id), MAX_COLS - BADGE_COLS);
+            kind => {
+                let hint = RowHint::ctrl(level1);
+                level1 += 1;
+                child = 0;
+                if kind == RowKind::Parent {
+                    // The parent's label is its app_id — the icon
+                    // cache's own identity (spec OQ default; a
+                    // desktop-entry display name is a cosmetic
+                    // follow-up); the badge counts the app's frozen
+                    // windows, expanded state included in the card
+                    // only through the chevron.
+                    rows.push(RowModel {
+                        title: truncate_cols(fold_title(&grow.app_id), MAX_COLS - BADGE_COLS),
+                        icon: icons.bitmap(&grow.app_id, scale, palette),
+                        selected: index == selected,
+                        handle: Some(grow.handle),
+                        kind: RowKind::Parent,
+                        count: tree.children_of(index).len(),
+                        hint,
+                        // Children sit contiguously after their parent:
+                        // the next visible row's kind is the state.
+                        expanded: tree
+                            .rows()
+                            .get(index + 1)
+                            .is_some_and(|next| next.kind == RowKind::Child)
+                            && visible.contains(&(index + 1)),
+                    });
+                } else {
+                    rows.push(RowModel {
+                        title: truncate_cols(
+                            fold_title(&display_title(&toplevel.title, &toplevel.app_id)),
+                            MAX_COLS,
+                        ),
+                        icon: icons.bitmap(&toplevel.app_id, scale, palette),
+                        selected: index == selected,
+                        handle: Some(grow.handle),
+                        kind: RowKind::Leaf,
+                        count: 0,
+                        hint,
+                        expanded: false,
+                    });
+                }
             }
         }
     }
+    finish_model(rows, sel, windowing)
+}
+
+/// The builders' shared tail: widest-row sizing, the windowing rule, and
+/// the continuation rows at truncated edges. `sel` indexes `rows`.
+fn finish_model(rows: Vec<RowModel>, sel: usize, windowing: Windowing) -> Option<OverlayModel> {
     let cols = rows
         .iter()
         .map(|row| {
@@ -870,9 +977,9 @@ pub fn render(
         // Parent badge and chevron (candidate treatments; the GR4
         // preview sheet freezes both): the app's window count rides
         // after the title in the muted derivation — `x3`, ASCII-stated
-        // like every other glyph — and '>' marks the enter axis in the
-        // hint gap the card already reserves. Leaves and children earn
-        // neither.
+        // like every other glyph — and the chevron states the expansion
+        // in the hint gap the card already reserves: `>` collapsed,
+        // `v` expanded. Leaves and children earn neither.
         if row.kind == RowKind::Parent {
             let badge = format!("x{}", row.count);
             for ch in badge.chars().take(BADGE_COLS as usize) {
@@ -890,22 +997,24 @@ pub fn render(
                 );
                 lx += TEXT_W;
             }
+            let chevron = if row.expanded { 'v' } else { '>' };
             let chevron_x = title_edge + (HINT_GAP - TEXT_W) / 2;
             draw_glyph(
                 canvas,
                 stride,
-                glyph('>'),
+                glyph(chevron),
                 chevron_x * scale,
                 text_y * scale,
                 TEXT_W * scale / GLYPH_W,
                 palette.muted,
             );
         }
-        // Hint: the row's Ctrl+N chord, right-aligned in the band the
-        // card always reserves and vertically centered on the titles'
-        // own line. Rows past nine paint nothing — every displayed hint
-        // is a wired key ([`hint_label`] is that truth's single source).
-        if let Some(label) = hint_label(index) {
+        // Hint: the row's own number chord, right-aligned in the band
+        // the card always reserves and vertically centered on the
+        // titles' own line. Rows past nine paint nothing — every
+        // displayed hint is a wired key (the model's [`RowHint`] is
+        // that truth's single source, paired with `key_input`).
+        if let Some(label) = row.hint.map(RowHint::label) {
             let band_right = lw.saturating_sub(PAD_X);
             let mut hx = band_right.saturating_sub(label.chars().count() as u32 * TEXT_W);
             for ch in label.chars() {
@@ -1255,17 +1364,10 @@ fn truncate_cols(title: String, cap: u32) -> String {
 /// twin of `key_input`'s Ctrl+digit mapping. The pairing is unit-pinned:
 /// a label that outlives its wiring would be a dead key advertised on
 /// the card.
-const HINTS: [&str; 9] = [
-    "Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+6", "Ctrl+7", "Ctrl+8", "Ctrl+9",
-];
-
-/// The chord addressing `row` (0-based). Rows 1..9 are addressable and
-/// hinted; deeper rows return `None` and paint nothing. Every displayed
-/// hint is a wired key — this function is the single source of that
-/// truth, and `key_input`'s `Select` mapping is its input twin.
-fn hint_label(row: usize) -> Option<&'static str> {
-    HINTS.get(row).copied()
-}
+/// How many rows the number chords reach: Ctrl+1..9 at level 1,
+/// Alt+1..9 within a group — the tenth and deeper are never hinted and
+/// never wired.
+const MAX_HINTS: usize = 9;
 
 /// Keys the switcher gesture reacts to, normalized from keysyms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1283,19 +1385,40 @@ pub enum GestureKey {
     /// against the event-time model — before queueing, so no bare row
     /// ever crosses the queue as an activation target.
     Select(usize),
-    /// The handle-carrying twin of [`GestureKey::Select`], produced only
+    /// Grouped mode's Ctrl+1..9: address the Nth *level-1* entry
+    /// (0-based) — an app entry or a leaf — committing its implied
+    /// window. The boundary resolves it against the event-time model
+    /// exactly as [`GestureKey::Select`] resolves a flat row.
+    SelectApp(usize),
+    /// Grouped mode's Alt+1..9: address the Nth child (0-based) of the
+    /// group the selection is on — only while that group is expanded
+    /// (an unshown child is never hinted, so never wired). The boundary
+    /// resolves it against the event-time model.
+    SelectAlt(usize),
+    /// The handle-carrying twin of the select family, produced only
     /// by the wayland boundary at event receipt: the window of the row
     /// the user addressed. `None` — a continuation row, or a row past
     /// the model's end — flows through and no-ops at the daemon,
     /// leaving the session intact.
     SelectHandle(Option<Handle>),
-    /// → or Alt+W in grouped mode: enter the selected parent's children
-    /// (the W3C expand axis, all-expanded v1). The daemon resolves the
-    /// target against the frozen tree.
-    EnterChild,
-    /// ← in grouped mode: exit to the selected child's parent row (the
-    /// W3C collapse axis's exit half). The daemon resolves the target
+    /// Grouped mode's Tab / Shift+Tab (Alt+Tab / Alt+Shift+Tab): the
+    /// scoped step — level 1 cycles app entries, level 2 cycles the
+    /// group's children. Never descends from level 1 by itself except
+    /// the single-group workspace, where Tab enters and cycles inside
+    /// the only group there is.
+    TabScope,
+    /// Grouped mode's Alt+W: the level toggle — enters the selected
+    /// group's children at level 1, exits to the app entry at level 2.
+    /// → is [`GestureKey::EnterChild`]'s enter-only twin; W works in
+    /// both directions.
+    ToggleLevel,
+    /// → in grouped mode: expand the selected parent and enter its
+    /// children (the W3C expand axis). The daemon resolves the target
     /// against the frozen tree.
+    EnterChild,
+    /// ← in grouped mode: exit to the selected child's parent row, or
+    /// collapse the selected expanded parent (the W3C collapse axis).
+    /// The daemon resolves the target against the frozen tree.
     ExitParent,
     Escape,
     Other,
@@ -1385,13 +1508,23 @@ pub enum GestureOutput {
     /// Move the selection one window in this direction and refresh the
     /// overlay.
     Step(Direction),
-    /// → or Alt+W in grouped mode: move the selection to the selected
-    /// parent's first child. The daemon resolves against the frozen
-    /// tree; a leaf's enter is the W3C no-op.
+    /// Grouped mode's Alt+Tab: step to the next/previous *peer* — the
+    /// next app entry at level 1, the next window of the same group at
+    /// level 2 — and refresh. The daemon resolves the walk against the
+    /// session's frozen tree; flat sessions never see this output.
+    StepScope(Direction),
+    /// Grouped mode's Alt+W: flip one level — enter the selected
+    /// group's children at level 1, exit to its app entry at level 2.
+    /// The daemon resolves against the frozen tree.
+    ToggleLevel,
+    /// → in grouped mode: expand the selected parent and move the
+    /// selection to its enter-target child. The daemon resolves against
+    /// the frozen tree; a leaf's enter is the W3C no-op.
     EnterChild,
     /// ← in grouped mode: move the selection to the selected child's
-    /// parent row. The daemon resolves against the frozen tree; a
-    /// top-level row's exit is the W3C no-op.
+    /// parent row, or collapse the selected expanded parent. The daemon
+    /// resolves against the frozen tree; a collapsed top-level row's
+    /// exit is the W3C no-op.
     ExitParent,
     /// Activate the selection and unmap the overlay.
     Commit,
@@ -1446,9 +1579,15 @@ impl Gesture {
                 }
                 GestureKey::Arrow(direction) => GestureOutput::Step(direction),
                 // Grouped mode's key vocabulary. The machine cannot
-                // resolve either — the targets live in the daemon's
-                // frozen tree — so it forwards them as outputs exactly
-                // as it forwards arrows.
+                // resolve any of them — the targets live in the daemon's
+                // frozen tree and expansion state — so it forwards them
+                // as outputs exactly as it forwards arrows.
+                GestureKey::TabScope => GestureOutput::StepScope(if shift {
+                    Direction::Previous
+                } else {
+                    Direction::Next
+                }),
+                GestureKey::ToggleLevel => GestureOutput::ToggleLevel,
                 GestureKey::EnterChild => GestureOutput::EnterChild,
                 GestureKey::ExitParent => GestureOutput::ExitParent,
                 // Select-and-activate in one motion, addressing the
@@ -1457,11 +1596,13 @@ impl Gesture {
                 // actually happens, so an unaddressable row (`None`)
                 // leaves the gesture fully intact.
                 GestureKey::SelectHandle(handle) => GestureOutput::Activate { handle },
-                // A bare row is the pure translation's shape, never the
-                // queue's: the boundary rewrites it to its
+                // Bare addresses are the pure translation's shape, never
+                // the queue's: the boundary rewrites each to its
                 // [`GestureKey::SelectHandle`] twin before queueing, so
-                // the machine never activates off a row index.
-                GestureKey::Select(_) => GestureOutput::Nothing,
+                // the machine never activates off a row or level index.
+                GestureKey::Select(_) | GestureKey::SelectApp(_) | GestureKey::SelectAlt(_) => {
+                    GestureOutput::Nothing
+                }
                 GestureKey::Escape => {
                     self.showing = false;
                     GestureOutput::Dismiss
@@ -1519,21 +1660,23 @@ impl Gesture {
 /// Shift+Tab arrives as ISO_Left_Tab on most layouts and as Tab plus the
 /// shift modifier on others: both step backwards. `shift_held`,
 /// `ctrl_held`, and `alt_held` are the seat's last reported modifier
-/// states — Ctrl classifies digit presses, exactly as shift classifies
-/// Tab and Alt classifies W.
+/// states — Ctrl classifies digit presses, Alt classifies W and the
+/// grouped digit row, exactly as shift classifies Tab.
 ///
-/// Alt+Tab behaves as ↓ and Alt+Shift+Tab as ↑ in every mode (the
-/// owner's 2026-11-07 re-decision): Tab steps visible rows over the
-/// flattened tree, never parent rows only — a lone-parent tree made the
-/// parent-only step a dead key.
-///
-/// `grouped` re-binds the tree axes per the W3C vertical treeview: →
-/// and Alt+W enter a parent's children ([`GestureKey::EnterChild`]),
-/// ← exits to the parent ([`GestureKey::ExitParent`]). Flat mode
-/// (`grouped = false`) keeps today's mapping byte for byte — Left/Right
-/// ride with Up/Down as step aliases, Tab steps rows — pinned by the
-/// flat regression tests. The boundary passes the live model's own mode
-/// flag, so the keysym the user pressed maps against the list they see.
+/// Grouped mode (the owner's 2026-11-07 collapse re-decision) re-binds
+/// the axes per the W3C vertical treeview: Alt+Tab / Alt+Shift+Tab
+/// ([`GestureKey::TabScope`]) cycle the current level — app entries on
+/// level 1, one group's windows on level 2 — never crossing levels
+/// except the single-group workspace; → expands and enters
+/// ([`GestureKey::EnterChild`]), ← exits or collapses
+/// ([`GestureKey::ExitParent`]); Alt+W
+/// ([`GestureKey::ToggleLevel`]) flips one level either way; Ctrl+N
+/// addresses level-1 entries ([`GestureKey::SelectApp`]) and Alt+N the
+/// selected group's children ([`GestureKey::SelectAlt`]). Flat mode
+/// (`grouped = false`) keeps the flat mapping byte for byte — Tab and
+/// ←/→ step rows — pinned by the flat regression tests. The boundary
+/// passes the live model's own mode flag, so the keysym the user
+/// pressed maps against the list they see.
 pub fn key_input(
     keysym: Keysym,
     shift_held: bool,
@@ -1542,8 +1685,22 @@ pub fn key_input(
     grouped: bool,
 ) -> GestureInput {
     let (key, shift) = match keysym {
-        Keysym::ISO_Left_Tab => (GestureKey::Tab, true),
-        Keysym::Tab => (GestureKey::Tab, shift_held),
+        Keysym::ISO_Left_Tab => (
+            if grouped {
+                GestureKey::TabScope
+            } else {
+                GestureKey::Tab
+            },
+            true,
+        ),
+        Keysym::Tab => (
+            if grouped {
+                GestureKey::TabScope
+            } else {
+                GestureKey::Tab
+            },
+            shift_held,
+        ),
         Keysym::Return | Keysym::KP_Enter | Keysym::ISO_Enter => (GestureKey::Commit, shift_held),
         Keysym::Up => (GestureKey::Arrow(Direction::Previous), false),
         Keysym::Down => (GestureKey::Arrow(Direction::Next), false),
@@ -1561,15 +1718,29 @@ pub fn key_input(
                 (GestureKey::Arrow(Direction::Next), false)
             }
         }
-        // Alt+W is →'s twin — "walk down into the children" — for hands
-        // that never leave the Alt row (the owner's 2026-11-07 request).
+        // Alt+W flips one level — down into the children at level 1,
+        // back out at level 2 — for hands that never leave the Alt row.
         // Both cases ride one arm: Shift+Alt+W reports the W keysym.
-        Keysym::w | Keysym::W if alt_held && grouped => (GestureKey::EnterChild, shift_held),
+        Keysym::w | Keysym::W if alt_held && grouped => (GestureKey::ToggleLevel, shift_held),
         Keysym::Escape => (GestureKey::Escape, shift_held),
         // Ctrl+digits map with or without shift held; without Ctrl the
-        // number row stays Other — it must never surprise-activate.
-        _ if ctrl_held && let Some(row) = digit_row(keysym) => {
-            (GestureKey::Select(row), shift_held)
+        // number row stays Other — it must never surprise-activate. In
+        // grouped mode the chord addresses level-1 entries, not rows.
+        _ if ctrl_held && let Some(row) = digit_row(keysym) => (
+            if grouped {
+                GestureKey::SelectApp(row)
+            } else {
+                GestureKey::Select(row)
+            },
+            shift_held,
+        ),
+        // Alt+digits address the selected group's children — grouped
+        // only; the flat card never re-binds the number row.
+        _ if alt_held
+            && grouped
+            && let Some(row) = digit_row(keysym) =>
+        {
+            (GestureKey::SelectAlt(row), shift_held)
         }
         _ => (GestureKey::Other, shift_held),
     };
@@ -1820,7 +1991,6 @@ mod tests {
             &no_icons(),
             2,
             &Palette::dark(),
-            false,
             Windowing {
                 rows: DEFAULT_ROWS,
                 prev: None,
@@ -2079,19 +2249,18 @@ mod tests {
     }
 
     #[test]
-    fn hint_label_addresses_exactly_rows_one_through_nine() {
+    fn row_hints_address_exactly_one_through_nine() {
         // Rows 1..9 are addressable and hinted; row 10 onward paints
         // nothing — no dead keys on the card (cosmic's own row-10 hint
-        // is an unwired upstream gap Airlock does not copy).
-        let labels = [
-            "Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+6", "Ctrl+7", "Ctrl+8",
-            "Ctrl+9",
-        ];
-        for (row, label) in labels.iter().enumerate() {
-            assert_eq!(hint_label(row), Some(*label), "row {row}");
+        // is an unwired upstream gap Airlock does not copy). Both
+        // chords ride the same nine cap: Ctrl at level 1, Alt within
+        // a group.
+        for (index, n) in (1..=9).enumerate() {
+            assert_eq!(RowHint::ctrl(index), Some(RowHint::Ctrl(n)));
+            assert_eq!(RowHint::alt(index), Some(RowHint::Alt(n)));
         }
-        assert_eq!(hint_label(9), None, "row 10 is not addressable");
-        assert_eq!(hint_label(usize::MAX), None);
+        assert_eq!(RowHint::ctrl(9), None, "the tenth entry is not addressable");
+        assert_eq!(RowHint::alt(9), None, "the tenth child is not addressable");
     }
 
     #[test]
@@ -2506,21 +2675,31 @@ mod tests {
             &no_icons(),
             2,
             &Palette::dark(),
-            false,
             Windowing { rows, prev },
         )
     }
 
-    /// Like [`build`], grouped: the app-partitioned tree view.
-    fn build_grouped(snap: &Snapshot, selected: Handle, scope: Scope) -> Option<OverlayModel> {
-        overlay_model(
-            snap,
+    /// Like [`build`], grouped: the app tree over the same snapshot,
+    /// collapsed by default — `expanded` names the apps standing open,
+    /// `selected` the selected *tree row* (the daemon selects rows, not
+    /// handles, in this mode).
+    fn build_grouped(snap: &Snapshot, selected: usize, expanded: &[&str]) -> Option<OverlayModel> {
+        let tree = crate::switcher::Grouping::new(
+            &snap.toplevels,
+            snap.active.expect("fixture has an active workspace"),
+            Scope::CurrentWorkspace,
+        );
+        let expanded: std::collections::HashSet<String> =
+            expanded.iter().map(|app| app.to_string()).collect();
+        let visible = tree.visible(&expanded);
+        overlay_model_grouped(
+            &tree,
+            &visible,
             selected,
-            scope,
+            snap,
             &no_icons(),
             2,
             &Palette::dark(),
-            true,
             Windowing {
                 rows: DEFAULT_ROWS,
                 prev: None,
@@ -2545,41 +2724,115 @@ mod tests {
     }
 
     #[test]
-    fn grouped_model_lists_parents_then_children_and_leaves() {
-        // MRU a1, b1, a2, u partitions to: parent a (labeled by its
-        // app_id), a's second window as its child, b's single window as
-        // a leaf under its own window title (leaves are window rows,
-        // not app rows), and the un-attributable window as a top-level
-        // leaf.
-        let model = build_grouped(&grouped_snap(), Handle(1), Scope::CurrentWorkspace)
-            .expect("eligible windows exist");
-        let rows: Vec<(&str, crate::switcher::RowKind, usize)> = model
+    fn grouped_model_collapses_by_default_and_lists_all_windows_expanded() {
+        // Collapsed (the default): only level-1 rows — the parent entry
+        // carrying its badge, and the leaves under their window titles.
+        // Expanded: the parent's whole window set follows as children,
+        // front window first, each Alt-numbered within the group.
+        let snap = grouped_snap();
+        let collapsed = build_grouped(&snap, 0, &[]).expect("eligible windows exist");
+        let rows: Vec<(&str, crate::switcher::RowKind, usize, Option<RowHint>, bool)> = collapsed
             .rows
             .iter()
-            .map(|row| (row.title.as_str(), row.kind, row.count))
+            .map(|row| {
+                (
+                    row.title.as_str(),
+                    row.kind,
+                    row.count,
+                    row.hint,
+                    row.expanded,
+                )
+            })
             .collect();
         assert_eq!(
             rows,
             vec![
-                ("app.a", crate::switcher::RowKind::Parent, 2),
-                ("a-back", crate::switcher::RowKind::Child, 0),
-                ("b-only", crate::switcher::RowKind::Leaf, 0),
-                ("nowhere", crate::switcher::RowKind::Leaf, 0),
+                (
+                    "app.a",
+                    crate::switcher::RowKind::Parent,
+                    2,
+                    Some(RowHint::Ctrl(1)),
+                    false
+                ),
+                (
+                    "b-only",
+                    crate::switcher::RowKind::Leaf,
+                    0,
+                    Some(RowHint::Ctrl(2)),
+                    false
+                ),
+                (
+                    "nowhere",
+                    crate::switcher::RowKind::Leaf,
+                    0,
+                    Some(RowHint::Ctrl(3)),
+                    false
+                ),
+            ]
+        );
+        let expanded = build_grouped(&snap, 0, &["app.a"]).expect("eligible windows exist");
+        let rows: Vec<(&str, crate::switcher::RowKind, Option<RowHint>, bool)> = expanded
+            .rows
+            .iter()
+            .map(|row| (row.title.as_str(), row.kind, row.hint, row.expanded))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "app.a",
+                    crate::switcher::RowKind::Parent,
+                    Some(RowHint::Ctrl(1)),
+                    true
+                ),
+                (
+                    "a-front",
+                    crate::switcher::RowKind::Child,
+                    Some(RowHint::Alt(1)),
+                    false
+                ),
+                (
+                    "a-back",
+                    crate::switcher::RowKind::Child,
+                    Some(RowHint::Alt(2)),
+                    false
+                ),
+                (
+                    "b-only",
+                    crate::switcher::RowKind::Leaf,
+                    Some(RowHint::Ctrl(2)),
+                    false
+                ),
+                (
+                    "nowhere",
+                    crate::switcher::RowKind::Leaf,
+                    Some(RowHint::Ctrl(3)),
+                    false
+                ),
             ]
         );
     }
 
     #[test]
-    fn grouped_model_parents_carry_the_front_window_handle() {
-        // A parent row resolves to exactly one window — its app's
-        // MRU-front — so Ctrl+N, clicks, and commit on the parent row
-        // address that window (the input-integrity contract).
-        let model = build_grouped(&grouped_snap(), Handle(3), Scope::CurrentWorkspace)
-            .expect("eligible windows exist");
+    fn grouped_model_selects_by_tree_row_not_handle() {
+        // A parent and its first child carry the same window — the
+        // group's front — so handle matching cannot tell them apart.
+        // The model marks the selected *tree row*: selecting the parent
+        // highlights the entry, selecting the front child highlights
+        // the child.
+        let snap = grouped_snap();
+        let model = build_grouped(&snap, 0, &["app.a"]).expect("eligible windows exist");
         assert_eq!(model.rows[0].handle, Some(Handle(1)));
-        assert!(!model.rows[0].selected, "the parent is not the selection");
-        assert_eq!(model.rows[1].handle, Some(Handle(3)));
-        assert!(model.rows[1].selected, "the selected child marks its row");
+        assert_eq!(model.rows[1].handle, Some(Handle(1)));
+        assert!(model.rows[0].selected, "the parent row is the selection");
+        assert!(!model.rows[1].selected);
+
+        let model = build_grouped(&snap, 1, &["app.a"]).expect("eligible windows exist");
+        assert!(!model.rows[0].selected);
+        assert!(
+            model.rows[1].selected,
+            "the front child row is the selection"
+        );
     }
 
     #[test]
@@ -2587,13 +2840,13 @@ mod tests {
         // The card widens for the tree: a child's indent columns and a
         // parent's count-badge columns join the flat title budget. Same
         // title lengths everywhere isolate the tree columns.
-        let flat = build(&grouped_snap(), Handle(1), Scope::CurrentWorkspace)
-            .expect("eligible windows exist");
-        let grouped = build_grouped(&grouped_snap(), Handle(1), Scope::CurrentWorkspace)
-            .expect("eligible windows exist");
+        let snap = grouped_snap();
+        let flat =
+            build(&snap, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
+        let grouped = build_grouped(&snap, 0, &["app.a"]).expect("eligible windows exist");
         // Longest flat title is 7 cols; the tree budget is the parent's
-        // 5 title cols + BADGE_COLS, the child's 5 + TREE_INDENT cols.
-        let tree_cols = (5 + BADGE_COLS).max(5 + TREE_INDENT / TEXT_W).max(7);
+        // 5 title cols + BADGE_COLS, the child's 7 + TREE_INDENT cols.
+        let tree_cols = (5 + BADGE_COLS).max(7 + TREE_INDENT / TEXT_W).max(7);
         assert_eq!(
             grouped.width,
             2 * PAD_X + ICON + ICON_GAP + tree_cols * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
@@ -2602,11 +2855,12 @@ mod tests {
     }
 
     #[test]
-    fn grouped_model_windows_the_flattened_sequence() {
-        // One list, one budget: `rows`/`…` apply over parents and
-        // children together through the same windowing rule — here a
-        // 7-row tree at budget 3 keeps 5 slots with the bottom edge
-        // truncated, selection mid-list.
+    fn grouped_model_windows_the_visible_sequence() {
+        // One list, one budget: `rows`/`…` apply over the visible rows
+        // — parents and expanded children together — through the same
+        // windowing rule. Here a 9-row expanded tree (a×3 grouped, b×2
+        // grouped, two leaves) at budget 3 keeps 5 slots with both
+        // edges truncated, the selection mid-list.
         let snap = snapshot(
             vec![
                 toplevel(1, "a1", "app.a", &[1], switcher::State::ACTIVATED, 70),
@@ -2619,17 +2873,28 @@ mod tests {
             ],
             Some(1),
         );
-        // Flattened: P-a1, C-a2, C-a3, P-b1, C-b2, C-c1(leaf), U-leaf.
-        // Selecting the b parent (index 3) at budget 3: 5 slots from 0,
-        // bottom truncated, the `…` row replacing the 6th slot.
-        let model = overlay_model(
-            &snap,
-            Handle(4),
+        // Expanded tree rows: P-a1, C-a1, C-a2, C-a3, P-b1, C-b1,
+        // C-b2, L-c1, L-u1 — handles 1,1,2,3,4,4,5,6,7. Selecting the
+        // b parent (tree row 4) at budget 3: 5 slots from 2, both
+        // edges truncated.
+        let tree = crate::switcher::Grouping::new(
+            &snap.toplevels,
+            snap.active.expect("fixture has an active workspace"),
             Scope::CurrentWorkspace,
+        );
+        let expanded: std::collections::HashSet<String> = ["app.a", "app.b"]
+            .iter()
+            .map(|app| app.to_string())
+            .collect();
+        let visible = tree.visible(&expanded);
+        let model = overlay_model_grouped(
+            &tree,
+            &visible,
+            4,
+            &snap,
             &no_icons(),
             2,
             &Palette::dark(),
-            true,
             Windowing {
                 rows: 3,
                 prev: None,
@@ -2640,15 +2905,15 @@ mod tests {
         assert_eq!(
             handles,
             vec![
-                Some(Handle(1)),
+                None, // the `…` continuation slot above
                 Some(Handle(2)),
                 Some(Handle(3)),
                 Some(Handle(4)),
-                None, // the `…` continuation slot
+                None, // the `…` continuation slot below
             ]
         );
-        assert!(model.viewport.bottom);
-        assert_eq!(model.viewport.content, 4);
+        assert!(model.viewport.top && model.viewport.bottom);
+        assert_eq!(model.viewport.content, 3);
     }
 
     #[test]
@@ -2657,8 +2922,7 @@ mod tests {
         // TREE_INDENT right of the top-level column, so the pixel where
         // a parent's glyph starts is pure card on the child's row, and
         // the child's ink appears one indent over.
-        let model = build_grouped(&grouped_snap(), Handle(1), Scope::CurrentWorkspace)
-            .expect("eligible windows exist");
+        let model = build_grouped(&grouped_snap(), 0, &["app.a"]).expect("eligible windows exist");
         let (canvas, stride) = rendered(&model, 2);
         let side = GLYPH_W * GLYPH_SCALE;
         let glyph_x = PAD_X + (ICON - side) / 2;
@@ -3629,6 +3893,7 @@ mod tests {
                     icon: None,
                     selected: false,
                     handle: Some(Handle(index as u64 + 1)),
+                    hint: RowHint::ctrl(index),
                     ..Default::default()
                 })
                 .collect(),
@@ -3696,6 +3961,7 @@ mod tests {
                     icon: None,
                     selected: true,
                     handle: Some(Handle(1)),
+                    hint: Some(RowHint::Ctrl(1)),
                     ..Default::default()
                 },
                 RowModel {
@@ -3703,6 +3969,7 @@ mod tests {
                     icon: None,
                     selected: false,
                     handle: Some(Handle(2)),
+                    hint: Some(RowHint::Ctrl(2)),
                     ..Default::default()
                 },
             ],
@@ -3739,6 +4006,7 @@ mod tests {
                 icon: None,
                 selected: false,
                 handle: Some(Handle(1)),
+                hint: Some(RowHint::Ctrl(1)),
                 ..Default::default()
             }],
             width: 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
@@ -4497,22 +4765,22 @@ mod tests {
     }
 
     #[test]
-    fn grouped_key_input_keeps_tab_as_the_row_step() {
-        // The owner's 2026-11-07 re-decision: Alt+Tab behaves as ↓ and
-        // Alt+Shift+Tab as ↑ in grouped mode too — Tab steps visible
-        // rows exactly as flat, never parent rows only (a lone-parent
-        // tree made the parent-only step a dead key).
+    fn grouped_key_input_binds_tab_to_the_scoped_step() {
+        // The owner's 2026-11-08 collapse re-decision: Alt+Tab cycles
+        // the current level — app entries on level 1, the group's
+        // windows on level 2 — never crossing levels by itself. Flat
+        // mode keeps Tab stepping rows, byte for byte.
         assert_eq!(
             key_input(Keysym::Tab, false, false, false, true),
             GestureInput::Press {
-                key: GestureKey::Tab,
+                key: GestureKey::TabScope,
                 shift: false
             }
         );
         assert_eq!(
             key_input(Keysym::Tab, true, false, false, true),
             GestureInput::Press {
-                key: GestureKey::Tab,
+                key: GestureKey::TabScope,
                 shift: true
             }
         );
@@ -4520,27 +4788,27 @@ mod tests {
         assert_eq!(
             key_input(Keysym::ISO_Left_Tab, false, false, false, true),
             GestureInput::Press {
-                key: GestureKey::Tab,
+                key: GestureKey::TabScope,
                 shift: true
             }
         );
     }
 
     #[test]
-    fn grouped_alt_w_is_the_right_arrows_twin() {
-        // Alt+W walks down into the selected parent's children — the
-        // same EnterChild the right arrow produces — for hands that
-        // never leave the Alt row. Shift may ride along (W); without
-        // Alt the letter means nothing, and flat mode never re-binds
-        // it.
+    fn grouped_alt_w_flips_the_level() {
+        // Alt+W is the level toggle — down into the children at level
+        // 1, back out at level 2 — for hands that never leave the Alt
+        // row. → enters only; W works both ways. Shift may ride along
+        // (W); without Alt the letter means nothing, and flat mode
+        // never re-binds it.
         for keysym in [Keysym::w, Keysym::W] {
             assert_eq!(
                 key_input(keysym, false, false, true, true),
                 GestureInput::Press {
-                    key: GestureKey::EnterChild,
+                    key: GestureKey::ToggleLevel,
                     shift: false
                 },
-                "Alt+{keysym:?} enters the children, like →"
+                "Alt+{keysym:?} flips the level"
             );
         }
         assert_eq!(
@@ -4626,13 +4894,39 @@ mod tests {
     }
 
     #[test]
-    fn grouped_key_input_keeps_digits_and_commit_unchanged() {
-        // Ctrl+N and the Enter family mean the same thing over a tree:
-        // visible rows are rows, commit is commit.
+    fn grouped_key_input_rebinds_both_number_chords() {
+        // Ctrl+N addresses the Nth level-1 entry; Alt+N the selected
+        // group's Nth child (the boundary resolves both against the
+        // event-time model). The Enter family still commits and Escape
+        // still dismisses, whatever the mode.
         assert_eq!(
             key_input(Keysym::_3, false, true, false, true),
             GestureInput::Press {
-                key: GestureKey::Select(2),
+                key: GestureKey::SelectApp(2),
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::_3, false, false, true, true),
+            GestureInput::Press {
+                key: GestureKey::SelectAlt(2),
+                shift: false
+            },
+            "Alt+3 addresses the group's third child"
+        );
+        assert_eq!(
+            key_input(Keysym::KP_5, false, false, true, true),
+            GestureInput::Press {
+                key: GestureKey::SelectAlt(4),
+                shift: false
+            },
+            "the keypad rides the same chord"
+        );
+        // Without Alt the number row never surprise-activates.
+        assert_eq!(
+            key_input(Keysym::_3, false, false, false, true),
+            GestureInput::Press {
+                key: GestureKey::Other,
                 shift: false
             }
         );
@@ -4653,12 +4947,33 @@ mod tests {
     }
 
     #[test]
-    fn the_tree_walk_keys_forward_to_the_daemon() {
-        // The machine cannot resolve tree jumps — the daemon holds the
-        // frozen tree — so it forwards them while showing, exactly as it
-        // forwards arrow steps.
+    fn the_grouped_keys_forward_to_the_daemon() {
+        // The machine cannot resolve grouped walks — the daemon holds
+        // the frozen tree and the expansion state — so it forwards
+        // them while showing, exactly as it forwards arrow steps.
         let mut gesture = Gesture::default();
         gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::TabScope,
+                shift: false
+            }),
+            GestureOutput::StepScope(Direction::Next)
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::TabScope,
+                shift: true
+            }),
+            GestureOutput::StepScope(Direction::Previous)
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::ToggleLevel,
+                shift: false
+            }),
+            GestureOutput::ToggleLevel
+        );
         assert_eq!(
             gesture.feed(GestureInput::Press {
                 key: GestureKey::EnterChild,
@@ -4678,7 +4993,12 @@ mod tests {
     #[test]
     fn the_grouped_keys_mean_nothing_between_sessions() {
         let mut gesture = Gesture::default();
-        for key in [GestureKey::EnterChild, GestureKey::ExitParent] {
+        for key in [
+            GestureKey::TabScope,
+            GestureKey::ToggleLevel,
+            GestureKey::EnterChild,
+            GestureKey::ExitParent,
+        ] {
             assert_eq!(
                 gesture.feed(GestureInput::Press { key, shift: false }),
                 GestureOutput::Nothing
@@ -4712,18 +5032,17 @@ mod tests {
                 },
                 "the chord hinted on row {row} must wire that row"
             );
-            let chord = format!("Ctrl+{}", row + 1);
+            let hint = RowHint::ctrl(row).expect("rows 1..9 are hinted");
             assert_eq!(
-                hint_label(row),
-                Some(chord.as_str()),
+                hint.label(),
+                format!("Ctrl+{}", row + 1),
                 "row {row}'s label must name its own chord"
             );
         }
         // The reserved band fits the longest label exactly — nothing
         // spare to misalign, nothing clipped.
-        let longest = HINTS.iter().map(|label| label.len()).max().unwrap();
-        assert_eq!(HINT_COLS as usize, longest);
-        assert_eq!(HINTS.len(), 9, "nine wired rows, nine labels");
+        assert_eq!(RowHint::Ctrl(9).label().len(), HINT_COLS as usize);
+        assert_eq!(MAX_HINTS, 9, "nine wired entries, nine labels");
     }
 
     #[test]
