@@ -178,6 +178,15 @@ The keys re-bind to the tree:
   rows and ←/→ ride with ↑/↓ as step aliases. `scoped_cycling` means
   nothing without `grouping = true`.
 
+**The quick tap** — one Tab press with Alt released before the card can
+be read — is the first step of the same cycle, not the flat list's
+MRU-second window. Under open cycling it steps from the window you
+left: your own app's next window when its group is expanded; while the
+group is collapsed, the next app entry's window — skipping your own
+app's other windows. Under scoped cycling it is the next app entry's
+window, the MRU-second app's front window. A workspace holding a single
+app's windows steps inside it, one window past the one you left.
+
 The `rows` budget applies to the visible rows. `grouping` and
 `scoped_cycling` are read when a gesture starts like every setting: a
 session keeps the window list and cycle scope it opened with until Alt

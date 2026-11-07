@@ -40,6 +40,11 @@ pipeline the COSMIC launcher uses) beside its title.
   list
 - **Ctrl+N** (1–9, keypad too) switches to the Nth window at once, like a
   click; each row shows its key
+- **App grouping** (`grouping = true`) turns the list into a per-app tree:
+  collapsed app entries that commit their most recently used window, → to
+  expand one (remembered across gestures), Alt+N to pick a window inside
+  it — see
+  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#grouping)
 - Titles render in a built-in ASCII pixel font: typographic punctuation
   folds to its ASCII lookalike (`—` → `-`), Latin accents fold to their
   base letter (`é` → `e`), and anything with no ASCII form — CJK,

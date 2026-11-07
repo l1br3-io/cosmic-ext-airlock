@@ -35,6 +35,33 @@ The list is frozen for the gesture: a window that opened after the
 overlay appeared is not on it, so neither the pointer, the wheel, nor a
 number key can reach it mid-gesture.
 
+## Grouped mode
+
+The `grouping = true` setting re-partitions the same list into a
+two-level tree: one entry per application — ordered by each app's most
+recently used window — with that app's whole window set nested beneath
+it, and a top-level row for each window COSMIC cannot attribute to any
+app and for each single-window app. Groups start collapsed; expanding
+one (**→** or **Alt+W**) is remembered for as long as the daemon runs.
+Committing an entry activates that app's most recently used window —
+the same window its first child shows.
+
+The keys re-bind to the tree. **Tab** follows the `scoped_cycling`
+setting: across every app in one sequence by default, where an expanded
+group's entry is a plain divider the highlight never rests on; inside
+one level when scoped — app entries, or one group's windows once
+entered. **↑/↓** and the **wheel** walk the visible rows linearly
+across groups, wrapping. **→** expands and enters — landing one past
+the window you just left when it is your own app — **←** and **Alt+W**
+exit, collapsing the group under the default scope. **Ctrl+N**
+activates the Nth app entry's window (an expanded entry still answers
+its chord, it just shows none); **Alt+N**, shown on expanded children,
+activates the entered group's Nth window. The pointer picks windows,
+never the divider. The frozen-list rule holds for the tree: the window
+set never changes mid-gesture, only which of it stands expanded. The
+full table, including how a quick tap lands under each scope, lives in
+[settings.md](settings.md#grouping).
+
 ## The card
 
 Each row shows the window's application icon — resolved through the same

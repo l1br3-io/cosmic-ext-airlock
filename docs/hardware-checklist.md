@@ -168,6 +168,46 @@ binary.
 - [ ] Re-measure daemon RSS (section 7) — unchanged from the reference
       row
 
+### Grouping (app tree)
+
+- [ ] Set `grouping = true` on a workspace with 3+ apps — one
+      multi-window, one single-window, and one un-attributable window if
+      available: the card opens on collapsed app entries plus top-level
+      rows, each entry carrying a count chip and a right-pointing
+      triangle
+- [ ] Tab / Shift+Tab step every app in one sequence (the default
+      scope): expanded groups contribute their windows, the expanded
+      entry itself never holds the highlight and shows no chord; a
+      collapsed entry is selectable
+- [ ] → on an entry expands it and enters — landing one past the window
+      you just left when it is your own app — and the triangle turns
+      down; Alt+W enters and exits too; ← on a child returns to the
+      entry and collapses the group in one motion
+- [ ] Set `scoped_cycling = true`: Tab steps app entries only, and one
+      group's windows once entered; ← on the expanded entry collapses it
+- [ ] ↑/↓ and the wheel walk the visible rows linearly across groups,
+      wrapping; under the default scope the dividers are skipped
+- [ ] Ctrl+N activates the Nth app entry's window — an expanded entry
+      shows no chord but still answers it; Alt+N (shown on expanded
+      children) activates the entered group's Nth window instantly
+- [ ] Releasing Alt on an entry (or Enter) activates that app's most
+      recently used window; a quick tap follows the cycle scope, not the
+      flat MRU-second window
+- [ ] Expansion persists across gestures: expand an app, release Alt,
+      Alt+Tab again — the group is still expanded (until the daemon
+      restarts)
+- [ ] A workspace holding a single app's windows: Tab enters and cycles
+      inside it — never a dead key
+- [ ] A tree taller than `rows`: the `…` windowing rides the flattened
+      sequence; Ctrl+N and the pointer are inert on the dots
+- [ ] Pointer on the tree: hover and click select windows; the divider
+      entry resolves no pointer input
+- [ ] `grouping = false` regression: the flat card and every key behave
+      exactly as before; `scoped_cycling` alone changes nothing
+- [ ] Edit `grouping` (or `scoped_cycling`) while the daemon runs: the
+      next Alt+Tab uses it; `grouping = 1` logs a `settings:` diagnostic
+      naming the key and the last-good value holds
+
 ## 4. Takeover and restore
 
 - [ ] `airlock install` redirects Alt+Tab / Shift+Alt+Tab to Airlock at user
