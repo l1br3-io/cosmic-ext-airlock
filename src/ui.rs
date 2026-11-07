@@ -142,8 +142,9 @@ pub const HINT_COLS: u32 = 6; // len("Ctrl+9")
 /// Indent of a grouped child row's whole cell — icon and title — from
 /// the top-level column, logical px: two 8-grid steps, deep enough to
 /// read as nesting at a glance without re-parenting the row rhythm (the
-/// band still spans the card; only the content indents). Candidate
-/// value: the GR4 preview sheet freezes it (the LV3 pattern).
+/// band still spans the card; only the content indents). Frozen
+/// 2026-11-08 on the GR4 sheet, both palettes over both backdrops (the
+/// LV3 pattern).
 pub const TREE_INDENT: u32 = 16;
 
 /// Title-band columns reserved after a parent row's title for the
@@ -160,7 +161,11 @@ pub const BADGE_COLS: u32 = 4;
 /// pill the selection band's [`BAND_RADIUS`] rounding already
 /// established. The chip fills with the text color and cuts its digit
 /// in the card's own background: the palette's pair, so it reads on
-/// both polarities without a new color.
+/// both polarities without a new color. Frozen 2026-11-08 on the GR4
+/// sheet: the pill reads at metadata weight beside the 32-px icons,
+/// and the one-step [`BADGE_GAP`] clearing holds — widening it would
+/// spend a title column on every parent ([`BADGE_COLS`] grows with
+/// it), a trade the sheet judged not worth the nit.
 pub const BADGE_H: u32 = 16;
 /// See [`BADGE_H`]: horizontal padding around the digit, logical px.
 pub const BADGE_PAD_X: u32 = 4;
