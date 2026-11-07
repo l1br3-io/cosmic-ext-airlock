@@ -23,6 +23,23 @@
   <url type="homepage">https://github.com/l1br3-io/cosmic-ext-airlock</url>
   <url type="bugtracker">https://github.com/l1br3-io/cosmic-ext-airlock/issues</url>
   <releases>
+    <release version="0.2.0" date="2026-11-07">
+      <description>
+        <ul>
+          <li>New: the `rows` setting — how many windows the card keeps
+              in view on a long list (3–10 in the config, default 8);
+              continuation rows ride on top of that budget instead of
+              spending it.</li>
+          <li>New: Ctrl+1..9 — with the overlay open, press Ctrl plus a
+              number (keypad included) to switch to that row's window at
+              once, like a click; the first nine rows show their key.
+              (Shipped in 0.1.1 but its notes missed it.)</li>
+          <li>Changed: larger titles — 12 px (was 8), legible at a
+              glance on 100 % scale; the card widens to at most
+              748 px.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-11-07">
       <description>
         <ul>

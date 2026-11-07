@@ -3,7 +3,7 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
-## [Unreleased]
+## [0.2.0] — 2026-11-07
 
 ### Added
 
@@ -12,6 +12,11 @@ observe, not internal mechanics.
   The `…` continuation rows now ride on top of that budget instead of
   spending it — a long list keeps eight windows in view mid-list where
   it showed six.
+- **Ctrl+1..9 picks a row directly**: with the overlay open, press Ctrl
+  plus a number (top row or keypad) to switch to that row's window at
+  once — the same outcome as clicking it. The first nine rows show
+  their key at the right edge. (This shipped in 0.1.1's binary; its
+  notes missed it.)
 
 ### Changed
 

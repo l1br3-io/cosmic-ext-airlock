@@ -143,7 +143,7 @@ dependencies = [
 
 [[package]]
 name = "cosmic-ext-airlock"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "cosmic-client-toolkit",
  "freedesktop-desktop-entry",
