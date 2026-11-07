@@ -348,32 +348,6 @@ impl Grouping {
         &self.rows
     }
 
-    /// Index of the next [`RowKind::Parent`] row strictly after `from`,
-    /// wrapping past the end — Tab's step, skipping the current app's
-    /// children. `None` when no parent exists or `from` is out of range.
-    pub fn next_parent(&self, from: usize) -> Option<usize> {
-        let len = self.rows.len();
-        if from >= len {
-            return None;
-        }
-        (1..=len)
-            .map(|offset| (from + offset) % len)
-            .find(|&index| self.rows[index].kind == RowKind::Parent)
-    }
-
-    /// Index of the previous [`RowKind::Parent`] row strictly before
-    /// `from`, wrapping past the front — Shift+Tab's step. `None` when no
-    /// parent exists or `from` is out of range.
-    pub fn previous_parent(&self, from: usize) -> Option<usize> {
-        let len = self.rows.len();
-        if from >= len {
-            return None;
-        }
-        (1..=len)
-            .map(|offset| (from + len - offset) % len)
-            .find(|&index| self.rows[index].kind == RowKind::Parent)
-    }
-
     /// Index of the parent row the child at `from` nests under — ←'s
     /// exit-to-parent. `None` for parents, leaves, and out-of-range
     /// positions: only a [`RowKind::Child`] has a parent, and children
@@ -1014,92 +988,6 @@ mod tests {
     }
 
     #[test]
-    fn next_parent_from_a_parent_steps_past_its_own_children() {
-        // Tab from parent a lands on parent b, never back inside a's
-        // children.
-        let grouping = grouped_fixture();
-        assert_eq!(grouping.next_parent(0), Some(3));
-    }
-
-    #[test]
-    fn next_parent_from_a_child_or_leaf_finds_the_following_parent() {
-        let grouping = grouped_fixture();
-        assert_eq!(grouping.next_parent(2), Some(3), "last a-child → parent b");
-        assert_eq!(grouping.next_parent(5), Some(0), "trailing leaf wraps to a");
-    }
-
-    #[test]
-    fn next_parent_wraps_from_the_last_parent_to_the_first() {
-        let grouping = grouped_fixture();
-        assert_eq!(grouping.next_parent(3), Some(0));
-    }
-
-    #[test]
-    fn next_parent_lands_only_on_parent_rows() {
-        let grouping = grouped_fixture();
-        for from in 0..grouping.rows().len() {
-            let next = grouping.next_parent(from).expect("fixture has parents");
-            assert_eq!(
-                grouping.rows()[next].kind,
-                RowKind::Parent,
-                "next_parent({from}) landed on a non-parent"
-            );
-        }
-    }
-
-    #[test]
-    fn previous_parent_wraps_from_the_first_parent_to_the_last() {
-        let grouping = grouped_fixture();
-        assert_eq!(grouping.previous_parent(0), Some(3));
-    }
-
-    #[test]
-    fn previous_parent_from_a_child_or_leaf_finds_the_preceding_parent() {
-        let grouping = grouped_fixture();
-        assert_eq!(grouping.previous_parent(4), Some(3), "b-child → parent b");
-        assert_eq!(
-            grouping.previous_parent(5),
-            Some(3),
-            "trailing leaf → parent b"
-        );
-        assert_eq!(grouping.previous_parent(1), Some(0), "a-child → parent a");
-    }
-
-    #[test]
-    fn previous_parent_lands_only_on_parent_rows() {
-        let grouping = grouped_fixture();
-        for from in 0..grouping.rows().len() {
-            let previous = grouping.previous_parent(from).expect("fixture has parents");
-            assert_eq!(
-                grouping.rows()[previous].kind,
-                RowKind::Parent,
-                "previous_parent({from}) landed on a non-parent"
-            );
-        }
-    }
-
-    #[test]
-    fn parent_walks_without_any_parents_are_none() {
-        // All leaves: two single-window apps and an un-attributable
-        // window — Tab has nowhere to step.
-        let toplevels = vec![
-            app_window(1, "a", &[1], State::ACTIVATED, 30),
-            app_window(2, "b", &[1], State::default(), 20),
-            app_window(3, "", &[1], State::default(), 10),
-        ];
-        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
-        assert_eq!(grouping.next_parent(0), None);
-        assert_eq!(grouping.previous_parent(0), None);
-    }
-
-    #[test]
-    fn parent_walks_from_out_of_range_positions_are_none() {
-        let grouping = grouped_fixture();
-        assert_eq!(grouping.next_parent(99), None);
-        assert_eq!(grouping.previous_parent(99), None);
-    }
-
-    #[test]
     fn parent_of_a_child_is_the_row_that_heads_its_block() {
         let grouping = grouped_fixture();
         assert_eq!(grouping.parent_of(1), Some(0));
@@ -1147,8 +1035,6 @@ mod tests {
     #[test]
     fn walks_on_an_empty_grouping_are_none() {
         let grouping = Grouping::new(&[], WorkspaceId(1), Scope::CurrentWorkspace);
-        assert_eq!(grouping.next_parent(0), None);
-        assert_eq!(grouping.previous_parent(0), None);
         assert_eq!(grouping.parent_of(0), None);
         assert_eq!(grouping.first_child(0), None);
     }

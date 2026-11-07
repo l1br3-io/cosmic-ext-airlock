@@ -104,10 +104,10 @@ pub struct Switch {
     /// config edit landing mid-gesture never regroups the open session.
     grouping: bool,
     /// The frozen tree a grouped plain session walks: the partition its
-    /// ring was built over, kept beside it so Tab's parent jumps and
-    /// →/←'s tree steps address the same frozen list. `None` for flat
-    /// sessions and same-app sessions (the exemption — already
-    /// app-scoped, rendered flat).
+    /// ring was built over, kept beside it so →/←'s (and Alt+W's) tree
+    /// steps address the same frozen list. `None` for flat sessions and
+    /// same-app sessions (the exemption — already app-scoped, rendered
+    /// flat).
     tree: Option<switcher::Grouping>,
     /// The window the card is showing over the session's list — derived
     /// state carried between rebuilds so the sticky rule can continue
@@ -172,9 +172,13 @@ pub fn ring_step(
     if open.is_none() {
         let active = snapshot.active?;
         // A grouped session opens on the flattened tree: ring and tree
-        // freeze together, so every later walk — Tab's parent jumps,
+        // freeze together, so every later walk — Alt+Tab's row steps,
         // →/←'s tree steps, the model's rows — addresses one frozen
-        // list. Flat sessions keep the eligible list, no tree.
+        // list. Flat sessions keep the eligible list, no tree. Either
+        // way the opening press steps one row: Alt+Tab behaves as ↓
+        // (Alt+Shift+Tab as ↑) in both modes — the owner's 2026-11-07
+        // re-decision — so a quick tap activates the MRU-second window
+        // exactly as the flat card always has.
         let (handles, tree) = if grouping {
             let tree = switcher::Grouping::new(&snapshot.toplevels, active, scope);
             let handles = tree.rows().iter().map(|row| row.handle).collect();
@@ -193,26 +197,6 @@ pub fn ring_step(
             tree,
             viewport: None,
         });
-        // The opening press is the alt-tab keybind itself — grouped
-        // mode's first Tab: step to the next (previous) parent row, so
-        // a quick tap activates the MRU-second app's frontmost window,
-        // not the MRU-second window. A tree with no parent anywhere is
-        // a flat list — the press steps a row exactly as grouping-off
-        // would; a lone parent wraps to itself and the selection holds.
-        if let Some(tree) = open.as_ref().and_then(|session| session.tree.as_ref()) {
-            let target = match direction {
-                Direction::Next => tree.next_parent(0),
-                Direction::Previous => tree.previous_parent(0),
-            };
-            return match target {
-                Some(0) => open.as_mut()?.ring.selected(),
-                Some(delta) => open.as_mut()?.ring.step(delta),
-                None => match direction {
-                    Direction::Next => open.as_mut()?.ring.step(1),
-                    Direction::Previous => open.as_mut()?.ring.previous(),
-                },
-            };
-        }
     }
     match direction {
         Direction::Next => open.as_mut()?.ring.step(1),
@@ -310,41 +294,11 @@ fn tree_walk(
     true
 }
 
-/// Steps an open grouped session to its next or previous *parent* row —
-/// Tab's app step, skipping the current app's children (the GNOME
-/// mirror). Acts on the frozen tree: an app that appeared mid-gesture is
-/// unreachable, exactly as a window opened mid-gesture is unselectable.
-/// A tree with no parent anywhere is a flat list, so Tab steps one row —
-/// the grouping-off behavior; a lone parent wraps to itself and nothing
-/// moves.
-fn step_parent(open: &mut Option<Switch>, direction: Direction) -> bool {
-    // `next_parent` answers `None` exactly when the tree holds no
-    // parent rows (any parent at all would be found by wrapping).
-    let flat = open
-        .as_ref()
-        .and_then(|session| session.tree.as_ref())
-        .is_none_or(|tree| tree.next_parent(0).is_none());
-    if flat {
-        return match direction {
-            Direction::Next => open
-                .as_mut()
-                .is_some_and(|session| session.ring.step(1).is_some()),
-            Direction::Previous => open
-                .as_mut()
-                .is_some_and(|session| session.ring.previous().is_some()),
-        };
-    }
-    tree_walk(open, |tree, current| match direction {
-        Direction::Next => tree.next_parent(current),
-        Direction::Previous => tree.previous_parent(current),
-    })
-}
-
-/// → and ← over the frozen tree: `enter` resolves the selected parent's
-/// first child, exit the selected child's parent row. The W3C no-ops —
-/// → on a leaf (the end-node rule), ← on a top-level row (the root
-/// rule) — resolve to no target and nothing moves. Returns whether the
-/// selection moved.
+/// →, Alt+W, and ← over the frozen tree: `enter` resolves the selected
+/// parent's first child, exit the selected child's parent row. The W3C
+/// no-ops — → on a leaf (the end-node rule), ← on a top-level row (the
+/// root rule) — resolve to no target and nothing moves. Returns whether
+/// the selection moved.
 fn tree_step(open: &mut Option<Switch>, enter: bool) -> bool {
     tree_walk(open, |tree, current| {
         if enter {
@@ -549,25 +503,10 @@ pub fn run() -> Result<(), RunError> {
                         &mut icons,
                     );
                 }
-                GestureOutput::StepParent(direction) => {
-                    // Grouped Tab: jump to the next/previous parent row
-                    // against the session's frozen tree. Flat sessions
-                    // never see this output — their key map produces
-                    // plain Step — and a walk that lands where it
-                    // started refreshes nothing.
-                    if step_parent(&mut open, direction) {
-                        show_selection(
-                            &mut session,
-                            &mut gesture,
-                            &mut open,
-                            &snapshot,
-                            &mut icons,
-                        );
-                    }
-                }
                 GestureOutput::EnterChild => {
-                    // → enters the selected parent's first child; on a
-                    // leaf the W3C end-node rule makes it a no-op.
+                    // → (or Alt+W) enters the selected parent's first
+                    // child; on a leaf the W3C end-node rule makes it a
+                    // no-op.
                     if tree_step(&mut open, true) {
                         show_selection(
                             &mut session,
@@ -3060,8 +2999,10 @@ mod tests {
 
     // --- Grouped sessions --------------------------------------------------
 
-    /// Two two-window apps, MRU a1, a2, b1, b2 — the fixture whose flat
-    /// and grouped quick-taps differ: flat steps to a2, grouped to b1.
+    /// Two two-window apps, MRU a1, a2, b1, b2 — the fixture whose
+    /// grouped tree reads [a-parent a1, a-child a2, b-parent b1,
+    /// b-child b2]: the last-active app fronts the list, each parent
+    /// fronting its own group.
     fn grouped_two_apps() -> Snapshot {
         snapshot(
             vec![
@@ -3075,10 +3016,11 @@ mod tests {
     }
 
     #[test]
-    fn a_grouped_opening_press_selects_the_second_apps_front_window() {
-        // The quick-tap pin: one Alt+Tab tap in grouped mode activates
-        // the MRU-second *app's* frontmost window, not the MRU-second
-        // window — here b1, where the flat ring would step to a2.
+    fn a_grouped_quick_tap_selects_the_mru_second_window_like_flat() {
+        // The owner's 2026-11-07 re-decision: Alt+Tab behaves as ↓, so
+        // one quick tap activates the MRU-second window — here a2, a
+        // child row — exactly as the flat card always has. Grouped and
+        // flat quick-taps agree on every fixture.
         let snap = grouped_two_apps();
         let mut open = None;
         let grouped = session_step(
@@ -3091,7 +3033,7 @@ mod tests {
             DEFAULT_ROWS,
             true,
         );
-        assert_eq!(grouped, Some(Handle(3)), "quick-tap lands on b's front");
+        assert_eq!(grouped, Some(Handle(2)), "quick-tap lands on the a2 row");
 
         let mut flat = None;
         let flat_target = session_step(
@@ -3108,10 +3050,44 @@ mod tests {
     }
 
     #[test]
+    fn the_last_active_app_fronts_its_group_as_the_top_parent_row() {
+        // The owner's stated contract: the most recently active app
+        // sits at the top of the list as its group's parent, carrying
+        // that app's own most recently active window. The fixture's
+        // focused window is a1, so row 0 is a's parent holding a1.
+        let snap = grouped_two_apps();
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            DEFAULT_ROWS,
+            true,
+        );
+        let session = open.as_ref().expect("opened");
+        let tree = session.tree.as_ref().expect("grouped session");
+        assert_eq!(tree.rows()[0].kind, switcher::RowKind::Parent);
+        assert_eq!(
+            tree.rows()[0].handle,
+            Handle(1),
+            "the last-active app's parent fronts the list, carrying its front window"
+        );
+        assert_eq!(
+            session.ring.selected(),
+            Some(Handle(2)),
+            "the session opened on row 0 and stepped once, like ↓"
+        );
+    }
+
+    #[test]
     fn grouped_sessions_step_the_flattened_tree() {
-        // ↑/↓ walk parents and children as one sequence: the ring holds
-        // the flattened tree, so a plain step from b1 reaches b2 and
-        // wraps around to a1.
+        // Alt+Tab and ↑/↓ walk parents and children as one sequence:
+        // the ring holds the flattened tree, so a plain step from the
+        // opening a2 row reaches b1's parent, then b2, then wraps
+        // around to a1. No row kind gates the step.
         let snap = grouped_two_apps();
         let mut open = None;
         session_step(
@@ -3126,9 +3102,9 @@ mod tests {
         );
         assert_eq!(
             open.as_ref().expect("opened").ring.selected(),
-            Some(Handle(3))
+            Some(Handle(2))
         );
-        for expected in [Handle(4), Handle(1)] {
+        for expected in [Handle(3), Handle(4), Handle(1)] {
             assert_eq!(
                 session_step(
                     &mut open,
@@ -3143,51 +3119,33 @@ mod tests {
                 Some(expected)
             );
         }
-    }
-
-    #[test]
-    fn tab_steps_to_parent_rows_skipping_children() {
-        // From inside a's children, Tab lands on b's parent; from b's
-        // parent it wraps to a's parent — parents only, either way.
-        let snap = grouped_two_apps();
-        let mut open = None;
-        session_step(
-            &mut open,
-            &snap,
-            Direction::Next,
-            Scope::CurrentWorkspace,
-            false,
-            Palette::dark(),
-            DEFAULT_ROWS,
-            true,
-        );
-        open.as_mut().expect("opened").ring.select(Handle(2)); // a's child
-        assert!(step_parent(&mut open, Direction::Next));
+        // From inside a's children, the step goes to the very next row —
+        // b's parent — not past it: Tab no longer skips children.
+        open.as_mut().expect("open").ring.select(Handle(2)); // a's child
         assert_eq!(
-            open.as_ref().expect("open").ring.selected(),
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                false,
+                Palette::dark(),
+                DEFAULT_ROWS,
+                true,
+            ),
             Some(Handle(3)),
-            "Tab from a's child lands on b's parent"
-        );
-        assert!(step_parent(&mut open, Direction::Next));
-        assert_eq!(
-            open.as_ref().expect("open").ring.selected(),
-            Some(Handle(1)),
-            "Tab wraps around to a's parent"
-        );
-        assert!(step_parent(&mut open, Direction::Previous));
-        assert_eq!(
-            open.as_ref().expect("open").ring.selected(),
-            Some(Handle(3)),
-            "Shift+Tab steps back to b's parent"
+            "stepping from a's child reaches b's parent, one row down"
         );
     }
 
     #[test]
-    fn tab_on_a_lone_parent_stays_put() {
-        // One multi-window app and a single window beside it: the only
-        // parent is a's, so Tab wraps to itself — no movement, the
-        // selection holds. (The VM walk judges this edge; the pin keeps
-        // it deliberate.)
+    fn grouped_alt_tab_steps_visible_rows_even_with_a_lone_parent() {
+        // The CP-GR1 VM finding, re-decided by the owner 2026-11-07:
+        // one multi-window app beside single-window apps leaves exactly
+        // one parent row, and a parent-only Tab wraps that lone parent
+        // onto itself — Alt+Tab moved nothing at all. The contract now:
+        // Alt+Tab / Alt+Shift+Tab behave as ↓ / ↑, stepping visible
+        // rows whatever their kind, exactly like the flat card.
         let snap = snapshot(
             vec![
                 app_toplevel(1, "app.a", &[1], State::ACTIVATED, 40),
@@ -3197,7 +3155,9 @@ mod tests {
             Some(1),
         );
         let mut open = None;
-        session_step(
+        // The opening press steps from row 0 (a1, the focused window)
+        // to row 1 — a2, a's child and the MRU-second window.
+        let selected = session_step(
             &mut open,
             &snap,
             Direction::Next,
@@ -3207,21 +3167,45 @@ mod tests {
             DEFAULT_ROWS,
             true,
         );
-        let session = open.as_ref().expect("opened");
-        assert_eq!(session.ring.selected(), Some(Handle(1)));
-        assert!(!step_parent(&mut open, Direction::Next));
+        assert_eq!(selected, Some(Handle(2)), "the opening press steps a row");
+        // The next press reaches c1's leaf — no parent gates the step.
         assert_eq!(
-            open.as_ref().expect("open").ring.selected(),
-            Some(Handle(1)),
-            "Tab on the lone parent moves nothing"
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                false,
+                Palette::dark(),
+                DEFAULT_ROWS,
+                true,
+            ),
+            Some(Handle(3)),
+            "the second press reaches the single-window app's leaf"
+        );
+        // Alt+Shift+Tab walks back up the same rows.
+        assert_eq!(
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Previous,
+                Scope::CurrentWorkspace,
+                false,
+                Palette::dark(),
+                DEFAULT_ROWS,
+                true,
+            ),
+            Some(Handle(2)),
+            "the previous press steps back one row"
         );
     }
 
     #[test]
     fn tab_without_parents_steps_rows_like_flat() {
-        // All single-window apps: the tree is flat, so Tab falls back to
-        // the flat step — the opening press reaches the MRU-second
-        // window exactly as grouping-off would.
+        // All single-window apps: the tree is all leaves, and the
+        // row-step contract makes grouped stepping identical to flat —
+        // the opening press reaches the MRU-second window exactly as
+        // grouping-off would, and the next press steps on down.
         let snap = snapshot(
             vec![
                 app_toplevel(1, "app.a", &[1], State::ACTIVATED, 30),
@@ -3242,9 +3226,17 @@ mod tests {
             true,
         );
         assert_eq!(opened, Some(Handle(2)), "no parents: flat quick-tap");
-        assert!(step_parent(&mut open, Direction::Next));
         assert_eq!(
-            open.as_ref().expect("open").ring.selected(),
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                false,
+                Palette::dark(),
+                DEFAULT_ROWS,
+                true,
+            ),
             Some(Handle(3)),
             "no parents: Tab steps one row"
         );
@@ -3271,7 +3263,7 @@ mod tests {
         assert_eq!(
             open.as_ref().expect("open").ring.selected(),
             Some(Handle(2)),
-            "→ enters a's first child"
+            "→ enters a's first child — the app's most recently active window"
         );
         // b's parent's first child is b2.
         open.as_mut().expect("open").ring.select(Handle(3));
@@ -3372,7 +3364,7 @@ mod tests {
     #[test]
     fn the_grouped_tree_freezes_at_open() {
         // A window of a new app activating mid-gesture changes nothing:
-        // the frozen tree has no parent for it, the frozen ring holds no
+        // the frozen tree has no row for it, the frozen ring holds no
         // handle for it — regrouping waits for the next session.
         let snap = grouped_two_apps();
         let mut open = None;
@@ -3392,11 +3384,19 @@ mod tests {
         drifted
             .toplevels
             .push(app_toplevel(5, "app.c", &[1], State::ACTIVATED, 99));
-        assert!(step_parent(&mut open, Direction::Next));
         assert_eq!(
-            open.as_ref().expect("open").ring.selected(),
-            Some(Handle(1)),
-            "Tab wraps within the frozen parents — app.c is unreachable"
+            session_step(
+                &mut open,
+                &drifted,
+                Direction::Next,
+                Scope::CurrentWorkspace,
+                false,
+                Palette::dark(),
+                DEFAULT_ROWS,
+                true,
+            ),
+            Some(Handle(4)),
+            "the step stays inside the frozen ring — app.c is unreachable"
         );
         assert_eq!(
             open.as_mut().expect("open").ring.select(Handle(5)),

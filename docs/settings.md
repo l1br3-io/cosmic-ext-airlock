@@ -139,10 +139,13 @@ Enter) activates that window.
 
 The keys re-bind to the tree:
 
-- **Tab / Shift+Tab** step **apps** — next / previous parent row
-- **→** enters the selected parent's children; **←** exits back to
-  the parent row
-- **↑ / ↓** keep stepping rows, through the tree's flattened order
+- **Alt+Tab / Alt+Shift+Tab** behave as **↓ / ↑** — next and previous
+  visible row, parent or child alike, wrapping (the arrow keys do the
+  same)
+- **→** (or **Alt+W**) enters the selected parent's children, landing
+  on its most recently used window; **←** exits back to the parent row
+- **↑ / ↓** step visible rows, through the tree's flattened order
+- **Ctrl+1..9** still picks the Nth visible row — child rows included
 - Flat mode (`false`, the default) is unchanged: Tab steps rows and
   ←/→ ride with ↑/↓ as step aliases
 

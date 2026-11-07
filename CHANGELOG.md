@@ -12,6 +12,10 @@ observe, not internal mechanics.
   nothing enabled, so behavior is unchanged until you uncomment a line.
   An existing config is never touched, and `--uninstall` removes the
   starter only if you never edited it.
+- **Alt+W enters a group's children** (`grouping = true`): the right
+  arrow's twin for hands that never leave the Alt row — on the selected
+  parent it walks down into the children, landing on the app's most
+  recently used window.
 
 ### Changed
 
@@ -23,9 +27,16 @@ observe, not internal mechanics.
 
 ### Fixed
 
+- **Alt+Tab is never a dead key under `grouping`**: with exactly one
+  multi-window app on the workspace, the grouped card's Tab stepped
+  *parent rows only* and wrapped the lone parent onto itself — no
+  press moved the selection, and a quick tap re-activated the same
+  window. Alt+Tab / Alt+Shift+Tab now behave as ↓ / ↑ in grouped mode
+  too, stepping visible rows parent-and-child alike, so a quick tap
+  activates the MRU-second window exactly as the flat card always has.
 - **The `grouping` setting has its reference at last**: the
   docs/settings.md section planned when the setting shipped — the app
-  tree's shape, the re-bound keys (Tab steps apps, → enters a parent's
+  tree's shape, the re-bound keys (→ or Alt+W enters a parent's
   children, ← exits), and the read-at-gesture-start contract.
 - The `…` overflow marker sits centered on the card again (it drifted
   2 px right), and the selection band's ends round to match the card's

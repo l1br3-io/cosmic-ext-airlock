@@ -256,6 +256,10 @@ pub(crate) struct App {
     shift_held: bool,
     /// Last Ctrl state the seat reported, for classifying digit presses.
     ctrl_held: bool,
+    /// Last Alt state the seat reported, for classifying W presses —
+    /// Alt+W is the grouped mode's → twin, so the letter only counts
+    /// while the gesture's own modifier is held.
+    alt_held: bool,
     /// First output seen; hosts the overlay surface.
     first_output: Option<wl_output::WlOutput>,
     overlay: Option<Overlay>,
@@ -526,7 +530,13 @@ impl KeyboardHandler for App {
             // The key map rides the shown card: Tab/→/← mean tree walks
             // exactly when the visible list paints the tree.
             let grouped = self.overlay.as_ref().is_some_and(|overlay| overlay.grouped);
-            let input = ui::key_input(event.keysym, self.shift_held, self.ctrl_held, grouped);
+            let input = ui::key_input(
+                event.keysym,
+                self.shift_held,
+                self.ctrl_held,
+                self.alt_held,
+                grouped,
+            );
             // The Select twin: `key_input` stays pure (a keysym → row
             // translation), and the row resolves to its window here, at
             // event receipt against the live model — the keyboard twin
@@ -578,6 +588,7 @@ impl KeyboardHandler for App {
     ) {
         self.shift_held = modifiers.shift;
         self.ctrl_held = modifiers.ctrl;
+        self.alt_held = modifiers.alt;
         if self.overlay.is_some() {
             self.gesture_inputs
                 .push(GestureInput::Modifiers { alt: modifiers.alt });
@@ -1182,6 +1193,7 @@ impl Session {
             pointer: None,
             shift_held: false,
             ctrl_held: false,
+            alt_held: false,
             first_output: None,
             overlay: None,
             gesture_inputs: Vec::new(),

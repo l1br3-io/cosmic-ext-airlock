@@ -1289,14 +1289,9 @@ pub enum GestureKey {
     /// the model's end — flows through and no-ops at the daemon,
     /// leaving the session intact.
     SelectHandle(Option<Handle>),
-    /// Tab in grouped mode: the app step — next/previous *parent* row,
-    /// skipping the current app's children (the GNOME mirror). Flat
-    /// mode keeps [`GestureKey::Tab`] stepping rows; the mapping, not
-    /// the machine, carries the mode.
-    TabApps,
-    /// → in grouped mode: enter the selected parent's children (the W3C
-    /// expand axis, all-expanded v1). The daemon resolves the target
-    /// against the frozen tree.
+    /// → or Alt+W in grouped mode: enter the selected parent's children
+    /// (the W3C expand axis, all-expanded v1). The daemon resolves the
+    /// target against the frozen tree.
     EnterChild,
     /// ← in grouped mode: exit to the selected child's parent row (the
     /// W3C collapse axis's exit half). The daemon resolves the target
@@ -1390,13 +1385,9 @@ pub enum GestureOutput {
     /// Move the selection one window in this direction and refresh the
     /// overlay.
     Step(Direction),
-    /// Move the selection to the next/previous *parent* row and refresh
-    /// — grouped mode's Tab. The daemon resolves the jump against the
-    /// session's frozen tree; flat sessions never see this output.
-    StepParent(Direction),
-    /// → in grouped mode: move the selection to the selected parent's
-    /// first child. The daemon resolves against the frozen tree; a
-    /// leaf's enter is the W3C no-op.
+    /// → or Alt+W in grouped mode: move the selection to the selected
+    /// parent's first child. The daemon resolves against the frozen
+    /// tree; a leaf's enter is the W3C no-op.
     EnterChild,
     /// ← in grouped mode: move the selection to the selected child's
     /// parent row. The daemon resolves against the frozen tree; a
@@ -1455,14 +1446,9 @@ impl Gesture {
                 }
                 GestureKey::Arrow(direction) => GestureOutput::Step(direction),
                 // Grouped mode's key vocabulary. The machine cannot
-                // resolve any of them — the targets live in the
-                // daemon's frozen tree — so it forwards them as
-                // stepping outputs exactly as it forwards arrows.
-                GestureKey::TabApps => GestureOutput::StepParent(if shift {
-                    Direction::Previous
-                } else {
-                    Direction::Next
-                }),
+                // resolve either — the targets live in the daemon's
+                // frozen tree — so it forwards them as outputs exactly
+                // as it forwards arrows.
                 GestureKey::EnterChild => GestureOutput::EnterChild,
                 GestureKey::ExitParent => GestureOutput::ExitParent,
                 // Select-and-activate in one motion, addressing the
@@ -1531,36 +1517,33 @@ impl Gesture {
 /// Normalizes a grabbed key press into gesture input, grouping-aware.
 ///
 /// Shift+Tab arrives as ISO_Left_Tab on most layouts and as Tab plus the
-/// shift modifier on others: both step backwards. `shift_held` and
-/// `ctrl_held` are the seat's last reported modifier states — Ctrl
-/// classifies digit presses, exactly as shift classifies Tab.
+/// shift modifier on others: both step backwards. `shift_held`,
+/// `ctrl_held`, and `alt_held` are the seat's last reported modifier
+/// states — Ctrl classifies digit presses, exactly as shift classifies
+/// Tab and Alt classifies W.
 ///
-/// `grouped` re-binds the tree axes per the W3C vertical treeview: Tab
-/// steps apps ([`GestureKey::TabApps`]), → enters a parent
-/// ([`GestureKey::EnterChild`]), ← exits to the parent
-/// ([`GestureKey::ExitParent`]). Flat mode (`grouped = false`) keeps
-/// today's mapping byte for byte — Left/Right ride with Up/Down as step
-/// aliases, Tab steps rows — pinned by the flat regression tests. The
-/// boundary passes the live model's own mode flag, so the keysym the
-/// user pressed maps against the list they see.
-pub fn key_input(keysym: Keysym, shift_held: bool, ctrl_held: bool, grouped: bool) -> GestureInput {
+/// Alt+Tab behaves as ↓ and Alt+Shift+Tab as ↑ in every mode (the
+/// owner's 2026-11-07 re-decision): Tab steps visible rows over the
+/// flattened tree, never parent rows only — a lone-parent tree made the
+/// parent-only step a dead key.
+///
+/// `grouped` re-binds the tree axes per the W3C vertical treeview: →
+/// and Alt+W enter a parent's children ([`GestureKey::EnterChild`]),
+/// ← exits to the parent ([`GestureKey::ExitParent`]). Flat mode
+/// (`grouped = false`) keeps today's mapping byte for byte — Left/Right
+/// ride with Up/Down as step aliases, Tab steps rows — pinned by the
+/// flat regression tests. The boundary passes the live model's own mode
+/// flag, so the keysym the user pressed maps against the list they see.
+pub fn key_input(
+    keysym: Keysym,
+    shift_held: bool,
+    ctrl_held: bool,
+    alt_held: bool,
+    grouped: bool,
+) -> GestureInput {
     let (key, shift) = match keysym {
-        Keysym::ISO_Left_Tab => (
-            if grouped {
-                GestureKey::TabApps
-            } else {
-                GestureKey::Tab
-            },
-            true,
-        ),
-        Keysym::Tab => (
-            if grouped {
-                GestureKey::TabApps
-            } else {
-                GestureKey::Tab
-            },
-            shift_held,
-        ),
+        Keysym::ISO_Left_Tab => (GestureKey::Tab, true),
+        Keysym::Tab => (GestureKey::Tab, shift_held),
         Keysym::Return | Keysym::KP_Enter | Keysym::ISO_Enter => (GestureKey::Commit, shift_held),
         Keysym::Up => (GestureKey::Arrow(Direction::Previous), false),
         Keysym::Down => (GestureKey::Arrow(Direction::Next), false),
@@ -1578,6 +1561,10 @@ pub fn key_input(keysym: Keysym, shift_held: bool, ctrl_held: bool, grouped: boo
                 (GestureKey::Arrow(Direction::Next), false)
             }
         }
+        // Alt+W is →'s twin — "walk down into the children" — for hands
+        // that never leave the Alt row (the owner's 2026-11-07 request).
+        // Both cases ride one arm: Shift+Alt+W reports the W keysym.
+        Keysym::w | Keysym::W if alt_held && grouped => (GestureKey::EnterChild, shift_held),
         Keysym::Escape => (GestureKey::Escape, shift_held),
         // Ctrl+digits map with or without shift held; without Ctrl the
         // number row stays Other — it must never surprise-activate.
@@ -4287,7 +4274,7 @@ mod tests {
     #[test]
     fn key_input_maps_tab_escape_and_backtab() {
         assert_eq!(
-            key_input(Keysym::Tab, false, false, false),
+            key_input(Keysym::Tab, false, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: false
@@ -4295,7 +4282,7 @@ mod tests {
         );
         // Shift held at the seat steers a plain Tab backwards.
         assert_eq!(
-            key_input(Keysym::Tab, true, false, false),
+            key_input(Keysym::Tab, true, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: true
@@ -4303,21 +4290,21 @@ mod tests {
         );
         // ISO_Left_Tab is Shift+Tab by another name.
         assert_eq!(
-            key_input(Keysym::ISO_Left_Tab, false, false, false),
+            key_input(Keysym::ISO_Left_Tab, false, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: true
             }
         );
         assert_eq!(
-            key_input(Keysym::Escape, false, false, false),
+            key_input(Keysym::Escape, false, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Escape,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Return, false, false, false),
+            key_input(Keysym::Return, false, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Commit,
                 shift: false
@@ -4330,7 +4317,7 @@ mod tests {
         // Return, KP_Enter, and ISO_Enter are one key by three names.
         for keysym in [Keysym::Return, Keysym::KP_Enter, Keysym::ISO_Enter] {
             assert_eq!(
-                key_input(keysym, false, false, false),
+                key_input(keysym, false, false, false, false),
                 GestureInput::Press {
                     key: GestureKey::Commit,
                     shift: false
@@ -4350,7 +4337,7 @@ mod tests {
             (Keysym::Right, Direction::Next),
         ] {
             assert_eq!(
-                key_input(keysym, true, false, false),
+                key_input(keysym, true, false, false, false),
                 GestureInput::Press {
                     key: GestureKey::Arrow(direction),
                     shift: false
@@ -4362,7 +4349,7 @@ mod tests {
     #[test]
     fn key_input_leaves_unknown_keysyms_alone() {
         assert_eq!(
-            key_input(Keysym::Delete, true, false, false),
+            key_input(Keysym::Delete, true, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: true
@@ -4387,7 +4374,7 @@ mod tests {
         ];
         for (keysym, row) in digits {
             assert_eq!(
-                key_input(keysym, false, true, false),
+                key_input(keysym, false, true, false, false),
                 GestureInput::Press {
                     key: GestureKey::Select(row),
                     shift: false
@@ -4413,7 +4400,7 @@ mod tests {
         ];
         for (keysym, row) in digits {
             assert_eq!(
-                key_input(keysym, false, true, false),
+                key_input(keysym, false, true, false, false),
                 GestureInput::Press {
                     key: GestureKey::Select(row),
                     shift: false
@@ -4427,14 +4414,14 @@ mod tests {
         // The number row must never surprise-activate: without Ctrl held
         // a digit is just an unknown key, top row and keypad alike.
         assert_eq!(
-            key_input(Keysym::_3, false, false, false),
+            key_input(Keysym::_3, false, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::KP_5, false, false, false),
+            key_input(Keysym::KP_5, false, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: false
@@ -4447,7 +4434,7 @@ mod tests {
         // Shift is ignored for digits: the chord still selects, and the
         // seat's shift state is carried as-is.
         assert_eq!(
-            key_input(Keysym::_4, true, true, false),
+            key_input(Keysym::_4, true, true, false, false),
             GestureInput::Press {
                 key: GestureKey::Select(3),
                 shift: true
@@ -4460,21 +4447,21 @@ mod tests {
         // No Ctrl+0-as-10 (OQ 2), and Ctrl on a non-digit key is not a
         // selection.
         assert_eq!(
-            key_input(Keysym::_0, false, true, false),
+            key_input(Keysym::_0, false, true, false, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::KP_0, false, true, false),
+            key_input(Keysym::KP_0, false, true, false, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Delete, false, true, false),
+            key_input(Keysym::Delete, false, true, false, false),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: false
@@ -4487,21 +4474,21 @@ mod tests {
         // Existing key semantics are byte-identical whatever Ctrl does:
         // the digit arm never swallows another gesture key.
         assert_eq!(
-            key_input(Keysym::Tab, false, true, false),
+            key_input(Keysym::Tab, false, true, false, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Escape, false, true, false),
+            key_input(Keysym::Escape, false, true, false, false),
             GestureInput::Press {
                 key: GestureKey::Escape,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Return, false, true, false),
+            key_input(Keysym::Return, false, true, false, false),
             GestureInput::Press {
                 key: GestureKey::Commit,
                 shift: false
@@ -4510,30 +4497,67 @@ mod tests {
     }
 
     #[test]
-    fn grouped_key_input_maps_tab_to_the_app_step() {
-        // Tab is the app step in grouped mode — Tab steps parents, the
-        // GNOME mirror — with shift steering backwards exactly as flat.
+    fn grouped_key_input_keeps_tab_as_the_row_step() {
+        // The owner's 2026-11-07 re-decision: Alt+Tab behaves as ↓ and
+        // Alt+Shift+Tab as ↑ in grouped mode too — Tab steps visible
+        // rows exactly as flat, never parent rows only (a lone-parent
+        // tree made the parent-only step a dead key).
         assert_eq!(
-            key_input(Keysym::Tab, false, false, true),
+            key_input(Keysym::Tab, false, false, false, true),
             GestureInput::Press {
-                key: GestureKey::TabApps,
+                key: GestureKey::Tab,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Tab, true, false, true),
+            key_input(Keysym::Tab, true, false, false, true),
             GestureInput::Press {
-                key: GestureKey::TabApps,
+                key: GestureKey::Tab,
                 shift: true
             }
         );
         // ISO_Left_Tab is Shift+Tab by another name, grouped or flat.
         assert_eq!(
-            key_input(Keysym::ISO_Left_Tab, false, false, true),
+            key_input(Keysym::ISO_Left_Tab, false, false, false, true),
             GestureInput::Press {
-                key: GestureKey::TabApps,
+                key: GestureKey::Tab,
                 shift: true
             }
+        );
+    }
+
+    #[test]
+    fn grouped_alt_w_is_the_right_arrows_twin() {
+        // Alt+W walks down into the selected parent's children — the
+        // same EnterChild the right arrow produces — for hands that
+        // never leave the Alt row. Shift may ride along (W); without
+        // Alt the letter means nothing, and flat mode never re-binds
+        // it.
+        for keysym in [Keysym::w, Keysym::W] {
+            assert_eq!(
+                key_input(keysym, false, false, true, true),
+                GestureInput::Press {
+                    key: GestureKey::EnterChild,
+                    shift: false
+                },
+                "Alt+{keysym:?} enters the children, like →"
+            );
+        }
+        assert_eq!(
+            key_input(Keysym::w, false, false, false, true),
+            GestureInput::Press {
+                key: GestureKey::Other,
+                shift: false
+            },
+            "W without Alt is no gesture key"
+        );
+        assert_eq!(
+            key_input(Keysym::w, false, false, true, false),
+            GestureInput::Press {
+                key: GestureKey::Other,
+                shift: false
+            },
+            "flat mode never re-binds the letter"
         );
     }
 
@@ -4541,16 +4565,17 @@ mod tests {
     fn grouped_key_input_maps_left_right_to_the_tree_walk() {
         // The W3C vertical tree axes: → enters a multi-window app's
         // children, ← exits to the parent. The flat step aliases are
-        // gone in grouped mode — the vertical step axis is ↑/↓ alone.
+        // gone in grouped mode — the vertical step axis is ↑/↓ (and
+        // Alt+Tab / Alt+Shift+Tab) alone.
         assert_eq!(
-            key_input(Keysym::Right, false, false, true),
+            key_input(Keysym::Right, false, false, false, true),
             GestureInput::Press {
                 key: GestureKey::EnterChild,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Left, false, false, true),
+            key_input(Keysym::Left, false, false, false, true),
             GestureInput::Press {
                 key: GestureKey::ExitParent,
                 shift: false
@@ -4558,14 +4583,14 @@ mod tests {
         );
         // Up/Down keep stepping visible rows whatever the mode.
         assert_eq!(
-            key_input(Keysym::Up, false, false, true),
+            key_input(Keysym::Up, false, false, false, true),
             GestureInput::Press {
                 key: GestureKey::Arrow(Direction::Previous),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Down, false, false, true),
+            key_input(Keysym::Down, false, false, false, true),
             GestureInput::Press {
                 key: GestureKey::Arrow(Direction::Next),
                 shift: false
@@ -4578,21 +4603,21 @@ mod tests {
         // The regression pin: grouping off reproduces today's mapping
         // byte for byte — Left/Right step like Up/Down, Tab steps rows.
         assert_eq!(
-            key_input(Keysym::Left, false, false, false),
+            key_input(Keysym::Left, false, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Arrow(Direction::Previous),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Right, false, false, false),
+            key_input(Keysym::Right, false, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Arrow(Direction::Next),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Tab, false, false, false),
+            key_input(Keysym::Tab, false, false, false, false),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: false
@@ -4605,45 +4630,25 @@ mod tests {
         // Ctrl+N and the Enter family mean the same thing over a tree:
         // visible rows are rows, commit is commit.
         assert_eq!(
-            key_input(Keysym::_3, false, true, true),
+            key_input(Keysym::_3, false, true, false, true),
             GestureInput::Press {
                 key: GestureKey::Select(2),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Return, false, false, true),
+            key_input(Keysym::Return, false, false, false, true),
             GestureInput::Press {
                 key: GestureKey::Commit,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Escape, false, false, true),
+            key_input(Keysym::Escape, false, false, false, true),
             GestureInput::Press {
                 key: GestureKey::Escape,
                 shift: false
             }
-        );
-    }
-
-    #[test]
-    fn the_app_step_moves_the_selection_between_parents() {
-        let mut gesture = Gesture::default();
-        gesture.feed(GestureInput::Invoke(Direction::Next));
-        assert_eq!(
-            gesture.feed(GestureInput::Press {
-                key: GestureKey::TabApps,
-                shift: false
-            }),
-            GestureOutput::StepParent(Direction::Next)
-        );
-        assert_eq!(
-            gesture.feed(GestureInput::Press {
-                key: GestureKey::TabApps,
-                shift: true
-            }),
-            GestureOutput::StepParent(Direction::Previous)
         );
     }
 
@@ -4673,11 +4678,7 @@ mod tests {
     #[test]
     fn the_grouped_keys_mean_nothing_between_sessions() {
         let mut gesture = Gesture::default();
-        for key in [
-            GestureKey::TabApps,
-            GestureKey::EnterChild,
-            GestureKey::ExitParent,
-        ] {
+        for key in [GestureKey::EnterChild, GestureKey::ExitParent] {
             assert_eq!(
                 gesture.feed(GestureInput::Press { key, shift: false }),
                 GestureOutput::Nothing
@@ -4704,7 +4705,7 @@ mod tests {
         ];
         for (keysym, row) in digits {
             assert_eq!(
-                key_input(keysym, false, true, false),
+                key_input(keysym, false, true, false, false),
                 GestureInput::Press {
                     key: GestureKey::Select(row),
                     shift: false
