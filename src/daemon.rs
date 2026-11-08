@@ -819,6 +819,118 @@ fn combined_sequence(session: &Switch, snapshot: &Snapshot) -> (Vec<usize>, usiz
     (seq, apps_len)
 }
 
+// --- grouped-horizontal: the derived strip (`inplace-strip`) ----------
+//
+// The strip's shape is a pure function of the tree selection, never
+// carried state: a child selection opens its parent's run at the
+// parent's slot, a level-1 selection closes every run. The ≥2 rule
+// keeps a single-window app's tile whole — no run ever grows below it,
+// so the same window never shows twice. The functions below replace
+// the two-band domains above as S2's model build and S3's walks move
+// onto them; until then they are test-only, staged like `Grouping`
+// before its consumer landed.
+
+/// An app's live windows: a parent's liveness-filtered children in
+/// frozen MRU order, a leaf's own single window. The shared domain of
+/// the run derivation and ↓'s ≥2 rule — the frozen window set decides
+/// liveness, as it always has.
+#[cfg_attr(not(test), allow(dead_code))]
+fn strip_windows(
+    tree: &switcher::Grouping,
+    snapshot: &Snapshot,
+    scope: Scope,
+    app: usize,
+) -> Vec<usize> {
+    let indices = match tree.rows().get(app).map(|row| row.kind) {
+        Some(switcher::RowKind::Parent) => tree.children_of(app),
+        _ => vec![app],
+    };
+    indices
+        .into_iter()
+        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, scope))
+        .collect()
+}
+
+/// The strip's visible sequence — the one derivation the
+/// grouped-horizontal card renders and walks: a pure function of the
+/// tree selection (tree indices, liveness-filtered). A child selection
+/// opens its parent's run at the parent's slot — the app's windows
+/// between the other apps' level-1 rows, the replaced tile gone; every
+/// level-1 selection closes all runs: the plain level-1 rows. A parent
+/// holding fewer than two live windows derives no run — the shrink
+/// rule's derivation half ([`coerce_shrunk_run`] owns the selection
+/// half), so a single-window app never shows the same handle twice.
+#[cfg_attr(not(test), allow(dead_code))]
+fn strip_sequence(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
+    let Some(tree) = session.tree.as_ref() else {
+        return Vec::new();
+    };
+    let level1: Vec<usize> = tree
+        .visible(&HashSet::new())
+        .into_iter()
+        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, session.scope))
+        .collect();
+    // The open run: the selected child's parent's live windows, but
+    // only while the ≥2 rule holds. Tree order is strip order, so the
+    // run splices between the level-1 rows around the parent's slot —
+    // the parent's own tile drops out (replaced in place), and a dead
+    // parent tile still finds its slot between its neighbors.
+    let run = tree
+        .rows()
+        .get(session.tree_sel)
+        .filter(|row| row.kind == switcher::RowKind::Child)
+        .and_then(|_| tree.parent_of(session.tree_sel))
+        .and_then(|parent| {
+            let windows = strip_windows(tree, snapshot, session.scope, parent);
+            (windows.len() >= 2).then_some((parent, windows))
+        });
+    let Some((parent, windows)) = run else {
+        return level1;
+    };
+    let mut seq = Vec::with_capacity(level1.len() + windows.len());
+    seq.extend(level1.iter().copied().filter(|&index| index < parent));
+    seq.extend(windows);
+    seq.extend(level1.iter().copied().filter(|&index| index > parent));
+    seq
+}
+
+/// The shrink rule's selection half: a child selection whose parent
+/// has fallen below two live windows moves to the parent row. The run
+/// is closed by derivation either way; this keeps the selection on a
+/// tile the card actually shows, never dangling inside a gone run.
+/// Returns whether the selection moved.
+#[cfg_attr(not(test), allow(dead_code))]
+fn coerce_shrunk_run(session: &mut Switch, snapshot: &Snapshot) -> bool {
+    let Some(tree) = session.tree.as_ref() else {
+        return false;
+    };
+    let Some(parent) = tree
+        .rows()
+        .get(session.tree_sel)
+        .filter(|row| row.kind == switcher::RowKind::Child)
+        .and_then(|_| tree.parent_of(session.tree_sel))
+    else {
+        return false;
+    };
+    if strip_windows(tree, snapshot, session.scope, parent).len() >= 2 {
+        return false;
+    }
+    session.tree_sel = parent;
+    true
+}
+
+/// ↓'s ≥2 rule: whether the app tile at `app` opens its run — true iff
+/// the app holds at least two live windows. A leaf (a single-window
+/// app) and a parent shrunk below two commit directly; the no-op below
+/// their tiles is what kills the duplicate-tile bug.
+#[cfg_attr(not(test), allow(dead_code))]
+fn opens_run(session: &Switch, snapshot: &Snapshot, app: usize) -> bool {
+    let Some(tree) = session.tree.as_ref() else {
+        return false;
+    };
+    strip_windows(tree, snapshot, session.scope, app).len() >= 2
+}
+
 /// ←/→ in the combined card: step the focused band's tiles, wrapping.
 /// Band 1 steps the app list (band 2 swaps to the newly focused app);
 /// band 2 steps the focused app's windows.
@@ -6437,6 +6549,22 @@ mod tests {
         )
     }
 
+    /// The three-apps fixture with b's second window gone mid-gesture:
+    /// the frozen tree keeps both of b's children, the live set keeps
+    /// one — the shape the shrink rule and the ≥2 rule decide over.
+    fn combined_three_apps_b_shrunk() -> Snapshot {
+        snapshot(
+            vec![
+                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 60),
+                app_toplevel(2, "app.a", &[1], State::default(), 50),
+                app_toplevel(3, "app.b", &[1], State::default(), 40),
+                app_toplevel(5, "app.c", &[1], State::default(), 20),
+                app_toplevel(6, "app.c", &[1], State::default(), 10),
+            ],
+            Some(1),
+        )
+    }
+
     #[test]
     fn combined_opening_press_lands_on_the_second_app_tile() {
         // The quick-tap criterion: the opening press steps the app band
@@ -6790,6 +6918,127 @@ mod tests {
             open.as_mut().expect("open").combined_focused(),
             Some(3),
             "the opening press focused b"
+        );
+    }
+
+    // --- grouped-horizontal: the derived strip (`inplace-strip`) --------
+
+    #[test]
+    fn strip_opens_the_selected_childs_parent_run_in_place() {
+        // The derived shape: a child selection replaces its app's tile
+        // with the app's window run at that very slot — the other apps'
+        // tiles stay in place around it, at the front and mid-list
+        // alike. Nothing sits below; nothing is always-open.
+        let snap = combined_three_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        open.as_mut().expect("open").tree_sel = 4; // b's front child
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![0, 4, 5, 6],
+            "b's run mid-list: a's tile, the run, c's tile"
+        );
+        open.as_mut().expect("open").tree_sel = 1; // a's front child
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![1, 2, 3, 6],
+            "a's run at the front: the run, b's tile, c's tile"
+        );
+    }
+
+    #[test]
+    fn strip_level1_selection_shows_plain_app_tiles() {
+        // A level-1 selection closes every run: the plain level-1 rows,
+        // parents and leaves alike.
+        let snap = combined_three_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        open.as_mut().expect("open").tree_sel = 3; // b's parent tile
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![0, 3, 6],
+            "three app tiles, no run"
+        );
+        let lone = grouped_lone_parent();
+        let (mut open, _expanded) = combined_session(&lone);
+        open.as_mut().expect("open").tree_sel = 3; // c's leaf tile
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &lone),
+            vec![0, 3],
+            "the parent tile and the leaf"
+        );
+    }
+
+    #[test]
+    fn strip_never_duplicates_a_single_window_app() {
+        // The duplicate-tile bug's regression test: a single-window app
+        // grows no run below its tile, so its window shows exactly once
+        // however the strip is derived.
+        let lone = grouped_lone_parent();
+        let (mut open, _expanded) = combined_session(&lone);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 3; // c's leaf tile
+        let tree = session.tree.as_ref().expect("tree");
+        let handle = tree.rows()[3].handle;
+        let count = strip_sequence(session, &lone)
+            .iter()
+            .filter(|&&index| tree.rows()[index].handle == handle)
+            .count();
+        assert_eq!(count, 1, "the leaf's window shows exactly once");
+    }
+
+    #[test]
+    fn shrunk_parent_coerces_the_child_selection_onto_its_tile() {
+        // The mid-gesture shrink: b down to one live window while its
+        // front child holds the selection. The derivation closes the
+        // run on its own; the coercion then moves the selection onto
+        // b's tile, so no child ever dangles inside a run that no
+        // longer derives.
+        let full = combined_three_apps();
+        let shrunk = combined_three_apps_b_shrunk();
+        let (mut open, _expanded) = combined_session(&full);
+        open.as_mut().expect("open").tree_sel = 4; // b's front child
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &shrunk),
+            vec![0, 3, 6],
+            "the shrunk run is closed by derivation, coercion or not"
+        );
+        assert!(coerce_shrunk_run(open.as_mut().expect("open"), &shrunk));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "lands on b's tile"
+        );
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &shrunk),
+            vec![0, 3, 6]
+        );
+        assert!(
+            !coerce_shrunk_run(open.as_mut().expect("open"), &shrunk),
+            "a level-1 selection never coerces"
+        );
+    }
+
+    #[test]
+    fn opens_run_requires_two_live_windows() {
+        // ↓'s ≥2 rule: an app tile opens its run only while the app
+        // holds at least two live windows — a two-window parent yes; a
+        // leaf and a shrunk parent no (they commit directly, never
+        // growing a run below themselves).
+        let full = combined_three_apps();
+        let (open, _expanded) = combined_session(&full);
+        let session = open.as_ref().expect("open");
+        assert!(opens_run(session, &full, 0), "a's two live windows");
+        assert!(opens_run(session, &full, 3), "b's two live windows");
+        let lone = grouped_lone_parent();
+        let (open, _expanded) = combined_session(&lone);
+        assert!(
+            !opens_run(open.as_ref().expect("open"), &lone, 3),
+            "c's single window opens nothing"
+        );
+        let shrunk = combined_three_apps_b_shrunk();
+        let (open, _expanded) = combined_session(&full);
+        assert!(
+            !opens_run(open.as_ref().expect("open"), &shrunk, 3),
+            "b's lone live window opens nothing"
         );
     }
 }
