@@ -13,11 +13,13 @@
 //! default (`Palette::resolve` dark, the accent's caller the neutral
 //! lift).
 //!
-//! Two answers live here today: the ThemeMode dark/light bool (one
-//! bare RON bool per key, v1) and the per-polarity theme accent (v2
-//! hex strings with a v1 f32 fallback, read through the version ladder
-//! `cosmic-config` itself chains). The ladder is the shared seam:
-//! every future follow reads through it too.
+//! Four answers live here today: the ThemeMode dark/light bool (one
+//! bare RON bool per key, v1), the per-polarity theme accent (v2 hex
+//! strings with a v1 f32 fallback), the corner style (a `CornerRadii`
+//! classifier), and the interface density (a bare enum word) — the
+//! last two through the same version ladder `cosmic-config` itself
+//! chains. The ladder is the shared seam: every future follow reads
+//! through it too.
 
 use std::path::{Path, PathBuf};
 
@@ -249,6 +251,161 @@ fn f32_accent(group: &str) -> Option<u32> {
             | (u32::from(channel("green")?)) << 8
             | u32::from(channel("blue")?),
     )
+}
+
+// --- The style and density follows ----------------------------------------
+//
+// The card's geometry follows the desktop: COSMIC Appearance's style
+// choice (round / slightly-round / square) and interface density
+// (compact / comfortable / spacious), each one more read through the
+// shared ladder. Style is polarity-independent — cosmic-settings
+// writes both theme stores on every style change (record §1) — so the
+// read takes one side, Dark, the record's quoted path; the accent's
+// polarity question does not arise. As everywhere here: read-only,
+// never fatal, misses carry one aggregated diagnostic and the caller
+// paints its documented default.
+
+/// The desktop's corner style, classified from COSMIC Appearance's
+/// style choice (`v2/corner_radii`). The ladder values it feeds live
+/// in `ui` — this type is the store's vocabulary, not the card's.
+#[cfg_attr(not(test), allow(dead_code))] // wired by the geometry ladders (GE2)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Style {
+    /// COSMIC's factory default (`radius_m ≈ 16`) — and the miss
+    /// default: an unreadable store keeps the card Airlock has always
+    /// painted.
+    #[default]
+    Round,
+    /// `radius_m ≈ 8`.
+    SlightlyRound,
+    /// The all-2s preset — this machine's desktop.
+    Square,
+}
+
+/// The desktop's interface density from `CosmicTk/v1/interface_density`
+/// (record §3.3). The store's middle word is `Standard`; COSMIC
+/// Settings' UI labels it "Comfortable".
+#[cfg_attr(not(test), allow(dead_code))] // wired by the geometry ladders (GE2)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Density {
+    Compact,
+    /// COSMIC's default, and the miss default: an unreadable store
+    /// keeps today's rhythm.
+    #[default]
+    Standard,
+    Spacious,
+}
+
+/// The style store key, in the per-polarity theme store the accent
+/// also reads.
+#[cfg_attr(not(test), allow(dead_code))]
+const CORNER_RADII_KEY: &str = "corner_radii";
+
+/// The toolkit config id and the density key — a v1 store, two rungs
+/// (user, system), no middle (record §3.3).
+#[cfg_attr(not(test), allow(dead_code))]
+const TK_ID: &str = "com.system76.CosmicTk";
+#[cfg_attr(not(test), allow(dead_code))]
+const DENSITY_KEY: &str = "interface_density";
+
+/// The desktop's corner style, or `None` on a total ladder miss (with
+/// one aggregated diagnostic naming every rung) — the caller keeps the
+/// Round default.
+#[allow(dead_code)] // the daemon calls it from the geometry follow (GE3)
+pub fn style() -> Option<Style> {
+    let (value, missed) = style_at(user_cosmic_root().as_deref(), Path::new(SYSTEM_COSMIC_ROOT));
+    if value.is_none() {
+        eprintln!(
+            "airlock daemon: no readable COSMIC corner style ({}); the card keeps the Round radius",
+            missed.join(", ")
+        );
+    }
+    value
+}
+
+/// The style answer over explicit store roots — the testable core of
+/// [`style`], the accent ladder's shape.
+#[cfg_attr(not(test), allow(dead_code))]
+fn style_at(user_root: Option<&Path>, system_root: &Path) -> (Option<Style>, Vec<String>) {
+    ladder_at(
+        user_root,
+        system_root,
+        THEME_DARK_ID,
+        ACCENT_VERSION,
+        CORNER_RADII_KEY,
+        parse_style,
+    )
+}
+
+/// The style from one `CornerRadii` file's text: six uniform f32
+/// 4-tuples, classified by `radius_m` — the reverse-classifier bands
+/// of the three source presets (record §5: Round `radius_m = 16`,
+/// SlightlyRound `8`, Square `2`). The per-corner tuples are uniform
+/// in every COSMIC preset; a non-uniform file classifies by its TL
+/// corner. Any miss (no `radius_m` line, wrong shape, non-finite) is
+/// `None`, never a panic.
+#[cfg_attr(not(test), allow(dead_code))]
+fn parse_style(text: &str) -> Option<Style> {
+    let tuple = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("radius_m:"))?
+        .trim()
+        .strip_prefix('(')?;
+    let tl = tuple.split([',', ')']).next()?.trim().parse::<f32>().ok()?;
+    if !tl.is_finite() {
+        return None;
+    }
+    Some(style_of_radius_m(tl))
+}
+
+/// The reverse classifier (record §5): ≈16 rounds fully, ≈8 slightly,
+/// anything else reads as squared — the bands keep a future preset
+/// value honest instead of misfiring to Round.
+#[cfg_attr(not(test), allow(dead_code))]
+fn style_of_radius_m(radius_m: f32) -> Style {
+    if (14.0..=18.0).contains(&radius_m) {
+        Style::Round
+    } else if (6.0..=10.0).contains(&radius_m) {
+        Style::SlightlyRound
+    } else {
+        Style::Square
+    }
+}
+
+/// The desktop's interface density, or `None` on a total ladder miss
+/// (with one aggregated diagnostic) — the caller keeps the Standard
+/// default.
+#[allow(dead_code)] // the daemon calls it from the geometry follow (GE3)
+pub fn density() -> Option<Density> {
+    let (value, missed) = density_at(user_cosmic_root().as_deref(), Path::new(SYSTEM_COSMIC_ROOT));
+    if value.is_none() {
+        eprintln!(
+            "airlock daemon: no readable COSMIC interface density ({}); the card keeps the Standard rhythm",
+            missed.join(", ")
+        );
+    }
+    value
+}
+
+/// The density answer over explicit store roots — the testable core of
+/// [`density`]. `CosmicTk` is a v1 store, so the ladder holds two
+/// rungs: user, system.
+#[cfg_attr(not(test), allow(dead_code))]
+fn density_at(user_root: Option<&Path>, system_root: &Path) -> (Option<Density>, Vec<String>) {
+    ladder_at(user_root, system_root, TK_ID, 1, DENSITY_KEY, parse_density)
+}
+
+/// The density from one file's text: the bare RON enum variant
+/// (`Compact` / `Standard` / `Spacious`, whitespace-padded as files
+/// are — record §3.3). Anything else is `None`, never a panic.
+#[cfg_attr(not(test), allow(dead_code))]
+fn parse_density(text: &str) -> Option<Density> {
+    match text.trim() {
+        "Compact" => Some(Density::Compact),
+        "Standard" => Some(Density::Standard),
+        "Spacious" => Some(Density::Spacious),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -528,6 +685,219 @@ mod tests {
         let (light, _) = accent_base_at(Some(&user.0), &system.0, false);
         assert_eq!(dark, Some(0x63_D0_DF));
         assert_eq!(light, Some(0x00_52_5A));
+    }
+
+    // --- style read (corner_radii) ----------------------------------------
+
+    /// The system Round preset — the record's §5 row `0 / 4 / 8 / 16 /
+    /// 32 / 160` in the store's own serialization (six uniform f32
+    /// 4-tuples; only `radius_m` is read).
+    const RADII_ROUND: &str = r#"(
+    radius_0: (0.0, 0.0, 0.0, 0.0),
+    radius_xs: (4.0, 4.0, 4.0, 4.0),
+    radius_s: (8.0, 8.0, 8.0, 8.0),
+    radius_m: (16.0, 16.0, 16.0, 16.0),
+    radius_l: (32.0, 32.0, 32.0, 32.0),
+    radius_xl: (160.0, 160.0, 160.0, 160.0),
+)"#;
+
+    /// The SlightlyRound preset — `0 / 2 / 8 / 8 / 8 / 8`, so
+    /// `radius_m ≈ 8` is the classifier's middle band.
+    const RADII_SLIGHTLY_ROUND: &str = r#"(
+    radius_0: (0.0, 0.0, 0.0, 0.0),
+    radius_xs: (2.0, 2.0, 2.0, 2.0),
+    radius_s: (8.0, 8.0, 8.0, 8.0),
+    radius_m: (8.0, 8.0, 8.0, 8.0),
+    radius_l: (8.0, 8.0, 8.0, 8.0),
+    radius_xl: (8.0, 8.0, 8.0, 8.0),
+)"#;
+
+    /// This machine's real user file, quoted by the record (§3.2):
+    /// Square, every radius a 2 — the follow's visible-on-here value.
+    const RADII_SQUARE: &str = r#"(
+    radius_0: (2.0, 2.0, 2.0, 2.0),
+    radius_xs: (2.0, 2.0, 2.0, 2.0),
+    radius_s: (2.0, 2.0, 2.0, 2.0),
+    radius_m: (2.0, 2.0, 2.0, 2.0),
+    radius_l: (2.0, 2.0, 2.0, 2.0),
+    radius_xl: (2.0, 2.0, 2.0, 2.0),
+)"#;
+
+    #[test]
+    fn style_classifies_the_three_source_presets() {
+        assert_eq!(parse_style(RADII_ROUND), Some(Style::Round));
+        assert_eq!(
+            parse_style(RADII_SLIGHTLY_ROUND),
+            Some(Style::SlightlyRound)
+        );
+        // This machine's live file — the Square desktop the follow was
+        // ratified against.
+        assert_eq!(parse_style(RADII_SQUARE), Some(Style::Square));
+    }
+
+    #[test]
+    fn a_non_uniform_radius_m_classifies_by_its_tl_corner() {
+        // Every COSMIC preset is uniform (record §3.2); the assumption
+        // is stated, and a non-uniform file still answers — by TL.
+        assert_eq!(
+            parse_style("radius_m: (16.0, 2.0, 2.0, 2.0),\n"),
+            Some(Style::Round)
+        );
+        assert_eq!(
+            parse_style("radius_m: (2.0, 16.0, 16.0, 16.0),\n"),
+            Some(Style::Square)
+        );
+    }
+
+    #[test]
+    fn the_style_classifier_bands_round_slightly_and_else_square() {
+        // ≈16 → Round, ≈8 → SlightlyRound, else Square: the record's §5
+        // reverse classifier as bands, so a future preset value still
+        // lands somewhere honest.
+        assert_eq!(style_of_radius_m(14.0), Style::Round);
+        assert_eq!(style_of_radius_m(18.0), Style::Round);
+        assert_eq!(style_of_radius_m(6.0), Style::SlightlyRound);
+        assert_eq!(style_of_radius_m(10.0), Style::SlightlyRound);
+        assert_eq!(style_of_radius_m(2.0), Style::Square);
+        assert_eq!(style_of_radius_m(5.0), Style::Square);
+        assert_eq!(style_of_radius_m(100.0), Style::Square);
+    }
+
+    #[test]
+    fn style_garbage_is_a_miss_never_a_panic() {
+        for text in [
+            "",                                  // empty file
+            "radius_s: (8.0, 8.0, 8.0, 8.0),\n", // no radius_m line
+            "radius_m: (banana, 2.0, 2.0, 2.0),\n",
+            "radius_m: (NaN, 2.0, 2.0, 2.0),\n",
+            "radius_m: (inf, 2.0, 2.0, 2.0),\n",
+            "radius_m: 16.0,\n", // not the store's tuple shape
+            "radius_m: (),\n",   // empty tuple
+        ] {
+            assert_eq!(
+                parse_style(text),
+                None,
+                "garbage must be a miss, never a panic: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_style_ladder_reads_user_v2_then_v1_then_system() {
+        // cosmic-settings writes the style to both polarities' theme
+        // stores (record §1), so the read takes one side — Dark, the
+        // record's quoted path — through the same v2→v1→system ladder
+        // the accent chains.
+        let user = TempDir::new("style-u2");
+        let system = TempDir::new("style-u2-system");
+        user.rung(THEME_DARK_ID, 2, CORNER_RADII_KEY, RADII_SQUARE);
+        system.rung(THEME_DARK_ID, 2, CORNER_RADII_KEY, RADII_ROUND);
+        let (value, _) = style_at(Some(&user.0), &system.0);
+        assert_eq!(value, Some(Style::Square), "user v2 is the first rung");
+
+        // The middle rung is load-bearing here too: this machine's user
+        // v1 file is a pre-Square Round leftover that the v2 Square
+        // shadows — and a v1-era tweak must outrank the system default.
+        let user = TempDir::new("style-u1");
+        let system = TempDir::new("style-u1-system");
+        user.rung(THEME_DARK_ID, 1, CORNER_RADII_KEY, RADII_SLIGHTLY_ROUND);
+        system.rung(THEME_DARK_ID, 2, CORNER_RADII_KEY, RADII_ROUND);
+        let (value, _) = style_at(Some(&user.0), &system.0);
+        assert_eq!(
+            value,
+            Some(Style::SlightlyRound),
+            "user v1 outranks system v2"
+        );
+
+        let user = TempDir::new("style-sys");
+        let system = TempDir::new("style-sys-system");
+        system.rung(THEME_DARK_ID, 2, CORNER_RADII_KEY, RADII_ROUND);
+        let (value, _) = style_at(Some(&user.0), &system.0);
+        assert_eq!(
+            value,
+            Some(Style::Round),
+            "an absent user store falls to system"
+        );
+    }
+
+    #[test]
+    fn a_total_style_miss_names_every_rung() {
+        let user = TempDir::new("style-miss");
+        let system = TempDir::new("style-miss-system");
+        let (value, missed) = style_at(Some(&user.0), &system.0);
+        assert_eq!(value, None);
+        assert_eq!(
+            missed,
+            vec![
+                format!("user {THEME_DARK_ID}/v2/{CORNER_RADII_KEY}"),
+                format!("user {THEME_DARK_ID}/v1/{CORNER_RADII_KEY}"),
+                format!("system {THEME_DARK_ID}/v2/{CORNER_RADII_KEY}"),
+            ],
+            "the one aggregated diagnostic names every rung it tried"
+        );
+    }
+
+    // --- density read (interface_density) ---------------------------------
+
+    #[test]
+    fn density_reads_the_three_store_words() {
+        // RON writes the bare enum variant (record §3.3), padded as
+        // files are; the UI's "Comfortable" label is not the store's
+        // word — Standard is.
+        assert_eq!(parse_density("Compact\n"), Some(Density::Compact));
+        assert_eq!(parse_density("  Standard\r\n"), Some(Density::Standard));
+        assert_eq!(parse_density("\nSpacious \n"), Some(Density::Spacious));
+    }
+
+    #[test]
+    fn density_garbage_and_case_variants_miss() {
+        for text in [
+            "",
+            "compact", // case variants are not variant names
+            "COMFACT",
+            "Comfortable", // the UI label, not the store word
+            "Compact Standard",
+            "Density::Compact",
+        ] {
+            assert_eq!(
+                parse_density(text),
+                None,
+                "anything but the three words is a miss: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_density_ladder_reads_user_then_system_and_names_misses() {
+        // CosmicTk is a v1 store (record §3.3): two rungs, no middle.
+        let user = TempDir::new("density-user");
+        let system = TempDir::new("density-user-system");
+        user.rung(TK_ID, 1, DENSITY_KEY, "Compact\n");
+        system.rung(TK_ID, 1, DENSITY_KEY, "Spacious\n");
+        let (value, _) = density_at(Some(&user.0), &system.0);
+        assert_eq!(value, Some(Density::Compact), "the user's answer wins");
+
+        let user = TempDir::new("density-sys");
+        let system = TempDir::new("density-sys-system");
+        system.rung(TK_ID, 1, DENSITY_KEY, "Spacious\n");
+        let (value, _) = density_at(Some(&user.0), &system.0);
+        assert_eq!(
+            value,
+            Some(Density::Spacious),
+            "absent user falls to system"
+        );
+
+        let user = TempDir::new("density-miss");
+        let system = TempDir::new("density-miss-system");
+        let (value, missed) = density_at(Some(&user.0), &system.0);
+        assert_eq!(value, None);
+        assert_eq!(
+            missed,
+            vec![
+                format!("user {TK_ID}/v1/{DENSITY_KEY}"),
+                format!("system {TK_ID}/v1/{DENSITY_KEY}"),
+            ]
+        );
     }
 
     #[test]
