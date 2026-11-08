@@ -3209,6 +3209,15 @@ pub enum GestureKey {
     /// *within* the focused band in that mode. The daemon resolves it
     /// against the frozen tree.
     StepApp(Direction),
+    /// The key above Tab (keysym `grave`, `` ` `` on US layouts) in the
+    /// grouped-horizontal card: from an app tile, open that app's
+    /// windows on its MRU-front window; from a window tile, step to
+    /// the next/previous window of the same app, wrapping within the
+    /// app — GNOME's model, never crossing into another app (that walk
+    /// is ←/→ and Tab). The daemon resolves it against the session
+    /// state — the selection's level is invisible to this pure map, and
+    /// a standing query reroutes it to the type-into path there.
+    StepWindow(Direction),
     /// The handle-carrying twin of the select family, produced only
     /// by the wayland boundary at event receipt: the window of the row
     /// the user addressed. `None` — a continuation row, or a row past
@@ -3344,6 +3353,13 @@ pub enum GestureOutput {
     /// tile (band 1) from anywhere. The daemon resolves it against the
     /// frozen tree.
     StepApp(Direction),
+    /// The key above Tab in the grouped-horizontal card: open the
+    /// selected app's windows on its MRU-front window from an app
+    /// tile, or step within the selected app's windows with wrap from
+    /// a window tile. The daemon holds the selection's level and the
+    /// app's window set; a standing query reroutes the press to the
+    /// type-into path, keeping this map pure.
+    StepWindow(Direction),
     /// A character types into the session's query (`type-filter`): the
     /// daemon narrows the card's frozen window set by it and reselects
     /// the first match.
@@ -3424,6 +3440,10 @@ impl Gesture {
                 // band's tiles — a distinct output so the daemon can
                 // route it.
                 GestureKey::StepApp(direction) => GestureOutput::StepApp(direction),
+                // The key above Tab steps the focused app's windows —
+                // forwarded the same way; the daemon holds the level
+                // and the app's window set.
+                GestureKey::StepWindow(direction) => GestureOutput::StepWindow(direction),
                 // The query edits (`type-filter`): session state, not a
                 // row address — forwarded for the daemon to apply.
                 GestureKey::Type(ch) => GestureOutput::Type(ch),
@@ -3556,7 +3576,9 @@ pub enum KeyMode {
 /// Grouped-horizontal (the combination): ←/→ step the focused band's
 /// tiles, ↓ enters band 2 from an app tile ([`GestureKey::EnterChild`]),
 /// ↑ exits band 2 to its app tile ([`GestureKey::ExitParent`]), Tab
-/// steps apps from anywhere ([`GestureKey::StepApp`]), and Ctrl+N
+/// steps apps from anywhere ([`GestureKey::StepApp`]), the key above
+/// Tab steps the focused app's windows ([`GestureKey::StepWindow`],
+/// grave alone — every other keysym still types), and Ctrl+N
 /// addresses the visible tiles in reading order ([`GestureKey::Select`]
 /// — band 1 left→right then band 2 left→right, exactly as the card
 /// concatenates them).
@@ -3617,6 +3639,21 @@ pub fn key_input(
         // top row or keypad. Shift+minus — the underscore keysym — is a
         // printable, not the key.
         Keysym::minus | Keysym::KP_Subtract if alt_held => (GestureKey::Close, shift_held),
+        // The key above Tab (keysym `grave`) steps the focused app's
+        // windows in the combination — GNOME's model — and only there:
+        // flat and vertical-grouped sessions keep typing it into the
+        // query (the type-filter contract). The daemon resolves the
+        // level — an app tile opens on the MRU-front window, a window
+        // tile steps within the app — and reroutes to the type-into
+        // path while a query stands.
+        Keysym::grave if matches!(mode, GroupedHorizontal) => (
+            GestureKey::StepWindow(if shift_held {
+                Direction::Previous
+            } else {
+                Direction::Next
+            }),
+            shift_held,
+        ),
         // Ctrl+digits map with or without shift held; without Ctrl the
         // number row stays Other — it must never surprise-activate. In
         // vertical grouped mode the chord addresses level-1 entries; in
@@ -8966,6 +9003,89 @@ mod tests {
             }),
             GestureOutput::StepApp(Direction::Next)
         );
+    }
+
+    #[test]
+    fn grave_steps_windows_only_in_the_combined_card() {
+        // The key above Tab (keysym `grave`, ` on US layouts) is the
+        // within-app step in the combination — GNOME's model — and only
+        // there: the flat and vertical-grouped sessions keep typing it
+        // into the query, the type-filter contract untouched.
+        assert_eq!(
+            key_input(
+                Keysym::grave,
+                false,
+                false,
+                false,
+                KeyMode::GroupedHorizontal
+            ),
+            GestureInput::Press {
+                key: GestureKey::StepWindow(Direction::Next),
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(
+                Keysym::grave,
+                true,
+                false,
+                false,
+                KeyMode::GroupedHorizontal
+            ),
+            GestureInput::Press {
+                key: GestureKey::StepWindow(Direction::Previous),
+                shift: true
+            }
+        );
+        for mode in [KeyMode::Flat, KeyMode::Grouped] {
+            assert_eq!(
+                key_input(Keysym::grave, false, false, false, mode),
+                GestureInput::Press {
+                    key: GestureKey::Type('\u{60}'),
+                    shift: false
+                },
+                "{mode:?} keeps typing the backtick"
+            );
+        }
+        // The gesture machine forwards the window step like the app step.
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::StepWindow(Direction::Next),
+                shift: false
+            }),
+            GestureOutput::StepWindow(Direction::Next)
+        );
+    }
+
+    #[test]
+    fn grave_leaves_the_printable_arm_byte_for_byte() {
+        // The carve-out is grave alone: every other printable keysym maps
+        // to Type(char) through every mode, exactly as before — the
+        // table pins the neighbors beside grave on the US layout and the
+        // printable mainstays alike.
+        let table = [
+            (Keysym::apostrophe, '\''),
+            (Keysym::minus, '-'),
+            (Keysym::equal, '='),
+            (Keysym::a, 'a'),
+            (Keysym::_1, '1'),
+            (Keysym::space, ' '),
+            (Keysym::underscore, '_'),
+        ];
+        for (keysym, ch) in table {
+            for mode in [KeyMode::Flat, KeyMode::Grouped, KeyMode::GroupedHorizontal] {
+                assert_eq!(
+                    key_input(keysym, false, false, false, mode),
+                    GestureInput::Press {
+                        key: GestureKey::Type(ch),
+                        shift: false
+                    },
+                    "{keysym:?} {mode:?} still types"
+                );
+            }
+        }
     }
 
     #[test]

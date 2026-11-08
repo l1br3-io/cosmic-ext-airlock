@@ -1455,6 +1455,10 @@ pub fn run() -> Result<(), RunError> {
                         );
                     }
                 }
+                GestureOutput::StepWindow(_direction) => {
+                    // The key above Tab (B1 wires the key; the walk
+                    // lands in B2). No-op keeps the tree compiling.
+                }
                 GestureOutput::Type(ch) => {
                     // One character into the query: narrow the frozen
                     // set, reselect the first match, repaint. No open
