@@ -849,8 +849,14 @@ impl App {
         };
         let (x, y) = position;
         let scale = overlay.scale as f64;
-        let row = overlay.model().row_at(x * scale, y * scale, overlay.scale);
-        (row, row.and_then(|row| self.overlay_row_handle(row)))
+        // The axis rides the shown model: a horizontal card addresses
+        // cells, a vertical one rows — the geometry the user saw.
+        let cell = if overlay.model().horizontal {
+            overlay.model().cell_at(x * scale, y * scale, overlay.scale)
+        } else {
+            overlay.model().row_at(x * scale, y * scale, overlay.scale)
+        };
+        (cell, cell.and_then(|row| self.overlay_row_handle(row)))
     }
 
     /// The window the live model's `row` shows — the event-time
@@ -1514,6 +1520,21 @@ impl Session {
     /// font needs still pins it — kept unchanged pending the scale-1
     /// hardware pass. Re-read on every overlay build, so a
     /// display-scale change applies from the next gesture session.
+    /// The invoking output's logical width — what `columns = "auto"`
+    /// resolves its tile budget against (read once at open, frozen for
+    /// the session). A pure pass-through over the first output's
+    /// reported logical size; `None` when no output has reported one
+    /// (the caller falls back to a 1080p width).
+    pub fn output_logical_width(&self) -> Option<u32> {
+        self.app
+            .first_output
+            .as_ref()
+            .and_then(|output| output.data::<OutputData>())
+            .map(|data| data.with_output_info(|info| info.logical_size))
+            .and_then(|size| size)
+            .and_then(|(width, _)| u32::try_from(width).ok().filter(|width| *width > 0))
+    }
+
     pub fn render_scale(&self) -> u32 {
         let output_scale = self
             .app

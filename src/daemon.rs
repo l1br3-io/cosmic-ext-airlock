@@ -129,6 +129,11 @@ pub struct Switch {
     /// the `columns` setting and frozen with the layout. Binds
     /// `layout = "horizontal"` only; the vertical card never reads it.
     columns: crate::ui::ColumnsSetting,
+    /// The `columns` setting resolved against the invoking output's
+    /// logical width — computed by the serve loop at open (the one
+    /// place that sees both) and frozen with everything else: an
+    /// output change mid-gesture never re-windows the open band.
+    tiles: usize,
     /// The frozen tree a grouped plain session walks: the partition of
     /// the eligible list at open, kept so every grouped input — Alt+Tab's
     /// scoped steps, →/←'s level walks, the card's rows — addresses one
@@ -313,7 +318,7 @@ pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> 
 /// `palette`, `profile`, `rows`, `grouping`, `scoped_cycling`,
 /// `layout`, `columns`, and `text` are consumed only when the session
 /// opens; an already-open session keeps the ones it was built with.
-// Thirteen open-path parameters: the frozen-at-open values ride
+// Fourteen open-path parameters: the frozen-at-open values ride
 // individually (see session_step's note).
 #[expect(clippy::too_many_arguments)]
 pub fn ring_step(
@@ -329,6 +334,7 @@ pub fn ring_step(
     text: crate::text::TextDecision,
     layout: crate::ui::LayoutSetting,
     columns: crate::ui::ColumnsSetting,
+    tiles: usize,
     expanded: &mut std::collections::HashSet<String>,
 ) -> Option<Handle> {
     if open.is_none() {
@@ -360,6 +366,7 @@ pub fn ring_step(
             scoped: scoped_cycling,
             layout,
             columns,
+            tiles,
             tree,
             tree_sel: 0,
             visible: Vec::new(),
@@ -398,10 +405,11 @@ pub fn ring_step(
 /// [`step_and_show`]), but the selection basis never rebuilds — the same
 /// freeze philosophy as the scope and the palette, both consumed only when
 /// the session opens.
-// Fourteen open-path parameters: the frozen-at-open values (palette,
-// profile, rows, grouping, scoped cycling, layout, columns, text) each
-// ride individually and the expansion state is daemon memory the open
-// may write — no bundle introduced (the GR3 note).
+// Fifteen open-path parameters: the frozen-at-open values (palette,
+// profile, rows, grouping, scoped cycling, layout, columns + its
+// resolved tiles, text) each ride individually and the expansion state
+// is daemon memory the open may write — no bundle introduced (the GR3
+// note).
 #[expect(clippy::too_many_arguments)]
 pub fn session_step(
     open: &mut Option<Switch>,
@@ -417,6 +425,7 @@ pub fn session_step(
     text: crate::text::TextDecision,
     layout: crate::ui::LayoutSetting,
     columns: crate::ui::ColumnsSetting,
+    tiles: usize,
     expanded: &mut std::collections::HashSet<String>,
 ) -> Option<Handle> {
     // An open grouped session steps its visible rows (↓/↑ and the
@@ -442,6 +451,7 @@ pub fn session_step(
             text,
             layout,
             columns,
+            tiles,
             expanded,
         );
     }
@@ -459,7 +469,7 @@ pub fn session_step(
     // and no cycle scope either.
     let selected = ring_step(
         open, &view, direction, scope, palette, profile, rows, false, false, text, layout, columns,
-        expanded,
+        tiles, expanded,
     );
     // ring_step stored the session on the filtered ring; freeze the anchor
     // into it so later steps re-filter by it.
@@ -1276,7 +1286,7 @@ fn step_and_show(
     icons: &mut crate::icons::Cache,
     expanded: &mut std::collections::HashSet<String>,
 ) {
-    let (scope, palette, profile, rows, grouping, scoped_cycling, layout, columns, text) =
+    let (scope, palette, profile, rows, grouping, scoped_cycling, layout, columns, tiles, text) =
         match open {
             Some(open) => (
                 open.scope,
@@ -1287,6 +1297,7 @@ fn step_and_show(
                 open.scoped,
                 open.layout,
                 open.columns,
+                open.tiles,
                 open.text.clone(),
             ),
             None => {
@@ -1332,6 +1343,16 @@ fn step_and_show(
                 let profile = crate::ui::StyleProfile::resolve(style, density);
                 let configured_rows = settings.settings.rows;
                 let rows = crate::ui::effective_rows(density, configured_rows);
+                // The band's budget resolves once, here: `auto` reads
+                // the invoking output's logical width (a 1080p
+                // fallback when no output has reported one) and
+                // freezes with the open.
+                let tiles = crate::ui::resolved_tiles(
+                    settings.settings.columns,
+                    session
+                        .output_logical_width()
+                        .unwrap_or(crate::ui::FALLBACK_OUTPUT_WIDTH),
+                );
                 if rows < configured_rows {
                     eprintln!(
                         "airlock daemon: {density:?} density: rows {configured_rows} clamps to {rows} to keep the card inside {} px; the setting keeps its value",
@@ -1355,6 +1376,7 @@ fn step_and_show(
                     settings.settings.scoped_cycling,
                     settings.settings.layout,
                     settings.settings.columns,
+                    tiles,
                     text,
                 )
             }
@@ -1373,6 +1395,7 @@ fn step_and_show(
         text,
         layout,
         columns,
+        tiles,
         expanded,
     );
     show_selection(session, gesture, open, snapshot, expanded, icons);
@@ -1437,11 +1460,24 @@ fn show_selection(
         .as_ref()
         .map_or_else(crate::ui::Palette::dark, |session| session.palette);
     let scale = session.render_scale();
+    // Icons rasterize at the side the shown card paints: the row's own
+    // 32 for every vertical card (the grouped tree included — the
+    // grouped-horizontal combination is its own module and stays
+    // vertical here), the tile's 48 for a horizontal flat session.
+    let horizontal = open.as_ref().is_some_and(|current| {
+        current.layout == crate::ui::LayoutSetting::Horizontal && current.tree.is_none()
+    });
+    let icon_side = if horizontal {
+        crate::ui::TILE_ICON
+    } else {
+        crate::ui::ICON
+    };
     icons.prepare(
         snapshot
             .toplevels
             .iter()
             .map(|toplevel| toplevel.app_id.as_str()),
+        icon_side,
         scale,
         &palette,
     );
@@ -1477,24 +1513,44 @@ fn show_selection(
             ),
             // Flat and same-app sessions (the exemption): the flat
             // card over the (possibly re-filtered) snapshot, selection
-            // by ring.
+            // by ring — the horizontal band for a horizontal session
+            // (the grouped tree above stays vertical whatever the
+            // layout says; the combination is the grouped-horizontal
+            // module's, not this card's).
             _ => {
                 let list = match current.app.as_deref() {
                     Some(app) => switcher::app_view(snapshot, app, current.scope),
                     None => snapshot.clone(),
                 };
                 current.ring.selected().and_then(|handle| {
-                    crate::ui::overlay_model(
-                        &list,
-                        handle,
-                        current.scope,
-                        icons,
-                        scale,
-                        &palette,
-                        current.profile,
-                        windowing,
-                        crate::ui::text_backend(&text, session.text_system()),
-                    )
+                    if current.layout == crate::ui::LayoutSetting::Horizontal {
+                        crate::ui::overlay_model_horizontal(
+                            &list,
+                            handle,
+                            current.scope,
+                            icons,
+                            scale,
+                            &palette,
+                            current.profile,
+                            crate::ui::Banding {
+                                tiles: current.tiles,
+                                prev: current.viewport,
+                            },
+                            crate::ui::text_backend(&text, session.text_system()),
+                        )
+                    } else {
+                        crate::ui::overlay_model(
+                            &list,
+                            handle,
+                            current.scope,
+                            icons,
+                            scale,
+                            &palette,
+                            current.profile,
+                            windowing,
+                            crate::ui::text_backend(&text, session.text_system()),
+                        )
+                    }
                 })
             }
         }
@@ -1543,6 +1599,10 @@ mod tests {
     use crate::switcher::WorkspaceId;
     use crate::ui::{DEFAULT_ROWS, GestureKey, OverlayModel, Palette, RowModel, StyleProfile};
     use std::collections::HashSet;
+
+    /// The tile budget tests open sessions with — `auto` resolved at
+    /// the 1080p fallback width (1920 → ⅔ × 1920 / 160 = 8).
+    const TILES: usize = 8;
 
     fn toplevel(handle: u64, workspaces: &[u64], state: State, last_activated: u64) -> Toplevel {
         Toplevel {
@@ -1709,6 +1769,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(2))
@@ -1740,6 +1801,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(3))
@@ -1771,6 +1833,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(2))
@@ -1789,6 +1852,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(3))
@@ -1807,6 +1871,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(1))
@@ -1825,6 +1890,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(3))
@@ -1859,6 +1925,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(4))
@@ -1883,6 +1950,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             None
@@ -1901,6 +1969,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             None
@@ -1925,6 +1994,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             None
@@ -1946,6 +2016,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(1))
@@ -1975,6 +2046,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2004,6 +2076,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2043,6 +2116,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2074,6 +2148,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2111,6 +2186,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2149,6 +2225,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2186,6 +2263,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2215,6 +2293,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2257,6 +2336,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2292,6 +2372,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2326,6 +2407,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2367,6 +2449,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2429,6 +2512,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2489,6 +2573,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2576,6 +2661,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2645,6 +2731,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2707,6 +2794,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2761,6 +2849,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2829,6 +2918,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2864,6 +2954,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2900,6 +2991,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -3026,6 +3118,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(3)),
@@ -3055,6 +3148,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(4))
@@ -3087,6 +3181,7 @@ mod tests {
                     crate::text::TextDecision::Bitmap,
                     crate::ui::LayoutSetting::Vertical,
                     crate::ui::ColumnsSetting::Auto,
+                    TILES,
                     &mut HashSet::new()
                 ),
                 expected
@@ -3119,6 +3214,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             None
@@ -3151,6 +3247,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             None
@@ -3176,6 +3273,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
 
@@ -3205,6 +3303,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(4))
@@ -3235,6 +3334,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3252,6 +3352,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(4))
@@ -3279,6 +3380,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(2)),
@@ -3299,6 +3401,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(3)),
@@ -3334,6 +3437,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("same-app session opened");
@@ -3360,6 +3464,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("same-app session opened");
@@ -3415,6 +3520,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(2))
@@ -3433,6 +3539,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(3))
@@ -3451,6 +3558,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new()
             ),
             Some(Handle(1))
@@ -3480,6 +3588,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -3499,6 +3608,7 @@ mod tests {
             scoped: false,
             layout: crate::ui::LayoutSetting::Vertical,
             columns: crate::ui::ColumnsSetting::Auto,
+            tiles: TILES,
             tree: None,
             tree_sel: 0,
             visible: Vec::new(),
@@ -3535,6 +3645,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert!(
@@ -3576,6 +3687,7 @@ mod tests {
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
+                TILES,
                 &mut HashSet::new(),
             );
             let open = open.expect("session opened");
@@ -3838,6 +3950,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3861,6 +3974,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3885,6 +3999,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3922,6 +4037,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(open.as_ref().expect("session opened").rows, 5);
@@ -3942,6 +4058,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3966,6 +4083,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(open.as_ref().expect("fresh session opened").rows, 9);
@@ -4000,6 +4118,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Horizontal,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -4023,6 +4142,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -4047,6 +4167,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -4084,6 +4205,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Horizontal,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -4107,6 +4229,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Horizontal,
             crate::ui::ColumnsSetting::Pinned(5),
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -4131,12 +4254,95 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Horizontal,
             crate::ui::ColumnsSetting::Pinned(5),
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
             open.as_ref().expect("fresh session opened").columns,
             crate::ui::ColumnsSetting::Pinned(5)
         );
+    }
+
+    /// The tiles twin of the frozen-palette seam: the resolved budget
+    /// is computed by the serve loop at open (the `columns` setting
+    /// against the invoking output's logical width) and frozen for the
+    /// session's life — an output change landing mid-gesture (here:
+    /// the budget the next invocation would resolve) never re-windows
+    /// the open band; the next press starts fresh against it.
+    #[test]
+    fn an_open_session_keeps_its_frozen_tiles_across_an_output_change() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Horizontal,
+            crate::ui::ColumnsSetting::Auto,
+            8,
+            &mut HashSet::new(),
+        );
+        assert_eq!(open.as_ref().expect("session opened").tiles, 8);
+
+        // The output widens between presses (auto would resolve 12);
+        // the open session keeps the band it was opened with.
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Horizontal,
+            crate::ui::ColumnsSetting::Auto,
+            12,
+            &mut HashSet::new(),
+        );
+        assert_eq!(
+            open.as_ref().expect("session still open").tiles,
+            8,
+            "a mid-gesture output change must not re-window the open band"
+        );
+
+        // The next press after the session ends starts fresh: twelve.
+        open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Horizontal,
+            crate::ui::ColumnsSetting::Auto,
+            12,
+            &mut HashSet::new(),
+        );
+        assert_eq!(open.as_ref().expect("fresh session opened").tiles, 12);
     }
 
     #[test]
@@ -4226,6 +4432,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(open.as_ref().expect("session opened").profile, spacious);
@@ -4246,6 +4453,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -4270,6 +4478,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -4307,6 +4516,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert!(!open.as_ref().expect("session opened").grouping);
@@ -4327,6 +4537,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert!(
@@ -4350,6 +4561,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert!(open.as_ref().expect("fresh session opened").grouping);
@@ -4406,6 +4618,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut expanded,
         );
         (open, expanded)
@@ -4431,6 +4644,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut expanded,
         );
         (open, expanded)
@@ -4523,6 +4737,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut expanded,
         );
         assert_eq!(
@@ -4730,6 +4945,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(flat_target, Some(Handle(2)), "flat keeps the MRU-second");
@@ -5075,6 +5291,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut expanded,
         );
         let visible = grouped_visible(open.as_ref().expect("reopened"), &snap, &expanded);
@@ -5181,6 +5398,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         let session = open.as_ref().expect("session opened");
@@ -5292,6 +5510,7 @@ mod tests {
             },
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -5317,6 +5536,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -5344,6 +5564,7 @@ mod tests {
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
+            TILES,
             &mut HashSet::new(),
         );
         assert_eq!(

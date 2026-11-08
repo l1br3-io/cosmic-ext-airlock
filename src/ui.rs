@@ -238,6 +238,55 @@ pub const COLUMNS_MIN: usize = 3;
 /// pitch (~140–160 px) already spans a 4-K output's logical width.
 pub const COLUMNS_MAX: usize = 12;
 
+// --- The horizontal band's candidate tokens (card-layout CL3) ----------
+//
+// Every value here is a preview-loop candidate, not a pin: CL4 judges
+// the sheet and freezes them (the spec's working ranges: tile
+// ~140–160 px wide, icon ~48 px, card ~200–260 px tall). Provenance
+// comments say "candidate"; the freeze rewrites them with its sheet
+// date, the overlay-density precedent.
+
+/// One tile's width, logical px — a candidate inside the spec's
+/// 140–160 working range, on the 8-grid.
+pub const TILE_W: u32 = 152;
+/// Gap between tiles: selection fills never merge across it.
+pub const TILE_GAP: u32 = 8;
+/// The tile's app icon side — the spec's ~48 working range (larger
+/// than the row's 32: the tile is the card's whole content, the row's
+/// icon one column of several).
+pub const TILE_ICON: u32 = 48;
+/// The band card's horizontal and vertical padding, logical px.
+pub const TILE_PAD_X: u32 = 24;
+pub const TILE_PAD_Y: u32 = 40;
+/// Clearing between the badge row and the icon.
+pub const TILE_BADGE_GAP: u32 = 4;
+/// Clearing between the icon and the title line.
+pub const TILE_TITLE_GAP: u32 = 12;
+/// The tile's content cell: badge row, icon, one title line — the
+/// selection fill's extent.
+pub const TILE_CELL_H: u32 = TEXT_H + TILE_BADGE_GAP + TILE_ICON + TILE_TITLE_GAP + TEXT_H;
+/// The horizontal card's height: the tile cell plus the card padding.
+pub const fn band_card_height() -> u32 {
+    2 * TILE_PAD_Y + TILE_CELL_H
+}
+/// The band card's width: `slots` tiles plus gaps inside the padding —
+/// the `…` tile lives inside these slots, so the card never widens for
+/// it.
+pub const fn band_width(slots: u32) -> u32 {
+    2 * TILE_PAD_X + slots * TILE_W + slots.saturating_sub(1) * TILE_GAP
+}
+/// Inset of the badge and the clamped title from a tile's side.
+pub const TILE_TEXT_PAD: u32 = 8;
+/// `auto`'s share of the invoking output's logical width — the spec's
+/// ~66 % working range, two thirds exactly; a CL4 freeze candidate.
+pub const AUTO_FRACTION_NUM: u32 = 2;
+pub const AUTO_FRACTION_DEN: u32 = 3;
+/// The width `auto` resolves against when the invoking output's
+/// logical size is unknown (no output yet, or none reported one): a
+/// 1080p panel's logical width, so the responsive band still behaves
+/// before the first configure.
+pub const FALLBACK_OUTPUT_WIDTH: u32 = 1920;
+
 /// The panel the card must always fit: 720 logical px (1440p@2x, any
 /// 1× panel) — `overlay-density`'s headroom rule, unchanged. Since the
 /// density follow the guarantee is by construction: the effective rows
@@ -934,6 +983,12 @@ pub struct OverlayModel {
     /// back, so what a click addresses is always the geometry the user
     /// saw, whatever the desktop did mid-gesture.
     pub profile: StyleProfile,
+    /// The axis the entries lay on: `false` (the default) paints the
+    /// vertical column of rows, `true` the horizontal band of tiles.
+    /// The renderer and the pointer's `row_at`/`cell_at` dispatch read
+    /// it back — hit-testing always addresses the geometry the user
+    /// saw (the `profile` contract, one axis over).
+    pub horizontal: bool,
 }
 
 impl OverlayModel {
@@ -961,6 +1016,29 @@ impl OverlayModel {
         let row = (y_px / pitch) as usize;
         (y_px - row as f64 * pitch < rhythm.row_h as f64).then_some(row) // gap seam
     }
+
+    /// The tile whose cell contains the device-pixel point (`x`, `y`) —
+    /// the horizontal twin of [`OverlayModel::row_at`]: a surface-local
+    /// logical pointer position × render `scale`, the point scaled down
+    /// to the model's space. The footprint is the full band height
+    /// (the cell is the unit); tile gaps, card padding, and points off
+    /// the card are `None`.
+    pub fn cell_at(&self, x: f64, y: f64, scale: u32) -> Option<usize> {
+        let in_card = x >= 0.0
+            && y >= 0.0
+            && x < self.width as f64 * scale as f64
+            && y < self.height as f64 * scale as f64;
+        if !in_card {
+            return None;
+        }
+        let x_px = x / scale as f64 - TILE_PAD_X as f64;
+        let pitch = (TILE_W + TILE_GAP) as f64;
+        if x_px < 0.0 || x_px >= self.rows.len() as f64 * pitch {
+            return None; // card padding before the first tile / past the last
+        }
+        let cell = (x_px / pitch) as usize;
+        (x_px - cell as f64 * pitch < TILE_W as f64).then_some(cell) // gap seam
+    }
 }
 
 /// The slice of a long eligible list one overlay card shows: where the
@@ -987,6 +1065,35 @@ pub struct Viewport {
 pub struct Windowing {
     pub rows: usize,
     pub prev: Option<Viewport>,
+}
+
+/// The horizontal band's windowing inputs, carried into
+/// [`overlay_model_horizontal`]: the session's resolved tile budget
+/// (frozen at open from the `columns` setting and the invoking
+/// output's logical width) and the window the previous rebuild
+/// computed, `None` at open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Banding {
+    pub tiles: usize,
+    pub prev: Option<Viewport>,
+}
+
+/// Resolves the `columns` setting against the invoking output's
+/// logical width: `Pinned` is the budget verbatim (parser-guaranteed
+/// [`COLUMNS_MIN`]..=[`COLUMNS_MAX`]), `Auto` fits
+/// `floor(AUTO_FRACTION × width / tile pitch)` tiles — floored at
+/// [`COLUMNS_MIN`], uncapped above (a ceiling is the pinned form's
+/// contract; auto's is the output). Read once at map and frozen for
+/// the session, like every session-scoped value.
+pub fn resolved_tiles(columns: ColumnsSetting, output_width: u32) -> usize {
+    match columns {
+        ColumnsSetting::Pinned(count) => count,
+        ColumnsSetting::Auto => {
+            let pitch = TILE_W + TILE_GAP;
+            let budget = output_width * AUTO_FRACTION_NUM / AUTO_FRACTION_DEN;
+            (budget / pitch).max(COLUMNS_MIN as u32) as usize
+        }
+    }
 }
 
 /// The window over a `len`-long eligible list with `sel` selected,
@@ -1127,7 +1234,7 @@ pub fn overlay_model(
         );
         rows.push(RowModel {
             title,
-            icon: icons.bitmap(&toplevel.app_id, scale, palette),
+            icon: icons.bitmap(&toplevel.app_id, ICON, scale, palette),
             selected: index == sel,
             handle: Some(handle),
             kind: RowKind::Leaf,
@@ -1138,6 +1245,91 @@ pub fn overlay_model(
         bands.push(band);
     }
     finish_model(rows, sel, windowing, profile, bands)
+}
+
+/// The tile's title: the leaf label clamped to the tile's inner width
+/// — the same display-title and truncation vocabulary as a row title,
+/// the budget one tile instead of one row ([`compose_title`]'s shape
+/// with no row-kind extras).
+fn compose_tile_title(title: &str, app_id: &str, text: &mut TextBackend<'_>, scale: u32) -> String {
+    let label = display_title(title, app_id);
+    match text {
+        TextBackend::Bitmap => clamp_tile_title(&label),
+        TextBackend::System { system, query } => {
+            let budget = (TILE_W - 2 * TILE_TEXT_PAD) as f32;
+            let (display, _) = system.shape_budgeted(&label, *query, scale, budget);
+            display
+        }
+    }
+}
+
+/// Builds the horizontal band for `snapshot` with `selected`
+/// highlighted — the flat list as one row of tiles, MRU-first from the
+/// left, windowed by `banding` (the session's resolved tile budget and
+/// the sticky band it carries, `None` at open) per [`band_window`].
+/// A tile is the honest analogue the research locked: the app icon
+/// over the clamped title, the selection filling the whole tile cell,
+/// the Ctrl+N chord as a corner badge — reading order over the
+/// displayed content tiles, ≤ 9, every displayed hint wired. A
+/// truncated trailing edge spends its last tile on the wordless `…`.
+/// Returns `None` under the same emptiness contract as
+/// [`overlay_model`].
+// Nine render inputs — the banding joined the seam beside the
+// windowing (the geometry follow's note).
+#[expect(clippy::too_many_arguments)]
+pub fn overlay_model_horizontal(
+    snapshot: &Snapshot,
+    selected: Handle,
+    scope: Scope,
+    icons: &crate::icons::Cache,
+    scale: u32,
+    palette: &Palette,
+    profile: StyleProfile,
+    banding: Banding,
+    mut text: TextBackend<'_>,
+) -> Option<OverlayModel> {
+    let active = snapshot.active?;
+    let entries = switcher::eligible(&snapshot.toplevels, active, scope);
+    if entries.is_empty() {
+        return None;
+    }
+    let sel = entries.iter().position(|&handle| handle == selected)?;
+    let band = band_window(entries.len(), sel, banding.tiles, banding.prev);
+    let slots = band.content + band.bottom as usize;
+    let mut rows = Vec::with_capacity(slots);
+    for (position, &handle) in entries
+        .iter()
+        .skip(band.start)
+        .take(band.content)
+        .enumerate()
+    {
+        // Unreachable in practice: the sequence draws from this same
+        // snapshot.
+        let toplevel = snapshot.toplevels.iter().find(|t| t.handle == handle)?;
+        rows.push(RowModel {
+            title: compose_tile_title(&toplevel.title, &toplevel.app_id, &mut text, scale),
+            icon: icons.bitmap(&toplevel.app_id, TILE_ICON, scale, palette),
+            selected: handle == selected,
+            handle: Some(handle),
+            kind: RowKind::Leaf,
+            count: 0,
+            hint: RowHint::ctrl(position),
+            expanded: false,
+        });
+    }
+    if band.bottom {
+        rows.push(continuation_row());
+    }
+    Some(OverlayModel {
+        rows,
+        // The card is the tile grid: wide-short, the `…` tile inside
+        // the slots (the spec's "card width = N × tile pitch").
+        width: band_width(slots as u32),
+        height: band_card_height(),
+        viewport: band,
+        profile,
+        horizontal: true,
+    })
 }
 
 /// Builds the grouped overlay contents: the session's frozen tree cut to
@@ -1201,7 +1393,7 @@ pub fn overlay_model_grouped(
                 );
                 rows.push(RowModel {
                     title,
-                    icon: icons.bitmap(&toplevel.app_id, scale, palette),
+                    icon: icons.bitmap(&toplevel.app_id, ICON, scale, palette),
                     selected: index == selected,
                     handle: Some(grow.handle),
                     kind: RowKind::Child,
@@ -1244,7 +1436,7 @@ pub fn overlay_model_grouped(
                         compose_title(&grow.app_id, "", RowKind::Parent, &mut text, scale);
                     rows.push(RowModel {
                         title,
-                        icon: icons.bitmap(&grow.app_id, scale, palette),
+                        icon: icons.bitmap(&grow.app_id, ICON, scale, palette),
                         selected: index == selected,
                         handle: Some(grow.handle),
                         kind: RowKind::Parent,
@@ -1263,7 +1455,7 @@ pub fn overlay_model_grouped(
                     );
                     rows.push(RowModel {
                         title,
-                        icon: icons.bitmap(&toplevel.app_id, scale, palette),
+                        icon: icons.bitmap(&toplevel.app_id, ICON, scale, palette),
                         selected: index == selected,
                         handle: Some(grow.handle),
                         kind: RowKind::Leaf,
@@ -1374,6 +1566,7 @@ fn finish_model(
         height: card_height_rhythm(profile.rhythm, count),
         viewport,
         profile,
+        horizontal: false,
     })
 }
 
@@ -1477,6 +1670,21 @@ pub fn render(
                 }
             }
         }
+    }
+    if model.horizontal {
+        render_band(model, canvas, stride, lw, scale, palette, text);
+        border_ring(
+            canvas,
+            stride,
+            lw,
+            lh,
+            scale,
+            radius,
+            palette.border,
+            &outer,
+            &inner,
+        );
+        return;
     }
     for (index, row) in model.rows.iter().enumerate() {
         let top = rhythm.pad_y + index as u32 * (rhythm.row_h + rhythm.row_gap);
@@ -1803,12 +2011,40 @@ pub fn render(
             }
         }
     }
-    // Border ring last: inside the card but not fully inside the eroded
-    // shape, so the stroke follows the rounded corners with the same
-    // anti-aliasing. The difference-of-masks formulation could open gaps
-    // where both masks quantize alike on an arc; this rule cannot.
-    // The ring lives only within radius + BORDER of the card boundary —
-    // scanning the interior is wasted work at Tab speed.
+    border_ring(
+        canvas,
+        stride,
+        lw,
+        lh,
+        scale,
+        radius,
+        palette.border,
+        &outer,
+        &inner,
+    );
+}
+
+/// The hairline border ring, last on both axes: inside the card but
+/// not fully inside the eroded shape, so the stroke follows the
+/// rounded corners with the same anti-aliasing. The
+/// difference-of-masks formulation could open gaps where both masks
+/// quantize alike on an arc; this rule cannot. The ring lives only
+/// within radius + BORDER of the card boundary — scanning the interior
+/// is wasted work at Tab speed.
+// Nine paint inputs — render's own seam, extracted for the horizontal
+// branch (the geometry follow's note).
+#[expect(clippy::too_many_arguments)]
+fn border_ring(
+    canvas: &mut [u8],
+    stride: u32,
+    lw: u32,
+    lh: u32,
+    scale: u32,
+    radius: u32,
+    border: u32,
+    outer: &[u8],
+    inner: &[u8],
+) {
     for ly in 0..lh {
         for (x0, x1) in edge_spans(ly, lh, lw, radius + BORDER) {
             for lx in x0..x1 {
@@ -1816,11 +2052,212 @@ pub fn render(
                 if outer[index] == 0 || inner[index] == 255 {
                     continue;
                 }
-                let argb = coverage_argb(palette.border, outer[index]);
+                let argb = coverage_argb(border, outer[index]);
                 for dy in 0..scale {
                     for dx in 0..scale {
                         put_pixel(canvas, stride, lx * scale + dx, ly * scale + dy, argb);
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Paints the horizontal band's tiles — the card background and border
+/// are the shared passes in [`render`]; this is the content loop. A
+/// content tile carries the selection fill (its own rounded rect over
+/// the whole tile cell, the row band's own vocabulary), the app icon
+/// centered on the icon line, the clamped title beneath, and the Ctrl+N
+/// chord as a corner badge (a CL4-freeze candidate placement: top-left
+/// of the badge row, muted like every hint). The `…` tile paints its
+/// muted glyph centered on the icon line and nothing else — no band,
+/// no icon, no title, no badge (a tile beyond addressability earns
+/// nothing but its dots).
+fn render_band(
+    model: &OverlayModel,
+    canvas: &mut [u8],
+    stride: u32,
+    lw: u32,
+    scale: u32,
+    palette: &Palette,
+    mut text: TextBackend<'_>,
+) {
+    let band_radius = model.profile.band_radius;
+    for (index, tile) in model.rows.iter().enumerate() {
+        let left = TILE_PAD_X + index as u32 * (TILE_W + TILE_GAP);
+        if tile.handle.is_none() {
+            match &mut text {
+                TextBackend::Bitmap => {
+                    let dots_x = left + (TILE_W - TEXT_W) / 2;
+                    let dots_y = TILE_PAD_Y + TEXT_H + TILE_BADGE_GAP + (TILE_ICON - TEXT_H) / 2;
+                    draw_glyph(
+                        canvas,
+                        stride,
+                        ELLIPSIS_GLYPH,
+                        dots_x * scale,
+                        dots_y * scale,
+                        TEXT_W * scale / GLYPH_W,
+                        palette.muted,
+                    );
+                }
+                TextBackend::System { system, query } => {
+                    let run = system.shape("\u{2026}", *query, scale);
+                    let dots_x = left + (TILE_W - run.width_px.ceil() as u32) / 2;
+                    let baseline = TILE_PAD_Y
+                        + TEXT_H
+                        + TILE_BADGE_GAP
+                        + crate::text::centering(run.ascent_px, run.descent_px, TILE_ICON);
+                    paint_run(
+                        system,
+                        &run,
+                        canvas,
+                        stride,
+                        scale,
+                        palette.muted,
+                        dots_x,
+                        baseline,
+                        lw,
+                    );
+                }
+            }
+            continue;
+        }
+        if tile.selected {
+            for ly in TILE_PAD_Y..TILE_PAD_Y + TILE_CELL_H {
+                for dy in 0..scale {
+                    let y = ly * scale + dy;
+                    for lx in left..left + TILE_W {
+                        let cov = shape_cov(
+                            lx - left,
+                            ly - TILE_PAD_Y,
+                            TILE_W,
+                            TILE_CELL_H,
+                            band_radius,
+                            0,
+                        );
+                        if cov == 0 {
+                            continue;
+                        }
+                        let x0 = lx * scale;
+                        for x in x0..x0 + scale {
+                            let index = y as usize * stride as usize + x as usize * 4;
+                            if let Some(slot) = canvas.get_mut(index..index + 4) {
+                                let dst = u32::from_le_bytes(
+                                    slot.try_into().expect("pixel is four bytes"),
+                                );
+                                let out = mix_pixel(dst, palette.selected_bg, cov);
+                                slot.copy_from_slice(&out.to_le_bytes());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // The icon, centered on its line: a bitmap prepared at
+        // TILE_ICON × scale blits 1:1; a mismatched size or a miss
+        // draws the generic window glyph (the row cell's rule).
+        let icon_y = TILE_PAD_Y + TEXT_H + TILE_BADGE_GAP;
+        match tile.icon.as_deref() {
+            Some(bitmap) if bitmap.side == TILE_ICON * scale => {
+                blit_bitmap(
+                    canvas,
+                    stride,
+                    bitmap,
+                    (left + (TILE_W - TILE_ICON) / 2) * scale,
+                    icon_y * scale,
+                );
+            }
+            _ => {
+                let side = GLYPH_W * GLYPH_SCALE;
+                draw_glyph(
+                    canvas,
+                    stride,
+                    WINDOW_GLYPH,
+                    (left + (TILE_W - side) / 2) * scale,
+                    (icon_y + (TILE_ICON - side) / 2) * scale,
+                    GLYPH_SCALE * scale,
+                    palette.text,
+                );
+            }
+        }
+        // The title, one clamped line centered on the tile.
+        let title_y = icon_y + TILE_ICON + TILE_TITLE_GAP;
+        match &mut text {
+            TextBackend::Bitmap => {
+                // Centering saturates at the tile's own edges: a title
+                // longer than the tile (a caller that skipped the
+                // composer's clamp) starts at the inset and stops at
+                // the far edge — the row loop's defense in depth.
+                let ink = tile.title.chars().count() as u32 * TEXT_W;
+                let edge = left + TILE_W - TILE_TEXT_PAD;
+                let mut lx = left + TILE_W.saturating_sub(ink) / 2 + TILE_TEXT_PAD;
+                for ch in tile.title.chars() {
+                    if lx + TEXT_W > edge {
+                        break;
+                    }
+                    draw_glyph(
+                        canvas,
+                        stride,
+                        glyph(ch),
+                        lx * scale,
+                        title_y * scale,
+                        TEXT_W * scale / GLYPH_W,
+                        palette.text,
+                    );
+                    lx += TEXT_W;
+                }
+            }
+            TextBackend::System { system, query } => {
+                let run = system.shape(&tile.title, *query, scale);
+                let ink = run.width_px.ceil() as u32;
+                let baseline =
+                    title_y + crate::text::centering(run.ascent_px, run.descent_px, TEXT_H);
+                paint_run(
+                    system,
+                    &run,
+                    canvas,
+                    stride,
+                    scale,
+                    palette.text,
+                    left + (TILE_W - ink) / 2,
+                    baseline,
+                    left + TILE_W - TILE_TEXT_PAD,
+                );
+            }
+        }
+        // The corner badge — a CL4-freeze candidate placement: the
+        // chord's own muted color, top-left of the tile's badge row.
+        if let Some(hint) = tile.hint {
+            let label = hint.label();
+            match &mut text {
+                TextBackend::Bitmap => {
+                    let mut lx = left + TILE_TEXT_PAD;
+                    for ch in label.chars() {
+                        draw_glyph(
+                            canvas,
+                            stride,
+                            glyph(ch),
+                            lx * scale,
+                            TILE_PAD_Y * scale,
+                            TEXT_W * scale / GLYPH_W,
+                            palette.muted,
+                        );
+                        lx += TEXT_W;
+                    }
+                }
+                TextBackend::System { system, query } => {
+                    let run = system.shape(&label, *query, scale);
+                    paint_run(
+                        system,
+                        &run,
+                        canvas,
+                        stride,
+                        scale,
+                        palette.muted,
+                        left + TILE_TEXT_PAD,
+                        TILE_PAD_Y + crate::text::centering(run.ascent_px, run.descent_px, TEXT_H),
+                        left + TILE_W - TILE_TEXT_PAD,
+                    );
                 }
             }
         }
@@ -2160,6 +2597,15 @@ fn fold_diacritic(ch: char) -> Option<char> {
 /// `cafe.txt` render identically by decision, and that is documented
 /// degradation (README, the design skill), not fidelity.
 /// 2026-11-07 typeset pass, the critique's user-approved item.
+/// A tile title on the Bitmap floor: folded, then truncated to the
+/// tile's inner width — the budget the daemon composes with and the
+/// preview sheet builds its bands from (the row card's `MAX_COLS`
+/// clamp, one tile wide).
+pub fn clamp_tile_title(title: &str) -> String {
+    let cap = (TILE_W - 2 * TILE_TEXT_PAD) / TEXT_W;
+    truncate_cols(fold_title(title), cap)
+}
+
 pub fn fold_title(title: &str) -> String {
     title
         .chars()
@@ -4048,6 +4494,286 @@ mod tests {
         }
     }
 
+    // --- card-layout: the horizontal card (CL3) --------------------------
+
+    /// A `count`-window snapshot with distinct apps, MRU-ordered so
+    /// handle `n` sits at list index `n − 1`.
+    fn band_snapshot(count: u64) -> Snapshot {
+        let toplevels = (1..=count)
+            .map(|handle| {
+                toplevel(
+                    handle,
+                    &format!("W{handle:02}"),
+                    &format!("app.{handle}"),
+                    &[1],
+                    if handle == 1 {
+                        switcher::State::ACTIVATED
+                    } else {
+                        switcher::State::default()
+                    },
+                    count + 1 - handle,
+                )
+            })
+            .collect();
+        snapshot(toplevels, Some(1))
+    }
+
+    fn build_band(
+        snap: &Snapshot,
+        selected: Handle,
+        tiles: usize,
+        prev: Option<Viewport>,
+    ) -> Option<OverlayModel> {
+        overlay_model_horizontal(
+            snap,
+            selected,
+            Scope::CurrentWorkspace,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            StyleProfile::default(),
+            Banding { tiles, prev },
+            TextBackend::Bitmap,
+        )
+    }
+
+    #[test]
+    fn a_horizontal_model_lays_tiles_in_mru_order() {
+        // The flat band: one tile per window, MRU-first from the left,
+        // the ring's selection marked, the model flagged horizontal so
+        // the renderer and the pointer dispatch on the axis.
+        let snap = band_snapshot(4);
+        let model = build_band(&snap, Handle(2), 4, None).expect("eligible windows exist");
+        assert!(model.horizontal);
+        let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
+        assert_eq!(
+            handles,
+            vec![
+                Some(Handle(1)),
+                Some(Handle(2)),
+                Some(Handle(3)),
+                Some(Handle(4))
+            ]
+        );
+        let selected: Vec<bool> = model.rows.iter().map(|row| row.selected).collect();
+        assert_eq!(selected, vec![false, true, false, false]);
+        // A list within the budget shows whole: no continuation tile.
+        assert_eq!(model.viewport.content, 4);
+        assert!(!model.viewport.bottom);
+    }
+
+    #[test]
+    fn a_truncated_band_appends_one_continuation_tile() {
+        // Six windows, four tiles: four content tiles then one wordless
+        // `…` tile — handle `None`, inert to every input, never hinted,
+        // never banded.
+        let snap = band_snapshot(6);
+        let model = build_band(&snap, Handle(1), 4, None).expect("eligible windows exist");
+        // The dots spend a content tile: three windows plus the dots is
+        // four slots — the card stays four tiles wide.
+        assert_eq!(model.rows.len(), 4, "three content tiles plus the dots");
+        let dots = model.rows.last().expect("the trailing tile");
+        assert_eq!(dots.handle, None, "the continuation tile carries no window");
+        assert_eq!(dots.hint, None, "the continuation tile hints no chord");
+        assert!(!dots.selected);
+        assert_eq!(model.viewport.content, 3);
+        assert!(model.viewport.bottom);
+        // The content tiles keep their reading-order chords.
+        let hints: Vec<Option<RowHint>> = model.rows.iter().map(|row| row.hint).collect();
+        assert_eq!(
+            hints,
+            vec![
+                Some(RowHint::Ctrl(1)),
+                Some(RowHint::Ctrl(2)),
+                Some(RowHint::Ctrl(3)),
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn tile_hints_stop_at_nine_in_reading_order() {
+        // Reading order is left to right over the *content* tiles; the
+        // tenth and beyond hint nothing, the dots tile nothing — the
+        // flat card's every-row rule one axis over.
+        let snap = band_snapshot(14);
+        let model = build_band(&snap, Handle(1), 12, None).expect("eligible windows exist");
+        let content = &model.rows[..model.viewport.content];
+        for (index, tile) in content.iter().enumerate() {
+            let expected = (index < 9).then_some(RowHint::Ctrl(index + 1));
+            assert_eq!(tile.hint, expected, "content tile {index}");
+        }
+        assert_eq!(model.rows.last().expect("dots").hint, None);
+    }
+
+    #[test]
+    fn the_band_sizes_wide_and_short() {
+        // The wide-short aspect: width is the tile grid, height one tile
+        // cell plus the card padding — wider than tall at every budget
+        // the setting accepts, and the `…` tile never widens it.
+        let whole = build_band(&band_snapshot(3), Handle(1), 3, None).expect("builds");
+        assert_eq!(
+            whole.width,
+            2 * TILE_PAD_X + 3 * TILE_W + 2 * TILE_GAP,
+            "three tiles plus gaps and padding"
+        );
+        assert_eq!(whole.height, band_card_height());
+        let truncated = build_band(&band_snapshot(9), Handle(1), 3, None).expect("builds");
+        assert_eq!(
+            truncated.width, whole.width,
+            "the dots tile spends a content tile, never the card's width"
+        );
+        for tiles in COLUMNS_MIN..=COLUMNS_MAX {
+            let model = build_band(&band_snapshot(tiles as u64 + 2), Handle(1), tiles, None)
+                .expect("builds");
+            assert!(
+                model.width > model.height,
+                "tiles {tiles}: a band reads wide, not tall"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_columns_fit_a_fraction_of_the_output_min_three() {
+        // Auto: floor of two thirds of the invoking output's logical
+        // width over the tile pitch, floored at three — pinned against
+        // synthetic outputs, uncapped above (only pinned values cap at
+        // twelve, and the parser enforces that).
+        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 1920), 8);
+        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 1366), 5);
+        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 2560), 10);
+        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 3840), 16);
+        // Tiny and unknown-width outputs clamp to the floor.
+        for width in [0, 1, 300, 480] {
+            assert_eq!(
+                resolved_tiles(ColumnsSetting::Auto, width),
+                COLUMNS_MIN,
+                "width {width}: never fewer than three tiles"
+            );
+        }
+        // Pinned is the budget verbatim.
+        assert_eq!(resolved_tiles(ColumnsSetting::Pinned(3), 1920), 3);
+        assert_eq!(resolved_tiles(ColumnsSetting::Pinned(12), 640), 12);
+    }
+
+    #[test]
+    fn cell_at_maps_each_tile_cell_to_its_index() {
+        // The pointer's horizontal contract: a point in tile N's cell
+        // addresses tile N — device pixels in, model logical out, at
+        // both render scales. Gap seams, card padding, and off-card
+        // points are `None`.
+        let snap = band_snapshot(5);
+        let model = build_band(&snap, Handle(1), 4, None).expect("builds");
+        for scale in [1, 2] {
+            let center_y = model.height as f64 * scale as f64 / 2.0;
+            for index in 0..4u32 {
+                let left = TILE_PAD_X + index * (TILE_W + TILE_GAP);
+                let center_x = (left + TILE_W / 2) as f64 * scale as f64;
+                assert_eq!(
+                    model.cell_at(center_x, center_y, scale),
+                    Some(index as usize),
+                    "scale {scale}: tile {index}'s cell center"
+                );
+            }
+            // The gap seam between tiles 0 and 1 addresses nothing.
+            let seam_x = (TILE_PAD_X + TILE_W + TILE_GAP / 2) as f64 * scale as f64;
+            assert_eq!(model.cell_at(seam_x, center_y, scale), None, "gap seam");
+            // Card padding before the first tile and past the last.
+            let before = (TILE_PAD_X / 2) as f64 * scale as f64;
+            assert_eq!(model.cell_at(before, center_y, scale), None, "left padding");
+            let past = model.width as f64 * scale as f64 - 1.0;
+            assert_eq!(model.cell_at(past, center_y, scale), None, "right padding");
+            // Off the card entirely, both axes.
+            assert_eq!(model.cell_at(-1.0, center_y, scale), None, "off left");
+            assert_eq!(
+                model.cell_at(1.0, model.height as f64 * scale as f64 + 1.0, scale),
+                None,
+                "off bottom"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cell_click_resolves_the_window_the_tile_showed() {
+        // The event-time twin (II1's shape): the same screen point —
+        // tile 1's cell center — resolves the window *that model* was
+        // showing, so a click captured against one card never activates
+        // another card's window at the shifted list underneath. Run red
+        // against a row-addressed resolution: tile 1 of B is W9, not
+        // the W2 the user clicked on A.
+        let a = build_band(&band_snapshot(4), Handle(1), 4, None).expect("model A");
+        let point_x = (TILE_PAD_X + (TILE_W + TILE_GAP) + TILE_W / 2) as f64; // tile 1's center, 1×
+        let point_y = a.height as f64 / 2.0;
+        let cell = a.cell_at(point_x, point_y, 1).expect("a tile");
+        assert_eq!(a.rows[cell].handle, Some(Handle(2)), "A's tile 1 is W2");
+
+        // B: W9 activated, the same windows shifted one right.
+        let mut shifted = band_snapshot(4).toplevels;
+        shifted.insert(
+            0,
+            toplevel(9, "W9", "app.9", &[1], switcher::State::ACTIVATED, 50),
+        );
+        let b = build_band(&snapshot(shifted, Some(1)), Handle(9), 4, None).expect("model B");
+        // B's own tile 0 is its new front window W9; the same point —
+        // tile 1 — now addresses W1. A click captured on A resolves
+        // W2 whatever B shows by drain time; a click on B resolves W1.
+        assert_eq!(b.rows[0].handle, Some(Handle(9)), "B leads with W9");
+        let cell_b = b.cell_at(point_x, point_y, 1).expect("a tile");
+        assert_eq!(
+            b.rows[cell_b].handle,
+            Some(Handle(1)),
+            "B's tile 1 is its own window at that point, never A's"
+        );
+    }
+
+    #[test]
+    fn horizontal_render_paints_fill_icon_title_and_dots() {
+        // The paint contract on known pixels: the selected tile's cell
+        // carries the band fill at its center, an unselected tile's
+        // center stays the card background, and the `…` tile never
+        // paints a band.
+        let snap = band_snapshot(6);
+        let model = build_band(&snap, Handle(2), 4, None).expect("builds");
+        let scale = 2u32;
+        let lw = model.width;
+        let lh = model.height;
+        let mut canvas = vec![0u8; (lw * scale * lh * scale * 4) as usize];
+        render(
+            &model,
+            &mut canvas,
+            lw * scale,
+            lh * scale,
+            lw * scale * 4,
+            scale,
+            &Palette::dark(),
+            TextBackend::Bitmap,
+        );
+        let px = |lx: u32, ly: u32| {
+            let x = lx * scale;
+            let y = ly * scale;
+            let index = (y * lw * scale + x) as usize * 4;
+            u32::from_le_bytes(canvas[index..index + 4].try_into().expect("pixel"))
+        };
+        let tile_center_x = |index: u32| TILE_PAD_X + index * (TILE_W + TILE_GAP) + TILE_W / 2;
+        // Interior of the selected tile (tile 1): the band fill — the
+        // exact blended byte, like the vertical band pin.
+        let band = Palette::dark().selected_bg;
+        assert_eq!(px(tile_center_x(1), lh / 2), band, "selected tile fill");
+        // An unselected tile's open center: the card background.
+        let background = Palette::dark().background;
+        assert_eq!(
+            px(tile_center_x(2), lh / 2),
+            background,
+            "unselected tile stays the card"
+        );
+        // The dots tile (index 4): card background, never a band.
+        assert_eq!(
+            px(tile_center_x(4), lh / 2),
+            background,
+            "the continuation tile never paints a band"
+        );
+    }
+
     // --- list-viewport: the windowed card (LV2) --------------------------
 
     /// A `count`-window snapshot on one workspace, MRU-ordered so handle
@@ -4905,6 +5631,7 @@ mod tests {
             height: 2 * PAD_Y + rows as u32 * ROW_H + (rows as u32 - 1) * ROW_GAP,
             viewport: visible_window(rows, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
+            horizontal: false,
         }
     }
 
@@ -5404,6 +6131,7 @@ mod tests {
             height: 2 * PAD_Y + ROW_H,
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
+            horizontal: false,
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -5440,6 +6168,7 @@ mod tests {
             height: 2 * PAD_Y + ROW_H,
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
+            horizontal: false,
         };
         let (canvas, stride) = rendered(&model, 2);
         let glyph_x = (PAD_X + (ICON - GLYPH_W * GLYPH_SCALE) / 2) * 2;
@@ -5711,6 +6440,7 @@ mod tests {
                 height: 2 * PAD_Y + 5 * ROW_H + 4 * ROW_GAP,
                 viewport: visible_window(5, 0, DEFAULT_ROWS, None),
                 profile: StyleProfile::default(),
+                horizontal: false,
             };
             let (canvas, stride) = rendered(&model, 2);
             // A probe column inside the band's horizontal extent, in the
@@ -5771,6 +6501,7 @@ mod tests {
             // nine); render is row-count agnostic and never reads the viewport.
             viewport: visible_window(12, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
+            horizontal: false,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -5802,6 +6533,7 @@ mod tests {
             height: 2 * PAD_Y + ROW_H,
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
+            horizontal: false,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -5847,6 +6579,7 @@ mod tests {
             height: 2 * PAD_Y + 2 * ROW_H + ROW_GAP,
             viewport: visible_window(2, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
+            horizontal: false,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -5884,6 +6617,7 @@ mod tests {
             height: 2 * PAD_Y + ROW_H,
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
+            horizontal: false,
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -5937,6 +6671,7 @@ mod tests {
             // card shape); render never reads the viewport.
             viewport: visible_window(10, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
+            horizontal: false,
         };
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4;

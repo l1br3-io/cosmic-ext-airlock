@@ -29,7 +29,13 @@
 //! daemon's shaping/rasterization path.
 //!
 //! ```sh
-//! cargo run --example overlay-preview -- preview.png [--scale 2] [--light] [--geometry] [--system-font res/test-fonts]
+//! `--horizontal` renders the horizontal band family instead
+//! (the `card-layout` module's CL4 sheet input): the flat band at its
+//! auto budget and both pinned extremes, the trailing `…` tile, and a
+//! selected mid-band tile — candidate tokens (pitch, icon, card
+//! height, badge placement) judged on this image.
+//!
+//! cargo run --example overlay-preview -- preview.png [--scale 2] [--light] [--geometry] [--horizontal] [--system-font res/test-fonts]
 //! ```
 //!
 //! Icons come from the real pipeline (`src/icons.rs`) against the host's
@@ -79,6 +85,7 @@ fn main() {
     let mut scale = 2;
     let mut light = false;
     let mut geometry = false;
+    let mut horizontal = false;
     let mut system_font: Option<std::path::PathBuf> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -91,6 +98,7 @@ fn main() {
             }
             "--light" => light = true,
             "--geometry" => geometry = true,
+            "--horizontal" => horizontal = true,
             "--system-font" => {
                 system_font = args.next().map(std::path::PathBuf::from);
                 if system_font.is_none() {
@@ -100,7 +108,7 @@ fn main() {
             }
             other => {
                 eprintln!(
-                    "unknown argument {other}; expected --scale N, --light, --geometry, or --system-font <dir>"
+                    "unknown argument {other}; expected --scale N, --light, --geometry, --horizontal, or --system-font <dir>"
                 );
                 std::process::exit(2);
             }
@@ -122,15 +130,48 @@ fn main() {
     };
     let dark_icons = ui_icons(scale, &ui::Palette::dark());
     let light_icons = ui_icons(scale, &ui::Palette::light());
+    if horizontal {
+        let icons = if base.is_dark {
+            &dark_icons
+        } else {
+            &light_icons
+        };
+        let band_dark = band_icons(scale, &ui::Palette::dark());
+        let band_light = band_icons(scale, &ui::Palette::light());
+        let mut sheet = horizontal_scenarios(base, icons);
+        // Both polarities judge the band: the same tiles in the other
+        // palette's tint, the band scenarios' arrangement.
+        let other = if base.is_dark {
+            ui::Palette::light()
+        } else {
+            ui::Palette::dark()
+        };
+        let other_icons = if other.is_dark {
+            &band_dark
+        } else {
+            &band_light
+        };
+        sheet.extend(horizontal_scenarios(other, other_icons));
+        write_sheet(&path, &sheet, scale, &mut text_system);
+        return;
+    }
     if geometry {
         let cells = geometry_cells(&dark_icons, &light_icons);
         write_grid(&path, &cells, scale, &mut text_system);
         return;
     }
     let scenarios = scenarios(base, &dark_icons, &light_icons);
+    write_sheet(&path, &scenarios, scale, &mut text_system);
+}
 
-    // Sheet: every scenario twice (dark backdrop, light backdrop), stacked
-    // vertically with gutters.
+/// The plain sheet writer, shared by every family: every scenario twice
+/// (dark backdrop, light backdrop), stacked vertically with gutters.
+fn write_sheet(
+    path: &std::path::Path,
+    scenarios: &[Scenario],
+    scale: u32,
+    text_system: &mut Option<TextSystem>,
+) {
     let gutter = 32 * scale;
     let backdrop_w = scenarios
         .iter()
@@ -152,7 +193,7 @@ fn main() {
         pixel.copy_from_slice(&[26, 26, 28, 255]);
     }
     let mut y = gutter;
-    for scenario in &scenarios {
+    for scenario in scenarios {
         let model = &scenario.model;
         let mut card = vec![0u8; (model.width * model.height * 4 * scale * scale) as usize];
         let (cw, ch) = (model.width * scale, model.height * scale);
@@ -164,7 +205,7 @@ fn main() {
             cw * 4,
             scale,
             &scenario.palette,
-            text_backend(&mut text_system),
+            text_backend(text_system),
         );
         for (dx, backdrop) in [(0, [46u8, 46, 50]), (backdrop_w as i64, [235, 235, 235])] {
             composite(
@@ -179,7 +220,7 @@ fn main() {
         y += model.height * scale + gutter;
     }
 
-    write_png(&path, width, height, &sheet).expect("write preview png");
+    write_png(path, width, height, &sheet).expect("write preview png");
     println!("wrote {} ({width}x{height}, scale {scale})", path.display());
 }
 
@@ -368,18 +409,109 @@ fn synthetic_icon(index: usize, side: u32) -> Rc<IconBitmap> {
 /// COSMIC/Pop icons the daemon will show.
 fn ui_icons(scale: u32, palette: &ui::Palette) -> Vec<Option<Rc<IconBitmap>>> {
     let mut cache = cosmic_ext_airlock::icons::Cache::new();
-    cache.prepare(APP_IDS.iter().copied(), scale, palette);
+    cache.prepare(APP_IDS.iter().copied(), ui::ICON, scale, palette);
     APP_IDS
         .iter()
         .enumerate()
         .map(|(index, id)| {
             cache
-                .bitmap(id, scale, palette)
-                .or_else(|| cache.bitmap("application-x-executable", scale, palette))
-                .or_else(|| cache.bitmap("firefox", scale, palette))
+                .bitmap(id, ui::ICON, scale, palette)
+                .or_else(|| cache.bitmap("application-x-executable", ui::ICON, scale, palette))
+                .or_else(|| cache.bitmap("firefox", ui::ICON, scale, palette))
                 .map_or_else(|| Some(synthetic_icon(index, ui::ICON * scale)), Some)
         })
         .collect()
+}
+
+/// [`ui_icons`], at the tile's own side — the band's 48-px icons, the
+/// row family's 32-px rule one axis over.
+fn band_icons(scale: u32, palette: &ui::Palette) -> Vec<Option<Rc<IconBitmap>>> {
+    let mut cache = cosmic_ext_airlock::icons::Cache::new();
+    cache.prepare(APP_IDS.iter().copied(), ui::TILE_ICON, scale, palette);
+    APP_IDS
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            cache
+                .bitmap(id, ui::TILE_ICON, scale, palette)
+                .or_else(|| cache.bitmap("application-x-executable", ui::TILE_ICON, scale, palette))
+                .or_else(|| cache.bitmap("firefox", ui::TILE_ICON, scale, palette))
+                .map_or_else(|| Some(synthetic_icon(index, ui::TILE_ICON * scale)), Some)
+        })
+        .collect()
+}
+
+/// The horizontal band family (card-layout): the flat band as
+/// `overlay_model_horizontal` composes it — `band_window` over the
+/// selection, the trailing `…` tile, the tile grid's width — at the
+/// auto budget and both pinned extremes. Candidate tokens judged on
+/// the sheet; CL4 freezes them.
+fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Vec<Scenario> {
+    let titles: Vec<String> = (0..16)
+        .map(|index| format!("Window {index} — the band case"))
+        .collect();
+    let band_row =
+        |title: &str, icon: Option<Rc<IconBitmap>>, selected: bool, position: usize| -> RowModel {
+            RowModel {
+                // The tile's own clamp: the band's width is the tile grid,
+                // never the title's — the daemon composes the same budget.
+                title: ui::clamp_tile_title(title),
+                icon,
+                selected,
+                handle: Some(Handle::default()),
+                hint: (position < 9).then_some(ui::RowHint::Ctrl(position + 1)),
+                ..RowModel::default()
+            }
+        };
+    let band = |count: usize, sel: usize, tiles: usize| -> OverlayModel {
+        let viewport = ui::band_window(count, sel, tiles, None);
+        let mut rows = Vec::with_capacity(viewport.content + viewport.bottom as usize);
+        for position in 0..viewport.content {
+            let index = viewport.start + position;
+            rows.push(band_row(
+                &titles[index],
+                icons[index % icons.len()].clone(),
+                index == sel,
+                position,
+            ));
+        }
+        if viewport.bottom {
+            rows.push(RowModel {
+                title: String::new(),
+                icon: None,
+                selected: false,
+                handle: None,
+                ..RowModel::default()
+            });
+        }
+        let slots = rows.len() as u32;
+        OverlayModel {
+            rows,
+            width: ui::band_width(slots),
+            height: ui::band_card_height(),
+            viewport,
+            profile: ui::StyleProfile::default(),
+            horizontal: true,
+        }
+    };
+    let auto = ui::resolved_tiles(ui::ColumnsSetting::Auto, 1920) as usize;
+    [
+        // A short list: whole, no dots, the selection mid-band.
+        band(3, 1, auto),
+        // The working band at auto: hints to nine, dots past it.
+        band(16, 1, auto),
+        // A mid-band selection after a sweep: the follow window.
+        band(16, 9, auto),
+        // The pinned extremes: three tiles and twelve.
+        band(16, 0, ui::COLUMNS_MIN),
+        band(16, 0, ui::COLUMNS_MAX),
+    ]
+    .into_iter()
+    .map(|model| Scenario {
+        model,
+        palette: base,
+    })
+    .collect()
 }
 
 fn row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
@@ -458,6 +590,7 @@ fn windowed(
         height: ui::card_height_rhythm(profile.rhythm, shown),
         viewport,
         profile,
+        horizontal: false,
     }
 }
 
