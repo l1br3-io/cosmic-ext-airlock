@@ -227,6 +227,27 @@ pub const ROWS_MAX: usize = 10;
 /// budget.
 pub const ROWS_SLACK: usize = 2;
 
+/// The panel the card must always fit: 720 logical px (1440p@2x, any
+/// 1× panel) — `overlay-density`'s headroom rule, unchanged. Since the
+/// density follow the guarantee is by construction: the effective rows
+/// budget clamps to what fits (see [`effective_rows`]).
+pub const CARD_FIT_PX: u32 = 720;
+
+/// The effective `rows` budget at one density: the largest budget at
+/// or under `rows` (never past [`ROWS_MAX`]) whose worst-case card —
+/// budget + [`ROWS_SLACK`] slots — fits [`CARD_FIT_PX`]. Spacious is
+/// the binding density (68-px slot pitch: 8 + slack = 716 fits, 9 +
+/// slack = 784 does not); Standard and Compact never clamp. The
+/// setting keeps its value — this is the fit, and the daemon's one
+/// diagnostic names density, setting, and clamp when it binds.
+pub const fn effective_rows(density: Density, rows: usize) -> usize {
+    let mut budget = if rows > ROWS_MAX { ROWS_MAX } else { rows };
+    while card_height_rhythm(rhythm(density), (budget + ROWS_SLACK) as u32) > CARD_FIT_PX {
+        budget -= 1;
+    }
+    budget
+}
+
 /// Card height in logical px for `slots` rows: the padding top and
 /// bottom, every row, and a gap between rows only. The one place the
 /// formula lives — the compile-time pins and [`overlay_model`] agree by
@@ -271,7 +292,10 @@ pub struct Rhythm {
     pub row_h: u32,
 }
 
-/// The rhythm ladder. Standard is today's rhythm, byte-identical.
+/// The rhythm ladder. Standard's row *is* the constants block above —
+/// the documented default the follow re-derives — pinned against its
+/// literals by the ladder table test and against the pre-follow render
+/// by the digest test. Compact and Spacious are the table's own values.
 pub const fn rhythm(density: Density) -> Rhythm {
     match density {
         Density::Compact => Rhythm {
@@ -281,10 +305,10 @@ pub const fn rhythm(density: Density) -> Rhythm {
             row_h: 40,
         },
         Density::Standard => Rhythm {
-            row_pad_y: 8,
-            row_gap: 8,
-            pad_y: 16,
-            row_h: 48,
+            row_pad_y: ROW_PAD_Y,
+            row_gap: ROW_GAP,
+            pad_y: PAD_Y,
+            row_h: ROW_H,
         },
         Density::Spacious => Rhythm {
             row_pad_y: 12,
@@ -302,15 +326,21 @@ pub const fn rhythm(density: Density) -> Rhythm {
 /// and band round together; Round is today's pin, unchanged.
 pub const fn style_radius(style: Style) -> u32 {
     match style {
-        Style::Round => 12,
+        // [`RADIUS`] itself — the documented default rung.
+        Style::Round => RADIUS,
         Style::SlightlyRound => 8,
         Style::Square => 2,
     }
 }
 
-/// The band rounds with the card, never past its own pin.
+/// The band rounds with the card, never past its own pin
+/// ([`BAND_RADIUS`]).
 pub const fn band_radius(radius: u32) -> u32 {
-    if radius > 8 { 8 } else { radius }
+    if radius > BAND_RADIUS {
+        BAND_RADIUS
+    } else {
+        radius
+    }
 }
 
 /// The card's resolved shape: the style's radius and the density's
@@ -669,17 +699,19 @@ const _: () = {
             assert!(rhythm.pad_y.is_multiple_of(4));
             // The band's own ends round within its height.
             assert!(2 * profile.band_radius <= rhythm.row_h);
+            // The card fits the panel at this density's clamped ceiling
+            // (the fit is by construction — [`effective_rows`] — these
+            // pins hold it at the worst case; Spacious binds at a
+            // budget of 8, Standard's 696 and Compact's 540 never do).
+            let budget = effective_rows(densities[di], ROWS_MAX);
+            assert!(card_height_rhythm(rhythm, (budget + ROWS_SLACK) as u32) <= CARD_FIT_PX);
             di += 1;
         }
         si += 1;
     }
-    // The card at the `rows` setting's worst case — `rows + ROWS_SLACK`
-    // slots — fits a 720-logical screen (1440p@2x, any 1× panel): 584 at
-    // the default, 696 at the ceiling. The 11-04 540 pin moved with the
-    // 11-07 re-pin (spec `overlay-density`, OQ 2); Standard's row here —
-    // GE3 moves this to the clamped worst case per density.
-    assert!(card_height((DEFAULT_ROWS + ROWS_SLACK) as u32) <= 720);
-    assert!(card_height((ROWS_MAX + ROWS_SLACK) as u32) <= 720);
+    // The default-budget worst case (584, Standard's row) — the
+    // overlay-density pin, unchanged.
+    assert!(card_height((DEFAULT_ROWS + ROWS_SLACK) as u32) <= CARD_FIT_PX);
 };
 
 /// Placeholder shown when a window has neither title nor app_id.
@@ -814,6 +846,11 @@ pub struct OverlayModel {
     /// next rebuild as [`visible_window`]'s `prev`, keeping the sticky
     /// rule moving.
     pub viewport: Viewport,
+    /// The shape these rows rendered under — the style/density profile
+    /// frozen at open. The renderer and the pointer's `row_at` read it
+    /// back, so what a click addresses is always the geometry the user
+    /// saw, whatever the desktop did mid-gesture.
+    pub profile: StyleProfile,
 }
 
 impl OverlayModel {
@@ -831,13 +868,15 @@ impl OverlayModel {
         if !in_card {
             return None;
         }
-        let y_px = y / scale as f64 - PAD_Y as f64;
-        let pitch = (ROW_H + ROW_GAP) as f64;
+        // The rhythm the model rendered under, not the default's.
+        let rhythm = self.profile.rhythm;
+        let y_px = y / scale as f64 - rhythm.pad_y as f64;
+        let pitch = (rhythm.row_h + rhythm.row_gap) as f64;
         if y_px < 0.0 || y_px >= self.rows.len() as f64 * pitch {
             return None; // card padding above the first row / below the last
         }
         let row = (y_px / pitch) as usize;
-        (y_px - row as f64 * pitch < ROW_H as f64).then_some(row) // gap seam
+        (y_px - row as f64 * pitch < rhythm.row_h as f64).then_some(row) // gap seam
     }
 }
 
@@ -924,6 +963,9 @@ pub fn visible_window(len: usize, sel: usize, rows: usize, prev: Option<Viewport
 /// model reports the window it computed for the session to carry next.
 /// Returns `None` when there is nothing to show: no active workspace,
 /// no eligible windows, or a selection that is not in the eligible set.
+// Eight render inputs now — the shape profile joined the seam beside
+// the windowing (the geometry follow), past clippy's seven.
+#[expect(clippy::too_many_arguments)]
 pub fn overlay_model(
     snapshot: &Snapshot,
     selected: Handle,
@@ -931,6 +973,7 @@ pub fn overlay_model(
     icons: &crate::icons::Cache,
     scale: u32,
     palette: &Palette,
+    profile: StyleProfile,
     windowing: Windowing,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
@@ -958,7 +1001,7 @@ pub fn overlay_model(
             expanded: false,
         });
     }
-    finish_model(rows, sel, windowing)
+    finish_model(rows, sel, windowing, profile)
 }
 
 /// Builds the grouped overlay contents: the session's frozen tree cut to
@@ -979,9 +1022,9 @@ pub fn overlay_model(
 /// parent badge, so the card is stable under stepping and breathes
 /// only when the user expands or collapses. Returns `None` when
 /// nothing is visible or the selection is not on a visible row.
-// Nine render inputs, each a distinct concern (tree, visible window,
-// selection, cycle scope, snapshot, icons, scale, colors, windowing) —
-// the flat builder's seam, one level deeper.
+// Ten render inputs, each a distinct concern (tree, visible window,
+// selection, cycle scope, snapshot, icons, scale, colors, shape,
+// windowing) — the flat builder's seam, one level deeper.
 #[expect(clippy::too_many_arguments)]
 pub fn overlay_model_grouped(
     tree: &switcher::Grouping,
@@ -992,6 +1035,7 @@ pub fn overlay_model_grouped(
     icons: &crate::icons::Cache,
     scale: u32,
     palette: &Palette,
+    profile: StyleProfile,
     windowing: Windowing,
 ) -> Option<OverlayModel> {
     let sel = visible.iter().position(|&index| index == selected)?;
@@ -1079,12 +1123,19 @@ pub fn overlay_model_grouped(
             }
         }
     }
-    finish_model(rows, sel, windowing)
+    finish_model(rows, sel, windowing, profile)
 }
 
 /// The builders' shared tail: widest-row sizing, the windowing rule, and
-/// the continuation rows at truncated edges. `sel` indexes `rows`.
-fn finish_model(rows: Vec<RowModel>, sel: usize, windowing: Windowing) -> Option<OverlayModel> {
+/// the continuation rows at truncated edges. `sel` indexes `rows`; the
+/// profile sizes the card's height and rides onto the model for the
+/// renderer and the pointer to read back.
+fn finish_model(
+    rows: Vec<RowModel>,
+    sel: usize,
+    windowing: Windowing,
+    profile: StyleProfile,
+) -> Option<OverlayModel> {
     let cols = rows
         .iter()
         .map(|row| {
@@ -1110,9 +1161,11 @@ fn finish_model(rows: Vec<RowModel>, sel: usize, windowing: Windowing) -> Option
         rows: windowed,
         width: 2 * PAD_X + ICON + ICON_GAP + cols * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
         // The row gap lives between rows only; the bottom edge mirrors
-        // the top.
-        height: card_height(count),
+        // the top. Height follows the profile's rhythm — width never
+        // does (density has no width analogue).
+        height: card_height_rhythm(profile.rhythm, count),
         viewport,
+        profile,
     })
 }
 
@@ -1166,24 +1219,32 @@ pub fn render(
     let scale = scale.max(1);
     let lw = width / scale;
     let lh = height / scale;
+    // The shape the model was built under — every radius and rhythm
+    // below reads the profile, so the render always matches the
+    // geometry `row_at` addresses (the constants are only the default
+    // row).
+    let profile = model.profile;
+    let radius = profile.radius;
+    let band_radius = profile.band_radius;
+    let rhythm = profile.rhythm;
     // Coverage masks on the logical grid, computed once per render:
     // the card shape and the same shape eroded by the border width
     // (their difference is the border ring).
     let mut outer = vec![0u8; (lw * lh) as usize];
     for ly in 0..lh {
         for lx in 0..lw {
-            outer[(ly * lw + lx) as usize] = shape_cov(lx, ly, lw, lh, RADIUS, 0);
+            outer[(ly * lw + lx) as usize] = shape_cov(lx, ly, lw, lh, radius, 0);
         }
     }
     // The eroded mask is only read near the card edges (the border
     // pass), so computing the interior is wasted work at Tab speed.
     let mut inner = vec![0u8; (lw * lh) as usize];
-    let reach = RADIUS + BORDER;
+    let reach = radius + BORDER;
     for ly in 0..lh {
         let spans = edge_spans(ly, lh, lw, reach);
         for (x0, x1) in spans {
             for lx in x0..x1 {
-                inner[(ly * lw + lx) as usize] = shape_cov(lx, ly, lw, lh, RADIUS, BORDER);
+                inner[(ly * lw + lx) as usize] = shape_cov(lx, ly, lw, lh, radius, BORDER);
             }
         }
     }
@@ -1205,7 +1266,7 @@ pub fn render(
         }
     }
     for (index, row) in model.rows.iter().enumerate() {
-        let top = PAD_Y + index as u32 * (ROW_H + ROW_GAP);
+        let top = rhythm.pad_y + index as u32 * (rhythm.row_h + rhythm.row_gap);
         // Continuation row: the `…` glyph card-centered on the titles'
         // own line, in the muted derivation — the hint color, quieter
         // than any title and legible on both card fills and both
@@ -1222,7 +1283,7 @@ pub fn render(
         // backdrops at even perceived weight.
         if row.handle.is_none() {
             let dots_x = lw.saturating_sub(TEXT_W) / 2;
-            let dots_y = top + (ROW_H - TEXT_H) / 2;
+            let dots_y = top + (rhythm.row_h - TEXT_H) / 2;
             draw_glyph(
                 canvas,
                 stride,
@@ -1240,16 +1301,23 @@ pub fn render(
             // The ramp interpolates toward the band fill between two
             // painted fills — full coverage is the exact band color, zero
             // coverage leaves the card untouched, and because both are
-            // near-opaque the arc never thins the card. `PAD_Y ≥ RADIUS`
-            // holds the band clear of the card's corner arcs, so the
-            // card mask doesn't ride along.
+            // near-opaque the arc never thins the card. The
+            // profile's `pad_y + SELECT_INSET ≥ radius` holds the band
+            // clear of the card's corner arcs, so the card mask
+            // doesn't ride along.
             let band_w = lw.saturating_sub(2 * SELECT_INSET);
-            for ly in top..top + ROW_H {
+            for ly in top..top + rhythm.row_h {
                 for dy in 0..scale {
                     let y = ly * scale + dy;
                     for lx in SELECT_INSET..lw.saturating_sub(SELECT_INSET) {
-                        let cov =
-                            shape_cov(lx - SELECT_INSET, ly - top, band_w, ROW_H, BAND_RADIUS, 0);
+                        let cov = shape_cov(
+                            lx - SELECT_INSET,
+                            ly - top,
+                            band_w,
+                            rhythm.row_h,
+                            band_radius,
+                            0,
+                        );
                         if cov == 0 {
                             continue;
                         }
@@ -1274,7 +1342,7 @@ pub fn render(
         // together, one TREE_INDENT right of the top-level column.
         let indent = (row.kind == RowKind::Child) as u32 * TREE_INDENT;
         let cell_x = PAD_X + indent;
-        let cell_y = top + (ROW_H - ICON) / 2;
+        let cell_y = top + (rhythm.row_h - ICON) / 2;
         match row.icon.as_deref() {
             Some(bitmap) if bitmap.side == ICON * scale => {
                 blit_bitmap(canvas, stride, bitmap, cell_x * scale, cell_y * scale);
@@ -1296,7 +1364,7 @@ pub fn render(
         // title band's right edge — the hint's territory is its own, so
         // even a max-cols title can never touch a hint (the model sizes
         // for `cols`; this guard is the defense in depth).
-        let text_y = top + (ROW_H - TEXT_H) / 2;
+        let text_y = top + (rhythm.row_h - TEXT_H) / 2;
         let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * TEXT_W);
         let mut lx = cell_x + ICON + ICON_GAP;
         for ch in row.title.chars() {
@@ -1331,7 +1399,7 @@ pub fn render(
             let digits: Vec<char> = row.count.to_string().chars().take(2).collect();
             let chip_w = digits.len() as u32 * TEXT_W + 2 * BADGE_PAD_X;
             let chip_x = lx + BADGE_GAP;
-            let chip_y = top + (ROW_H - BADGE_H) / 2;
+            let chip_y = top + (rhythm.row_h - BADGE_H) / 2;
             if chip_x + chip_w <= title_edge {
                 // The pill: exact rounded-rect coverage, the same
                 // sampler as the selection band and the card corners —
@@ -1391,7 +1459,7 @@ pub fn render(
             };
             let side = GLYPH_W * CHEVRON_SCALE;
             let chevron_x = title_edge + (HINT_GAP - side) / 2;
-            let chevron_y = top + (ROW_H - side) / 2;
+            let chevron_y = top + (rhythm.row_h - side) / 2;
             draw_glyph(
                 canvas,
                 stride,
@@ -1431,10 +1499,10 @@ pub fn render(
     // shape, so the stroke follows the rounded corners with the same
     // anti-aliasing. The difference-of-masks formulation could open gaps
     // where both masks quantize alike on an arc; this rule cannot.
-    // The ring lives only within RADIUS + BORDER of the card boundary —
+    // The ring lives only within radius + BORDER of the card boundary —
     // scanning the interior is wasted work at Tab speed.
     for ly in 0..lh {
-        for (x0, x1) in edge_spans(ly, lh, lw, RADIUS + BORDER) {
+        for (x0, x1) in edge_spans(ly, lh, lw, radius + BORDER) {
             for lx in x0..x1 {
                 let index = (ly * lw + lx) as usize;
                 if outer[index] == 0 || inner[index] == 255 {
@@ -2384,6 +2452,7 @@ mod tests {
             &no_icons(),
             2,
             &Palette::dark(),
+            StyleProfile::default(),
             Windowing {
                 rows: DEFAULT_ROWS,
                 prev: None,
@@ -2548,6 +2617,171 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- the density follow: clamp, model geometry, frozen profile (GE3) ---
+
+    #[test]
+    fn every_density_and_rows_budget_fits_the_panel() {
+        // The fit is guaranteed by construction (SC 4): the effective
+        // budget is the largest rows whose worst-case card —
+        // rows + ROWS_SLACK slots — fits the panel rule.
+        for density in [Density::Compact, Density::Standard, Density::Spacious] {
+            for rows in ROWS_MIN..=ROWS_MAX {
+                let effective = effective_rows(density, rows);
+                assert!(effective <= rows, "the clamp only lowers");
+                assert!(
+                    card_height_rhythm(rhythm(density), (effective + ROWS_SLACK) as u32)
+                        <= CARD_FIT_PX,
+                    "{density:?} × rows {rows}: the clamped card fits"
+                );
+            }
+        }
+        // Spacious is the binding density: its 68-px slot pitch clamps
+        // the ceiling to 8 (9 + slack = 11 slots = 784 px > 720; 8 +
+        // slack = 10 = 716 ≤ 720 — the plan's "rows ≤ 9 / 11 slots =
+        // 720" line mixed Standard's gap and pad into the Spacious
+        // card). Standard and Compact never clamp.
+        assert_eq!(effective_rows(Density::Spacious, ROWS_MAX), 8);
+        assert_eq!(effective_rows(Density::Spacious, 9), 8);
+        assert_eq!(effective_rows(Density::Spacious, 8), 8);
+        assert_eq!(effective_rows(Density::Standard, ROWS_MAX), ROWS_MAX);
+        assert_eq!(effective_rows(Density::Compact, ROWS_MAX), ROWS_MAX);
+        assert_eq!(
+            effective_rows(Density::Spacious, 5),
+            5,
+            "within the fit, the budget is the setting's own"
+        );
+    }
+
+    /// The golden-render scenario: fifteen varied windows at the default
+    /// budget — long enough to window (dots, hints, bands, border), the
+    /// digest pin's fixed inputs.
+    fn digest_snapshot() -> Snapshot {
+        fn entry(handle: u64, n: u64) -> switcher::Toplevel {
+            switcher::Toplevel {
+                handle: Handle(handle),
+                title: format!("Window {n}"),
+                app_id: format!("app.{n}"),
+                state: switcher::State::default(),
+                workspaces: [switcher::WorkspaceId(1)].into(),
+                last_activated: 100 - n,
+            }
+        }
+        Snapshot {
+            toplevels: (1..=15).map(|n| entry(n, n)).collect(),
+            workspaces: Default::default(),
+            active: Some(switcher::WorkspaceId(1)),
+        }
+    }
+
+    #[test]
+    fn the_default_profile_renders_the_pre_follow_canvas_bytes() {
+        // SC 1's pin, with teeth: the identical scenario rendered
+        // through the profile path at Round + Standard digests to the
+        // canvas captured at GE2 HEAD, when render still read the
+        // constants directly — the factory-default desktop renders
+        // byte-identically to every card shipped before the follow.
+        let model = overlay_model(
+            &digest_snapshot(),
+            Handle(1),
+            Scope::CurrentWorkspace,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            StyleProfile::default(),
+            Windowing {
+                rows: DEFAULT_ROWS,
+                prev: None,
+            },
+        )
+        .expect("eligible windows exist");
+        let (canvas, _) = rendered(&model, 2);
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for &b in &canvas {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(0x1000_0000_01b3);
+        }
+        assert_eq!(
+            hash, 5_825_434_634_195_970_501,
+            "the default-profile render must be the pre-follow bytes"
+        );
+    }
+
+    #[test]
+    fn model_height_follows_the_density_and_width_never_moves() {
+        // The same five windows at every density: the card breathes
+        // vertically per the rhythm table and never horizontally —
+        // density has no width analogue (the spec's pinned-X
+        // invariant).
+        let snap = long_snapshot(5);
+        let mut width = None;
+        for density in [Density::Compact, Density::Standard, Density::Spacious] {
+            let profile = StyleProfile::resolve(Style::Round, density);
+            let model = overlay_model(
+                &snap,
+                Handle(1),
+                Scope::CurrentWorkspace,
+                &no_icons(),
+                2,
+                &Palette::dark(),
+                profile,
+                Windowing {
+                    rows: DEFAULT_ROWS,
+                    prev: None,
+                },
+            )
+            .expect("eligible windows exist");
+            assert_eq!(model.profile, profile, "the model carries what it renders");
+            assert_eq!(model.height, card_height_rhythm(rhythm(density), 5));
+            match width {
+                None => width = Some(model.width),
+                Some(w) => assert_eq!(model.width, w, "{density:?}: width never moves"),
+            }
+        }
+    }
+
+    #[test]
+    fn row_at_reads_the_profile_rhythm() {
+        // Pointer rows address the geometry the model actually
+        // rendered: at Spacious the second row's band starts one
+        // spacious pitch below the first, and the gap seam between
+        // them selects nothing.
+        let snap = long_snapshot(5);
+        let profile = StyleProfile::resolve(Style::Round, Density::Spacious);
+        let model = overlay_model(
+            &snap,
+            Handle(1),
+            Scope::CurrentWorkspace,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            profile,
+            Windowing {
+                rows: DEFAULT_ROWS,
+                prev: None,
+            },
+        )
+        .expect("eligible windows exist");
+        let rhythm = rhythm(Density::Spacious);
+        assert_eq!(model.row_at(4.0, (rhythm.pad_y + 1) as f64, 1), Some(0));
+        let second = (rhythm.pad_y + rhythm.row_h + rhythm.row_gap + 1) as f64;
+        assert_eq!(model.row_at(4.0, second, 1), Some(1));
+        let seam = (rhythm.pad_y + rhythm.row_h + rhythm.row_gap / 2) as f64;
+        assert_eq!(
+            model.row_at(4.0, seam, 1),
+            None,
+            "the gap seam selects nothing at any rhythm"
+        );
+    }
+
+    #[test]
+    fn a_square_desktop_profile_rounds_at_two() {
+        // SC 2's today-value: this machine's Square desktop resolves
+        // the followed 2-px radius, card and band both.
+        let profile = StyleProfile::resolve(Style::Square, Density::Standard);
+        assert_eq!(profile.radius, 2);
+        assert_eq!(profile.band_radius, 2);
     }
 
     #[test]
@@ -3198,6 +3432,7 @@ mod tests {
             &no_icons(),
             2,
             &Palette::dark(),
+            StyleProfile::default(),
             Windowing { rows, prev },
         )
     }
@@ -3229,6 +3464,7 @@ mod tests {
             &no_icons(),
             2,
             &Palette::dark(),
+            StyleProfile::default(),
             Windowing {
                 rows: DEFAULT_ROWS,
                 prev: None,
@@ -3470,6 +3706,7 @@ mod tests {
             &no_icons(),
             2,
             &Palette::dark(),
+            StyleProfile::default(),
             Windowing {
                 rows: 3,
                 prev: None,
@@ -4001,6 +4238,7 @@ mod tests {
             width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + rows as u32 * ROW_H + (rows as u32 - 1) * ROW_GAP,
             viewport: visible_window(rows, 0, DEFAULT_ROWS, None),
+            profile: StyleProfile::default(),
         }
     }
 
@@ -4490,6 +4728,7 @@ mod tests {
             width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
+            profile: StyleProfile::default(),
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -4525,6 +4764,7 @@ mod tests {
             width: 2 * PAD_X + ICON + ICON_GAP + TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
+            profile: StyleProfile::default(),
         };
         let (canvas, stride) = rendered(&model, 2);
         let glyph_x = (PAD_X + (ICON - GLYPH_W * GLYPH_SCALE) / 2) * 2;
@@ -4786,6 +5026,7 @@ mod tests {
                 width: 2 * PAD_X + ICON + ICON_GAP + 8 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
                 height: 2 * PAD_Y + 5 * ROW_H + 4 * ROW_GAP,
                 viewport: visible_window(5, 0, DEFAULT_ROWS, None),
+                profile: StyleProfile::default(),
             };
             let (canvas, stride) = rendered(&model, 2);
             // A probe column inside the band's horizontal extent, in the
@@ -4845,6 +5086,7 @@ mod tests {
             // Hand-built past the cap on purpose (hint-silence rows past
             // nine); render is row-count agnostic and never reads the viewport.
             viewport: visible_window(12, 0, DEFAULT_ROWS, None),
+            profile: StyleProfile::default(),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -4875,6 +5117,7 @@ mod tests {
             width: 2 * PAD_X + ICON + ICON_GAP + 4 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
+            profile: StyleProfile::default(),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -4919,6 +5162,7 @@ mod tests {
             width: 2 * PAD_X + ICON + ICON_GAP + 6 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + 2 * ROW_H + ROW_GAP,
             viewport: visible_window(2, 0, DEFAULT_ROWS, None),
+            profile: StyleProfile::default(),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -4955,6 +5199,7 @@ mod tests {
             width: 2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
             height: 2 * PAD_Y + ROW_H,
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
+            profile: StyleProfile::default(),
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -5007,6 +5252,7 @@ mod tests {
             // Hand-built past the cap on purpose (render work, not a real
             // card shape); render never reads the viewport.
             viewport: visible_window(10, 0, DEFAULT_ROWS, None),
+            profile: StyleProfile::default(),
         };
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4;

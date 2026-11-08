@@ -268,7 +268,6 @@ fn f32_accent(group: &str) -> Option<u32> {
 /// The desktop's corner style, classified from COSMIC Appearance's
 /// style choice (`v2/corner_radii`). The ladder values it feeds live
 /// in `ui` — this type is the store's vocabulary, not the card's.
-#[cfg_attr(not(test), allow(dead_code))] // wired by the geometry ladders (GE2)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Style {
     /// COSMIC's factory default (`radius_m ≈ 16`) — and the miss
@@ -285,7 +284,6 @@ pub enum Style {
 /// The desktop's interface density from `CosmicTk/v1/interface_density`
 /// (record §3.3). The store's middle word is `Standard`; COSMIC
 /// Settings' UI labels it "Comfortable".
-#[cfg_attr(not(test), allow(dead_code))] // wired by the geometry ladders (GE2)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Density {
     Compact,
@@ -298,20 +296,16 @@ pub enum Density {
 
 /// The style store key, in the per-polarity theme store the accent
 /// also reads.
-#[cfg_attr(not(test), allow(dead_code))]
 const CORNER_RADII_KEY: &str = "corner_radii";
 
 /// The toolkit config id and the density key — a v1 store, two rungs
 /// (user, system), no middle (record §3.3).
-#[cfg_attr(not(test), allow(dead_code))]
 const TK_ID: &str = "com.system76.CosmicTk";
-#[cfg_attr(not(test), allow(dead_code))]
 const DENSITY_KEY: &str = "interface_density";
 
 /// The desktop's corner style, or `None` on a total ladder miss (with
 /// one aggregated diagnostic naming every rung) — the caller keeps the
 /// Round default.
-#[allow(dead_code)] // the daemon calls it from the geometry follow (GE3)
 pub fn style() -> Option<Style> {
     let (value, missed) = style_at(user_cosmic_root().as_deref(), Path::new(SYSTEM_COSMIC_ROOT));
     if value.is_none() {
@@ -325,7 +319,6 @@ pub fn style() -> Option<Style> {
 
 /// The style answer over explicit store roots — the testable core of
 /// [`style`], the accent ladder's shape.
-#[cfg_attr(not(test), allow(dead_code))]
 fn style_at(user_root: Option<&Path>, system_root: &Path) -> (Option<Style>, Vec<String>) {
     ladder_at(
         user_root,
@@ -344,7 +337,6 @@ fn style_at(user_root: Option<&Path>, system_root: &Path) -> (Option<Style>, Vec
 /// in every COSMIC preset; a non-uniform file classifies by its TL
 /// corner. Any miss (no `radius_m` line, wrong shape, non-finite) is
 /// `None`, never a panic.
-#[cfg_attr(not(test), allow(dead_code))]
 fn parse_style(text: &str) -> Option<Style> {
     let tuple = text
         .lines()
@@ -361,7 +353,6 @@ fn parse_style(text: &str) -> Option<Style> {
 /// The reverse classifier (record §5): ≈16 rounds fully, ≈8 slightly,
 /// anything else reads as squared — the bands keep a future preset
 /// value honest instead of misfiring to Round.
-#[cfg_attr(not(test), allow(dead_code))]
 fn style_of_radius_m(radius_m: f32) -> Style {
     if (14.0..=18.0).contains(&radius_m) {
         Style::Round
@@ -375,7 +366,6 @@ fn style_of_radius_m(radius_m: f32) -> Style {
 /// The desktop's interface density, or `None` on a total ladder miss
 /// (with one aggregated diagnostic) — the caller keeps the Standard
 /// default.
-#[allow(dead_code)] // the daemon calls it from the geometry follow (GE3)
 pub fn density() -> Option<Density> {
     let (value, missed) = density_at(user_cosmic_root().as_deref(), Path::new(SYSTEM_COSMIC_ROOT));
     if value.is_none() {
@@ -390,7 +380,6 @@ pub fn density() -> Option<Density> {
 /// The density answer over explicit store roots — the testable core of
 /// [`density`]. `CosmicTk` is a v1 store, so the ladder holds two
 /// rungs: user, system.
-#[cfg_attr(not(test), allow(dead_code))]
 fn density_at(user_root: Option<&Path>, system_root: &Path) -> (Option<Density>, Vec<String>) {
     ladder_at(user_root, system_root, TK_ID, 1, DENSITY_KEY, parse_density)
 }
@@ -398,7 +387,6 @@ fn density_at(user_root: Option<&Path>, system_root: &Path) -> (Option<Density>,
 /// The density from one file's text: the bare RON enum variant
 /// (`Compact` / `Standard` / `Spacious`, whitespace-padded as files
 /// are — record §3.3). Anything else is `None`, never a panic.
-#[cfg_attr(not(test), allow(dead_code))]
 fn parse_density(text: &str) -> Option<Density> {
     match text.trim() {
         "Compact" => Some(Density::Compact),

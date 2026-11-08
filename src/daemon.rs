@@ -96,9 +96,16 @@ pub struct Switch {
     /// mid-gesture never repaints under held Alt (the scope philosophy).
     palette: crate::ui::Palette,
     /// Windows the card keeps in view, resolved once at open from the
-    /// `rows` setting and frozen like the palette: a config edit landing
-    /// mid-gesture never re-windows the open session.
+    /// `rows` setting — clamped to the density's 720-px fit
+    /// (`ui::effective_rows`, one diagnostic when it binds) — and frozen
+    /// like the palette: a config edit landing mid-gesture never
+    /// re-windows the open session.
     rows: usize,
+    /// The card's shape — corner radius and row rhythm derived from the
+    /// desktop's style and density at open, frozen like the palette and
+    /// rows: a desktop settings flip landing mid-gesture never
+    /// re-rhythms the open card; the next press applies it.
+    profile: crate::ui::StyleProfile,
     /// Whether this session groups its list by app, resolved once at
     /// open from the `grouping` setting and frozen like the rows: a
     /// config edit landing mid-gesture never regroups the open session.
@@ -289,10 +296,10 @@ pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> 
 /// presses reuse the same frozen selection basis instead of rebuilding
 /// it: walking three windows takes three presses, unlike T4's
 /// per-press rebuild which toggled between the front two. `scope`,
-/// `palette`, `rows`, `grouping`, and `scoped_cycling` are consumed
-/// only when the session opens; an already-open session keeps the ones
-/// it was built with.
-// Nine open-path parameters: the frozen-at-open values ride
+/// `palette`, `profile`, `rows`, `grouping`, and `scoped_cycling` are
+/// consumed only when the session opens; an already-open session keeps
+/// the ones it was built with.
+// Ten open-path parameters: the frozen-at-open values ride
 // individually (see session_step's note).
 #[expect(clippy::too_many_arguments)]
 pub fn ring_step(
@@ -301,6 +308,7 @@ pub fn ring_step(
     direction: Direction,
     scope: Scope,
     palette: crate::ui::Palette,
+    profile: crate::ui::StyleProfile,
     rows: usize,
     grouping: bool,
     scoped_cycling: bool,
@@ -329,6 +337,7 @@ pub fn ring_step(
             app: None,
             palette,
             rows,
+            profile,
             grouping,
             scoped: scoped_cycling,
             tree,
@@ -369,10 +378,10 @@ pub fn ring_step(
 /// [`step_and_show`]), but the selection basis never rebuilds — the same
 /// freeze philosophy as the scope and the palette, both consumed only when
 /// the session opens.
-// Ten open-path parameters: the frozen-at-open values (palette, rows,
-// grouping, scoped cycling) each ride individually and the expansion
-// state is daemon memory the open may write — no bundle introduced
-// (the GR3 note).
+// Eleven open-path parameters: the frozen-at-open values (palette,
+// profile, rows, grouping, scoped cycling) each ride individually and
+// the expansion state is daemon memory the open may write — no bundle
+// introduced (the GR3 note).
 #[expect(clippy::too_many_arguments)]
 pub fn session_step(
     open: &mut Option<Switch>,
@@ -381,6 +390,7 @@ pub fn session_step(
     scope: Scope,
     same_app: bool,
     palette: crate::ui::Palette,
+    profile: crate::ui::StyleProfile,
     rows: usize,
     grouping: bool,
     scoped_cycling: bool,
@@ -402,6 +412,7 @@ pub fn session_step(
             direction,
             scope,
             palette,
+            profile,
             rows,
             grouping,
             scoped_cycling,
@@ -421,7 +432,7 @@ pub fn session_step(
     // windows with no tree whatever the `grouping` setting says —
     // and no cycle scope either.
     let selected = ring_step(
-        open, &view, direction, scope, palette, rows, false, false, expanded,
+        open, &view, direction, scope, palette, profile, rows, false, false, expanded,
     );
     // ring_step stored the session on the filtered ring; freeze the anchor
     // into it so later steps re-filter by it.
@@ -1233,10 +1244,11 @@ fn step_and_show(
     icons: &mut crate::icons::Cache,
     expanded: &mut std::collections::HashSet<String>,
 ) {
-    let (scope, palette, rows, grouping, scoped_cycling) = match open {
+    let (scope, palette, profile, rows, grouping, scoped_cycling) = match open {
         Some(open) => (
             open.scope,
             open.palette,
+            open.profile,
             open.rows,
             open.grouping,
             open.scoped,
@@ -1270,10 +1282,29 @@ fn step_and_show(
                 .then(|| crate::theme::accent_base(palette.is_dark))
                 .flatten();
             palette = palette.with_selection(settings.settings.selection, accent_base);
+            // The shape follows, per open like the palette: the
+            // desktop's style and density derive the card's radius and
+            // rhythm (a store miss is the Round + Standard default,
+            // with the reader's one aggregated diagnostic), and the
+            // rows budget clamps to what that rhythm fits — the fit is
+            // by construction, the diagnostic names density, setting,
+            // and clamp when it binds, and the setting keeps its value.
+            let style = crate::theme::style().unwrap_or_default();
+            let density = crate::theme::density().unwrap_or_default();
+            let profile = crate::ui::StyleProfile::resolve(style, density);
+            let configured_rows = settings.settings.rows;
+            let rows = crate::ui::effective_rows(density, configured_rows);
+            if rows < configured_rows {
+                eprintln!(
+                    "airlock daemon: {density:?} density: rows {configured_rows} clamps to {rows} to keep the card inside {} px; the setting keeps its value",
+                    crate::ui::CARD_FIT_PX
+                );
+            }
             (
                 resolve_scope(snapshot, &settings.settings),
                 palette,
-                settings.settings.rows,
+                profile,
+                rows,
                 settings.settings.grouping,
                 settings.settings.scoped_cycling,
             )
@@ -1286,6 +1317,7 @@ fn step_and_show(
         scope,
         step.same_app,
         palette,
+        profile,
         rows,
         grouping,
         scoped_cycling,
@@ -1349,6 +1381,7 @@ fn show_selection(
                 icons,
                 scale,
                 &palette,
+                current.profile,
                 windowing,
             ),
             // Flat and same-app sessions (the exemption): the flat
@@ -1367,6 +1400,7 @@ fn show_selection(
                         icons,
                         scale,
                         &palette,
+                        current.profile,
                         windowing,
                     )
                 })
@@ -1410,7 +1444,7 @@ fn fresh_snapshot(session: &mut wayland::Session, mru: &mut Mru) -> Snapshot {
 mod tests {
     use super::*;
     use crate::switcher::WorkspaceId;
-    use crate::ui::{DEFAULT_ROWS, GestureKey, OverlayModel, Palette, RowModel};
+    use crate::ui::{DEFAULT_ROWS, GestureKey, OverlayModel, Palette, RowModel, StyleProfile};
     use std::collections::HashSet;
 
     fn toplevel(handle: u64, workspaces: &[u64], state: State, last_activated: u64) -> Toplevel {
@@ -1571,6 +1605,7 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -1598,6 +1633,7 @@ mod tests {
                 Direction::Previous,
                 Scope::CurrentWorkspace,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -1625,6 +1661,7 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -1639,6 +1676,7 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -1653,6 +1691,7 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -1667,6 +1706,7 @@ mod tests {
                 Direction::Previous,
                 Scope::CurrentWorkspace,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -1697,6 +1737,7 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -1717,6 +1758,7 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -1731,6 +1773,7 @@ mod tests {
                 Direction::Previous,
                 Scope::CurrentWorkspace,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -1751,6 +1794,7 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -1768,6 +1812,7 @@ mod tests {
                 Direction::Next,
                 Scope::CurrentWorkspace,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -1793,6 +1838,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -1818,6 +1864,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -1853,6 +1900,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -1880,6 +1928,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -1913,6 +1962,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -1947,6 +1997,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -1980,6 +2031,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2005,6 +2057,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2043,6 +2096,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2074,6 +2128,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2104,6 +2159,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2141,6 +2197,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2199,6 +2256,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2255,6 +2313,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2338,6 +2397,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2403,6 +2463,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2461,6 +2522,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2511,6 +2573,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2575,6 +2638,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2606,6 +2670,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2638,6 +2703,7 @@ mod tests {
             Direction::Next,
             Scope::CurrentWorkspace,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2760,6 +2826,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 true,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -2785,6 +2852,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 true,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -2813,6 +2881,7 @@ mod tests {
                     Scope::CurrentWorkspace,
                     true,
                     Palette::dark(),
+                    StyleProfile::default(),
                     DEFAULT_ROWS,
                     false,
                     false,
@@ -2841,6 +2910,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 true,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -2869,6 +2939,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 true,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -2890,6 +2961,7 @@ mod tests {
             Scope::CurrentWorkspace,
             true,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2915,6 +2987,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 true,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -2941,6 +3014,7 @@ mod tests {
             Scope::CurrentWorkspace,
             true,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -2954,6 +3028,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 false,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -2977,6 +3052,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 false,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -2993,6 +3069,7 @@ mod tests {
                 Scope::CurrentWorkspace,
                 true,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -3024,6 +3101,7 @@ mod tests {
             Scope::All,
             true,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -3046,6 +3124,7 @@ mod tests {
             Scope::CurrentWorkspace,
             true,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -3097,6 +3176,7 @@ mod tests {
                 Direction::Next,
                 Scope::All,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -3111,6 +3191,7 @@ mod tests {
                 Direction::Next,
                 Scope::All,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -3125,6 +3206,7 @@ mod tests {
                 Direction::Next,
                 Scope::All,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -3150,6 +3232,7 @@ mod tests {
             Direction::Next,
             Scope::All,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -3173,6 +3256,7 @@ mod tests {
             tree: None,
             tree_sel: 0,
             visible: Vec::new(),
+            profile: StyleProfile::default(),
             viewport: None,
         };
         assert_eq!(commit_target(&confined, &snap), None);
@@ -3197,6 +3281,7 @@ mod tests {
             Direction::Next,
             Scope::All,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -3234,6 +3319,7 @@ mod tests {
                 Direction::Next,
                 scope,
                 Palette::dark(),
+                StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
                 false,
@@ -3489,6 +3575,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             crate::ui::Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -3508,6 +3595,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             crate::ui::Palette::light(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -3528,6 +3616,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             crate::ui::Palette::light(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -3561,6 +3650,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
+            StyleProfile::default(),
             5,
             false,
             false,
@@ -3577,6 +3667,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
+            StyleProfile::default(),
             9,
             false,
             false,
@@ -3597,12 +3688,93 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
+            StyleProfile::default(),
             9,
             false,
             false,
             &mut HashSet::new(),
         );
         assert_eq!(open.as_ref().expect("fresh session opened").rows, 9);
+    }
+
+    /// The geometry twin of the frozen-palette seam: the style profile
+    /// is resolved once at session open and frozen for the session's
+    /// life — a density (or style) flip landing mid-gesture (here: the
+    /// profile the next invocation would resolve) never re-rhythms the
+    /// open card; the next press starts fresh against it.
+    #[test]
+    fn an_open_session_keeps_its_frozen_profile_across_a_density_flip() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let spacious = crate::ui::StyleProfile::resolve(
+            crate::theme::Style::Round,
+            crate::theme::Density::Spacious,
+        );
+        let compact = crate::ui::StyleProfile::resolve(
+            crate::theme::Style::Square,
+            crate::theme::Density::Compact,
+        );
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            spacious,
+            DEFAULT_ROWS,
+            false,
+            false,
+            &mut HashSet::new(),
+        );
+        assert_eq!(open.as_ref().expect("session opened").profile, spacious);
+
+        // The desktop flips Square + Compact between presses; the open
+        // session still shapes the card it was opened with.
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            compact,
+            DEFAULT_ROWS,
+            false,
+            false,
+            &mut HashSet::new(),
+        );
+        assert_eq!(
+            open.as_ref().expect("session still open").profile,
+            spacious,
+            "a mid-gesture density flip must not re-rhythm the open session"
+        );
+
+        // The next press after the session ends starts fresh: compact.
+        open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            compact,
+            DEFAULT_ROWS,
+            false,
+            false,
+            &mut HashSet::new(),
+        );
+        assert_eq!(
+            open.as_ref().expect("fresh session opened").profile,
+            compact
+        );
     }
 
     /// The grouping twin of the frozen-rows seam: the mode is resolved
@@ -3627,6 +3799,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -3643,6 +3816,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             true,
             true,
@@ -3662,6 +3836,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             true,
             true,
@@ -3714,6 +3889,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             true,
             true,
@@ -3735,6 +3911,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             true,
             false,
@@ -3823,6 +4000,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             true,
             false,
@@ -4026,6 +4204,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             false,
             false,
@@ -4367,6 +4546,7 @@ mod tests {
             Scope::CurrentWorkspace,
             false,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             true,
             true,
@@ -4469,6 +4649,7 @@ mod tests {
             Scope::CurrentWorkspace,
             true,
             Palette::dark(),
+            StyleProfile::default(),
             DEFAULT_ROWS,
             true,
             true,

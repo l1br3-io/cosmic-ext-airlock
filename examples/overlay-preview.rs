@@ -252,6 +252,7 @@ fn windowed(
             + ui::HINT_COLS * ui::TEXT_W,
         height: ui::card_height(shown),
         viewport,
+        profile: ui::StyleProfile::default(),
     }
 }
 
