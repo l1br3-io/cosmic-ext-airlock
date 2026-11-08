@@ -142,6 +142,14 @@ binary.
       until the next press
 - [ ] `rows = 11` and `rows = "8"` each log a `settings:` diagnostic
       naming `rows`; switching keeps working on the last-good value
+- [ ] Pointer and Ctrl+N on a `…` row are inert: no selection move, no
+      switch; the next Tab still steps
+- [ ] At 1× and 2×, both themes, over a light and a dark wallpaper: the
+      `…` rows read at a glance (screenshot each)
+- [ ] A list of ten or fewer at the default — any list within `rows` —
+      matches the card before windowing: same height, no `…` rows
+- [ ] Same-app cycling (Alt+grave) on one app with more than `rows`
+      windows open windows the same way
 
 ### Theme (card color)
 

@@ -40,6 +40,10 @@ pipeline the COSMIC launcher uses) beside its title.
   list
 - **Ctrl+N** (1–9, keypad too) switches to the Nth window at once, like a
   click; each row shows its key
+- A long list never grows the card: `rows` windows stay in view (8 by
+  default) with `…` rows marking the truncated edges, and stepping
+  walks the whole list — see
+  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#rows)
 - **App grouping** (`grouping = true`) turns the list into a per-app tree:
   collapsed app entries that commit their most recently used window, → to
   expand one (remembered across gestures), Alt+N to pick a window inside
