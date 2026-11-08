@@ -140,6 +140,21 @@ pub struct Switch {
     /// is the tree index, stable for the session's life. Meaningless
     /// whenever `tree` is `None` (those sessions select through `ring`).
     tree_sel: usize,
+    /// The type-to-filter query (`type-filter`). Born empty, dies with
+    /// the session — never persisted. While non-empty,
+    /// [`Self::filtered`] holds the narrowed selection ring and the
+    /// card renders flat.
+    query: String,
+    /// The query-narrowed ring: the frozen window set filtered by
+    /// [`switcher::matches`], re-derived on every query change. `Some`
+    /// exactly while `query` is non-empty; `None` is the unfiltered
+    /// session. Stepping, committing, and the card all read this first.
+    filtered: Option<switcher::Ring>,
+    /// The window set the session froze at open, in MRU order — the
+    /// flat ring's own list, the grouped tree's eligible set, or the
+    /// same-app view's. The query narrows exactly this list, never a
+    /// re-derived one (the freeze philosophy).
+    frozen: Vec<Handle>,
     /// The tree rows the card is showing right now, recomputed on every
     /// show from the frozen tree, the expansion state, and liveness —
     /// the exact sequence the model rendered, so pointer rows map back
@@ -153,11 +168,14 @@ pub struct Switch {
 }
 
 impl Switch {
-    /// The window the selection resolves to: the selected tree row's
-    /// handle for a grouped session (a parent carries its app's
-    /// MRU-front window — the entry's implied window), the ring's for
-    /// every flat one.
+    /// The window the selection resolves to: the query-narrowed ring's
+    /// while one stands, else the selected tree row's handle for a
+    /// grouped session (a parent carries its app's MRU-front window —
+    /// the entry's implied window), the ring's for every flat one.
     fn selected_handle(&self) -> Option<Handle> {
+        if let Some(filtered) = &self.filtered {
+            return filtered.selected();
+        }
         match &self.tree {
             Some(tree) => tree.rows().get(self.tree_sel).map(|row| row.handle),
             None => self.ring.selected(),
@@ -165,12 +183,16 @@ impl Switch {
     }
 
     /// Selects `handle`'s row — the flow pointer clicks and number
-    /// chords share. Flat sessions select their ring; a grouped session
+    /// chords share. A querying session selects its narrowed ring;
+    /// otherwise flat sessions select their ring; a grouped session
     /// selects the first visible row carrying the handle (a parent
     /// precedes its children, so an ambiguous handle — a group's front
     /// window — lands on the parent row). A handle not on the card
     /// selects nothing and leaves the session exactly as it was.
     fn select_handle(&mut self, handle: Handle) -> Option<Handle> {
+        if let Some(filtered) = &mut self.filtered {
+            return filtered.select(handle);
+        }
         if let Some(tree) = &self.tree {
             let index = self
                 .visible
@@ -198,6 +220,24 @@ impl Switch {
             return None; // a continuation row or past the window
         }
         self.visible.get(viewport.start + row).copied()
+    }
+
+    /// Lands the selection on the card's first row — the restore rule's
+    /// fallback when the kept window left the card. A grouped session
+    /// takes the first visible tree row; a flat one the frozen list's
+    /// MRU head. An empty card leaves the selection exactly where it
+    /// was (the caller's rebuild decides what an empty card means).
+    fn select_first(&mut self, snapshot: &Snapshot, expanded: &std::collections::HashSet<String>) {
+        if self.tree.is_some() {
+            let visible = grouped_visible(self, snapshot, expanded);
+            if let Some(&first) = visible.first() {
+                self.tree_sel = first;
+            }
+        } else if let Some(&front) = self.frozen.first() {
+            // The MRU head: a dead one simply fails to select, and the
+            // rebuild's liveness filtering handles the rest of the card.
+            self.ring.select(front);
+        }
     }
 
     /// Applies a pointer hover crossing: flat sessions select by the
@@ -311,14 +351,16 @@ pub fn ring_step(
         // on row 0 — the focused window's entry, its app's parent when
         // the app is multi-window — and the opening press is the first
         // linear step past the active window's rows. Flat sessions keep
-        // the eligible-list ring, no tree.
+        // the eligible-list ring, no tree. The frozen window set — the
+        // query's narrow domain — is the eligible list in both shapes.
+        let eligible = switcher::eligible(&snapshot.toplevels, active, scope);
         let (handles, tree) = if grouping {
             (
                 Vec::new(), // grouped selections live on the tree, not a ring
                 Some(switcher::Grouping::new(&snapshot.toplevels, active, scope)),
             )
         } else {
-            (switcher::eligible(&snapshot.toplevels, active, scope), None)
+            (eligible.clone(), None)
         };
         *open = Some(Switch {
             ring: switcher::Ring::new(handles),
@@ -335,6 +377,9 @@ pub fn ring_step(
             tiles,
             tree,
             tree_sel: 0,
+            query: String::new(),
+            filtered: None,
+            frozen: eligible,
             visible: Vec::new(),
             viewport: None,
         });
@@ -386,6 +431,16 @@ pub fn session_step(
     tiles: usize,
     expanded: &mut std::collections::HashSet<String>,
 ) -> Option<Handle> {
+    // An open querying session steps its narrowed ring — every step key
+    // is the one linear walk, whatever the session's unfiltered shape.
+    if let Some(session) = open.as_mut()
+        && let Some(filtered) = session.filtered.as_mut()
+    {
+        return match direction {
+            Direction::Next => filtered.step(1),
+            Direction::Previous => filtered.previous(),
+        };
+    }
     // An open grouped session steps its visible rows (Tab, ↓/↑, and
     // the wheel share the one linear walk); the snapshot, scope,
     // palette, rows, and grouping only matter when a session opens.
@@ -583,6 +638,96 @@ fn step_visible(
     let visible = grouped_visible(session, snapshot, expanded);
     session.tree_sel = step_in(&visible, session.tree_sel, direction);
 }
+
+/// One character into the session's query (`type-filter`): append —
+/// the query caps at [`QUERY_MAX`], input past it ignored — then
+/// re-derive the narrowed ring over the frozen set and reselect its
+/// first match. Returns whether a session was touched (`false` with no
+/// session — structurally unreachable while showing).
+fn type_into(open: &mut Option<Switch>, snapshot: &Snapshot, ch: char) -> bool {
+    let Some(session) = open.as_mut() else {
+        return false;
+    };
+    if session.query.chars().count() < QUERY_MAX {
+        session.query.push(ch);
+    }
+    refilter(session, snapshot);
+    true
+}
+
+/// Backspace: erase the query's last character. An empty query is a
+/// no-op — Backspace never dismisses. Erasing to empty restores the
+/// unfiltered session (the shared restore rule).
+fn erase_query(
+    open: &mut Option<Switch>,
+    snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
+) -> bool {
+    let Some(session) = open.as_mut() else {
+        return false;
+    };
+    if session.query.pop().is_none() {
+        return true; // nothing to erase; still a live session
+    }
+    if session.query.is_empty() {
+        restore_unfiltered(session, snapshot, expanded);
+    } else {
+        refilter(session, snapshot);
+    }
+    true
+}
+
+/// Clears the query outright (Escape's first press). Returns whether a
+/// session stood with a query to clear — `false` means no session or an
+/// already-empty query, and the caller dismisses.
+fn clear_query(
+    open: &mut Option<Switch>,
+    snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
+) -> bool {
+    let Some(session) = open.as_mut() else {
+        return false;
+    };
+    if session.query.is_empty() {
+        return false;
+    }
+    session.query.clear();
+    restore_unfiltered(session, snapshot, expanded);
+    true
+}
+
+/// The restore rule erase-to-empty and clear share: dissolve the
+/// narrowed ring, keep the selected window when the unfiltered card
+/// still holds it, else land on the first row.
+fn restore_unfiltered(
+    session: &mut Switch,
+    snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
+) {
+    let selected = session.filtered.as_ref().and_then(switcher::Ring::selected);
+    session.filtered = None;
+    if selected.is_none_or(|handle| session.select_handle(handle).is_none()) {
+        session.select_first(snapshot, expanded);
+    }
+}
+
+/// Re-derives the narrowed ring from the standing query — the one
+/// recompute every query change shares. The empty query dissolves the
+/// ring (the unfiltered session); dead handles never match, and the
+/// empty ring selects nothing.
+fn refilter(session: &mut Switch, snapshot: &Snapshot) {
+    if session.query.is_empty() {
+        session.filtered = None;
+    } else {
+        let matched = switcher::matches(&snapshot.toplevels, &session.frozen, &session.query);
+        session.filtered = Some(switcher::Ring::new(matched));
+    }
+}
+
+/// The type-to-filter query cap: input past it is ignored, so the
+/// session's state stays bounded whatever holds the key down. The strip
+/// shows the query's tail (TF3).
+const QUERY_MAX: usize = 64;
 
 /// One step request into [`step_and_show`]: the direction, and whether a
 /// *new* session should narrow to the current application.
@@ -822,6 +967,54 @@ pub fn run() -> Result<(), RunError> {
                             &expanded,
                             &mut icons,
                         );
+                    }
+                }
+                GestureOutput::Type(ch) => {
+                    // One character into the query: narrow the frozen
+                    // set, reselect the first match, repaint. No open
+                    // session, no query (structurally unreachable —
+                    // keys only arrive while showing).
+                    if type_into(&mut open, &snapshot, ch) {
+                        show_selection(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            &expanded,
+                            &mut icons,
+                        );
+                    }
+                }
+                GestureOutput::Erase => {
+                    // Backspace edits the query; never dismisses.
+                    if erase_query(&mut open, &snapshot, &expanded) {
+                        show_selection(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            &expanded,
+                            &mut icons,
+                        );
+                    }
+                }
+                GestureOutput::Escape => {
+                    // A standing query clears first — the session, the
+                    // gesture, and the card all keep going; only the
+                    // empty query dismisses.
+                    if clear_query(&mut open, &snapshot, &expanded) {
+                        show_selection(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            &expanded,
+                            &mut icons,
+                        );
+                    } else {
+                        gesture.close();
+                        session.overlay_hide("dismissed");
+                        open = None;
                     }
                 }
                 GestureOutput::Commit => {
@@ -1298,6 +1491,65 @@ fn show_selection(
         // The frozen decision builds what the frozen decision paints:
         // compose and render share one backend for the session's life.
         let text = current.text.clone();
+        // A querying session (`type-filter`) renders flat over its
+        // narrowed set — the grouped tree, headers, and chevrons are
+        // bypassed while the query stands (the same-app exemption's
+        // precedent), and an empty match set keeps the card with the
+        // inert no-matches row instead of closing the session.
+        if let Some(filtered) = &current.filtered {
+            if filtered.handles().is_empty() {
+                return crate::ui::no_matches_model(&current.query, current.profile);
+            }
+            let matched = filtered.handles().to_vec();
+            let pruned = Snapshot {
+                toplevels: matched
+                    .iter()
+                    .filter_map(|handle| {
+                        snapshot
+                            .toplevels
+                            .iter()
+                            .find(|t| t.handle == *handle)
+                            .cloned()
+                    })
+                    .collect(),
+                workspaces: snapshot.workspaces.clone(),
+                active: snapshot.active,
+            };
+            // A matched selection is presence-guaranteed by refilter;
+            // a dead one (closed between keystroke and rebuild) falls
+            // through to None and the session closes through the
+            // existing stale rule.
+            return filtered.selected().and_then(|handle| {
+                if current.layout == crate::ui::LayoutSetting::Horizontal {
+                    crate::ui::overlay_model_horizontal(
+                        &pruned,
+                        handle,
+                        current.scope,
+                        icons,
+                        scale,
+                        &palette,
+                        current.profile,
+                        crate::ui::Banding {
+                            tiles: current.tiles,
+                            prev: current.viewport,
+                        },
+                        crate::ui::text_backend(&text, session.text_system()),
+                    )
+                } else {
+                    crate::ui::overlay_model(
+                        &pruned,
+                        handle,
+                        current.scope,
+                        icons,
+                        scale,
+                        &palette,
+                        current.profile,
+                        windowing,
+                        crate::ui::text_backend(&text, session.text_system()),
+                    )
+                }
+            });
+        }
         match (&current.tree, current.app.as_deref()) {
             // Grouped plain session: the frozen tree cut to the stored
             // visible sequence, selection by tree row.
@@ -3361,6 +3613,9 @@ mod tests {
             tiles: TILES,
             tree: None,
             tree_sel: 0,
+            query: String::new(),
+            filtered: None,
+            frozen: Vec::new(),
             visible: Vec::new(),
             profile: StyleProfile::default(),
             text: crate::text::TextDecision::Bitmap,
@@ -4325,6 +4580,31 @@ mod tests {
         )
     }
 
+    /// Opens a flat session on `snap` (one opening Alt+Tab) and
+    /// returns it with empty expansion state — the `type-filter` pins'
+    /// base.
+    fn flat_session(snap: &Snapshot) -> (Option<Switch>, HashSet<String>) {
+        let mut open = None;
+        let mut expanded = HashSet::new();
+        session_step(
+            &mut open,
+            snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Vertical,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut expanded,
+        );
+        (open, expanded)
+    }
+
     /// Opens a grouped session on `snap` (one opening Alt+Tab) and
     /// returns it with its expansion state.
     fn grouped_session(snap: &Snapshot) -> (Option<Switch>, HashSet<String>) {
@@ -4544,6 +4824,171 @@ mod tests {
             0,
             "the header row holds the selection"
         );
+    }
+
+    /// Like [`app_toplevel`], with the title under test's choosing.
+    fn titled(handle: u64, title: &str, app: &str, last: u64) -> Toplevel {
+        Toplevel {
+            title: title.to_string(),
+            app_id: app.to_string(),
+            ..toplevel(handle, &[1], State::default(), last)
+        }
+    }
+
+    #[test]
+    fn typing_narrows_a_flat_session_and_selects_the_first_match() {
+        // "fir" matches both Firefox windows in MRU order; the first
+        // (most recent) is selected, and stepping stays inside the
+        // narrowed set — the editor never surfaces until the query
+        // clears.
+        let snap = snapshot(
+            vec![
+                titled(1, "invoice.xlsx", "office", 40),
+                titled(2, "firefox — docs", "firefox", 30),
+                titled(3, "firefox — mail", "firefox", 20),
+                titled(4, "editor", "code", 10),
+            ],
+            Some(1),
+        );
+        let (mut open, mut expanded) = flat_session(&snap);
+        assert!(type_into(&mut open, &snap, 'f'));
+        assert!(type_into(&mut open, &snap, 'i'));
+        assert!(type_into(&mut open, &snap, 'r'));
+        let session = open.as_ref().expect("open");
+        assert_eq!(session.selected_handle(), Some(Handle(2)), "first match");
+        // One step lands on the second match, never the editor.
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Vertical,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut expanded,
+        );
+        assert_eq!(
+            open.as_ref().expect("open").selected_handle(),
+            Some(Handle(3))
+        );
+    }
+
+    #[test]
+    fn typing_flattens_a_grouped_session() {
+        // The querying grouped card is the flat narrowed list: the tree,
+        // headers, and expansion state are bypassed while the query
+        // stands — a window inside a collapsed group matches all the
+        // same.
+        let snap = snapshot(
+            vec![
+                titled(1, "shell 1", "term", 40),
+                titled(2, "shell 2", "term", 30),
+                titled(3, "report.pdf", "office", 20),
+            ],
+            Some(1),
+        );
+        let (mut open, expanded) = grouped_session(&snap);
+        assert!(expanded.is_empty(), "collapsed by default");
+        assert!(type_into(&mut open, &snap, 's'));
+        assert!(type_into(&mut open, &snap, 'h'));
+        let session = open.as_ref().expect("open");
+        assert_eq!(session.query, "sh");
+        assert_eq!(
+            session.filtered.as_ref().expect("narrowed").handles(),
+            &[Handle(1), Handle(2)]
+        );
+        assert_eq!(session.selected_handle(), Some(Handle(1)));
+    }
+
+    #[test]
+    fn erasing_to_empty_restores_the_kept_selection() {
+        // Type, step onto the second match, backspace it all away: the
+        // unfiltered session returns with the same window still
+        // selected — the kept-window restore rule.
+        let snap = snapshot(
+            vec![
+                titled(1, "invoice.xlsx", "office", 40),
+                titled(2, "firefox — docs", "firefox", 30),
+                titled(3, "editor", "code", 20),
+            ],
+            Some(1),
+        );
+        let (mut open, expanded) = flat_session(&snap);
+        assert!(type_into(&mut open, &snap, 'f'));
+        if let Some(filtered) = open.as_mut().expect("open").filtered.as_mut() {
+            filtered.select(Handle(2));
+        }
+        assert!(erase_query(&mut open, &snap, &expanded));
+        assert!(erase_query(&mut open, &snap, &expanded));
+        let session = open.as_ref().expect("open");
+        assert!(session.query.is_empty());
+        assert!(session.filtered.is_none(), "the narrowed ring dissolved");
+        assert_eq!(
+            session.selected_handle(),
+            Some(Handle(2)),
+            "the kept window"
+        );
+    }
+
+    #[test]
+    fn backspace_on_an_empty_query_changes_nothing() {
+        let snap = snapshot(vec![titled(1, "solo", "app", 1)], Some(1));
+        let (mut open, expanded) = flat_session(&snap);
+        assert!(erase_query(&mut open, &snap, &expanded));
+        let session = open.as_ref().expect("still open");
+        assert!(session.query.is_empty());
+        assert_eq!(session.selected_handle(), Some(Handle(1)));
+    }
+
+    #[test]
+    fn the_query_caps_at_sixty_four_characters() {
+        let snap = snapshot(vec![titled(1, "a", "app", 1)], Some(1));
+        let (mut open, _) = flat_session(&snap);
+        for _ in 0..80 {
+            assert!(type_into(&mut open, &snap, 'a'));
+        }
+        assert_eq!(open.as_ref().expect("open").query.chars().count(), 64);
+    }
+
+    #[test]
+    fn no_match_holds_the_session_with_nothing_selected() {
+        // Nothing matches: the narrowed ring is empty, the selection is
+        // None (committing is a no-op), and the session stands — the
+        // card's no-matches row is the render's business.
+        let snap = snapshot(vec![titled(1, "editor", "code", 1)], Some(1));
+        let (mut open, _) = flat_session(&snap);
+        assert!(type_into(&mut open, &snap, 'z'));
+        let session = open.as_ref().expect("open");
+        assert_eq!(session.selected_handle(), None);
+        assert_eq!(
+            commit_target(session, &snap),
+            None,
+            "a no-match commit no-ops"
+        );
+    }
+
+    #[test]
+    fn clearing_the_query_reports_whether_it_cleared() {
+        // Escape's decision rule: a standing query clears (true), an
+        // empty one reports false — the caller dismisses.
+        let snap = snapshot(vec![titled(1, "editor", "code", 1)], Some(1));
+        let (mut open, expanded) = flat_session(&snap);
+        assert!(
+            !clear_query(&mut open, &snap, &expanded),
+            "empty query: dismiss"
+        );
+        assert!(type_into(&mut open, &snap, 'e'));
+        assert!(
+            clear_query(&mut open, &snap, &expanded),
+            "standing query: clear"
+        );
+        assert!(open.as_ref().expect("open").query.is_empty());
     }
 
     #[test]

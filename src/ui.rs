@@ -1558,6 +1558,38 @@ fn continuation_row() -> RowModel {
     }
 }
 
+/// The empty-match card (`type-filter`): the query's one-word verdict —
+/// a single inert row no input can address (the continuation-row
+/// precedent: no handle, no hint, nothing selected), so the session and
+/// the query both stand while nothing matches. The query strip that
+/// rides above the card lands with TF3's design tokens; `query` is
+/// carried now so that render reads it without a signature change.
+pub fn no_matches_model(query: &str, profile: StyleProfile) -> Option<OverlayModel> {
+    let _ = query; // the strip's text, painted from TF3
+    let mut text = TextBackend::Bitmap;
+    let (title, band) = compose_title("no matches", "", RowKind::Leaf, &mut text, 2);
+    let row = RowModel {
+        title,
+        icon: None,
+        selected: false,
+        handle: None,
+        kind: RowKind::Leaf,
+        count: 0,
+        hint: None,
+        expanded: false,
+    };
+    finish_model(
+        vec![row],
+        0,
+        Windowing {
+            rows: DEFAULT_ROWS,
+            prev: None,
+        },
+        profile,
+        vec![band],
+    )
+}
+
 /// The horizontal spans of logical row `ly` that lie within `reach` of a
 /// card edge: full width near a horizontal edge, the two end bands
 /// otherwise. An empty span is expressed as `x0 == x1`.
@@ -2660,6 +2692,14 @@ pub enum GestureKey {
     /// collapse the selected expanded parent (the W3C collapse axis).
     /// The daemon resolves the target against the frozen tree.
     ExitParent,
+    /// A printable keypress (`type-filter`): the character types into
+    /// the session's query, whatever modifiers report — Alt is held
+    /// the whole gesture, Shift is how uppercase types. Chord arms win
+    /// ahead of it in `key_input`.
+    Type(char),
+    /// Backspace: erase the query's last character. Never dismisses —
+    /// on an empty query it is a no-op.
+    Backspace,
     Escape,
     Other,
 }
@@ -2757,6 +2797,13 @@ pub enum GestureOutput {
     /// resolves against the frozen tree; a collapsed top-level row's
     /// exit is the W3C no-op.
     ExitParent,
+    /// A character types into the session's query (`type-filter`): the
+    /// daemon narrows the card's frozen window set by it and reselects
+    /// the first match.
+    Type(char),
+    /// Backspace erases the query's last character (a no-op on an empty
+    /// query); the daemon rebuilds the card.
+    Erase,
     /// Activate the selection and unmap the overlay.
     Commit,
     /// Select and activate the captured window in one motion — the
@@ -2768,6 +2815,12 @@ pub enum GestureOutput {
     Activate {
         handle: Option<Handle>,
     },
+    /// Escape was pressed. Since `type-filter`, the machine cannot
+    /// decide alone: with a query standing, the press clears the query
+    /// and keeps the session; only an empty query dismisses. The daemon
+    /// — which holds the session state — decides and closes the
+    /// gesture itself when it dismisses.
+    Escape,
     /// Unmap the overlay without switching.
     Dismiss,
     Nothing,
@@ -2815,6 +2868,10 @@ impl Gesture {
                 // exactly as it forwards arrows.
                 GestureKey::EnterChild => GestureOutput::EnterChild,
                 GestureKey::ExitParent => GestureOutput::ExitParent,
+                // The query edits (`type-filter`): session state, not a
+                // row address — forwarded for the daemon to apply.
+                GestureKey::Type(ch) => GestureOutput::Type(ch),
+                GestureKey::Backspace => GestureOutput::Erase,
                 // Select-and-activate in one motion, addressing the
                 // event-time handle; the session stays open — the daemon
                 // closes it via `close()` only when the activation
@@ -2826,10 +2883,11 @@ impl Gesture {
                 // [`GestureKey::SelectHandle`] twin before queueing, so
                 // the machine never activates off a row or level index.
                 GestureKey::Select(_) | GestureKey::SelectApp(_) => GestureOutput::Nothing,
-                GestureKey::Escape => {
-                    self.showing = false;
-                    GestureOutput::Dismiss
-                }
+                // The daemon decides: a standing query clears first, an
+                // empty one dismisses (and the daemon closes the
+                // gesture then — the machine's own `showing` stays true
+                // until that close, so a cleared query keeps typing).
+                GestureKey::Escape => GestureOutput::Escape,
                 GestureKey::Other => GestureOutput::Nothing,
             },
             GestureInput::Modifiers { alt } => {
@@ -2895,6 +2953,10 @@ impl Gesture {
 /// ←/→ step rows — pinned by the flat regression tests. The boundary
 /// passes the live model's own mode flag, so the keysym the user
 /// pressed maps against the list they see.
+///
+/// Type-to-filter (`type-filter`, 2026-11-08): a printable keysym types
+/// into the session's query through every modifier; Backspace erases.
+/// Chord arms win ahead of the printable arm — only Ctrl+N survives.
 pub fn key_input(
     keysym: Keysym,
     shift_held: bool,
@@ -2925,6 +2987,9 @@ pub fn key_input(
             }
         }
         Keysym::Escape => (GestureKey::Escape, shift_held),
+        // Backspace edits the query; never dismisses (the daemon treats
+        // it as a no-op on an empty query).
+        Keysym::BackSpace => (GestureKey::Backspace, shift_held),
         // Ctrl+digits map with or without shift held; without Ctrl the
         // number row stays Other — it must never surprise-activate. In
         // grouped mode the chord addresses level-1 entries, not rows.
@@ -2936,9 +3001,24 @@ pub fn key_input(
             },
             shift_held,
         ),
+        // The query (`type-filter`): a printable keysym types through
+        // every modifier — Alt is held the whole gesture, Shift is how
+        // uppercase types — and the chord arms above have already had
+        // their pick. Control characters (Tab, Return, Escape, the
+        // keypad's enter/tab) never type: their dedicated arms caught
+        // them, and the filter drops the rest.
+        _ if let Some(ch) = printable(keysym) => (GestureKey::Type(ch), shift_held),
         _ => (GestureKey::Other, shift_held),
     };
     GestureInput::Press { key, shift }
+}
+
+/// The character a keysym types into the query, if it types at all:
+/// `key_char`'s mapping (the xkb_keysym_to_utf32 rule) minus control
+/// characters. Layout-correct by construction — the keysym is what the
+/// layout produced.
+fn printable(keysym: Keysym) -> Option<char> {
+    keysym.key_char().filter(|ch| !ch.is_control())
 }
 
 /// The 0-based overlay row a digit keysym addresses: top-row `1..=9`
@@ -6746,7 +6826,12 @@ mod tests {
     }
 
     #[test]
-    fn escape_dismisses_even_while_alt_is_held() {
+    fn escape_hands_the_decision_to_the_daemon() {
+        // Since `type-filter`, Escape cannot be decided in the machine:
+        // a standing query clears first and the session keeps going, an
+        // empty one dismisses. The machine forwards and stays showing;
+        // the daemon (which holds the query) closes the gesture itself
+        // when it dismisses.
         let mut gesture = Gesture::default();
         gesture.feed(GestureInput::Invoke(Direction::Next));
         gesture.feed(GestureInput::Modifiers { alt: true });
@@ -6755,9 +6840,9 @@ mod tests {
                 key: GestureKey::Escape,
                 shift: false
             }),
-            GestureOutput::Dismiss
+            GestureOutput::Escape
         );
-        assert!(!gesture.showing());
+        assert!(gesture.showing(), "a cleared query keeps the session");
     }
 
     #[test]
@@ -6864,10 +6949,7 @@ mod tests {
     fn inputs_after_the_session_closes_do_nothing() {
         let mut gesture = Gesture::default();
         gesture.feed(GestureInput::Invoke(Direction::Next));
-        gesture.feed(GestureInput::Press {
-            key: GestureKey::Escape,
-            shift: false,
-        });
+        gesture.close(); // the daemon's own dismiss path
         assert_eq!(
             gesture.feed(GestureInput::Press {
                 key: GestureKey::Tab,
@@ -7166,20 +7248,22 @@ mod tests {
     }
 
     #[test]
-    fn key_input_leaves_digits_without_ctrl_inert() {
-        // The number row must never surprise-activate: without Ctrl held
-        // a digit is just an unknown key, top row and keypad alike.
+    fn key_input_types_digits_without_ctrl() {
+        // `type-filter` claims the number row: without Ctrl a digit
+        // types into the query, top row and keypad alike — it can no
+        // longer surprise-activate because it no longer activates at
+        // all.
         assert_eq!(
             key_input(Keysym::_3, false, false, false, false),
             GestureInput::Press {
-                key: GestureKey::Other,
+                key: GestureKey::Type('3'),
                 shift: false
             }
         );
         assert_eq!(
             key_input(Keysym::KP_5, false, false, false, false),
             GestureInput::Press {
-                key: GestureKey::Other,
+                key: GestureKey::Type('5'),
                 shift: false
             }
         );
@@ -7200,19 +7284,21 @@ mod tests {
 
     #[test]
     fn key_input_leaves_ctrl_zero_and_ctrl_non_digits_alone() {
-        // No Ctrl+0-as-10 (OQ 2), and Ctrl on a non-digit key is not a
-        // selection.
+        // No Ctrl+0-as-10 (OQ 2): zero never selects. Since
+        // `type-filter` it also never surprises — a Ctrl+0 types a 0
+        // like any printable (the query ignores modifier flavor), and
+        // Ctrl on a non-printable (Delete) stays inert.
         assert_eq!(
             key_input(Keysym::_0, false, true, false, false),
             GestureInput::Press {
-                key: GestureKey::Other,
+                key: GestureKey::Type('0'),
                 shift: false
             }
         );
         assert_eq!(
             key_input(Keysym::KP_0, false, true, false, false),
             GestureInput::Press {
-                key: GestureKey::Other,
+                key: GestureKey::Type('0'),
                 shift: false
             }
         );
@@ -7282,36 +7368,41 @@ mod tests {
 
     #[test]
     fn the_level_toggle_key_is_gone() {
-        // Rev 5: Alt+W means nothing in either mode — the level toggle
-        // left with the scope vocabulary.
+        // Rev 5 removed the level toggle; `type-filter` claims the
+        // letters — Alt+W types a w into the query in either mode, and
+        // W without Alt types it too (printables ride every modifier).
         for grouped in [true, false] {
-            for keysym in [Keysym::w, Keysym::W] {
-                assert_eq!(
-                    key_input(keysym, false, false, true, grouped),
-                    GestureInput::Press {
-                        key: GestureKey::Other,
-                        shift: false
-                    },
-                    "Alt+{keysym:?} grouped={grouped} is no gesture key"
-                );
+            for (keysym, ch) in [(Keysym::w, 'w'), (Keysym::W, 'W')] {
+                for alt_held in [true, false] {
+                    assert_eq!(
+                        key_input(keysym, false, false, alt_held, grouped),
+                        GestureInput::Press {
+                            key: GestureKey::Type(ch),
+                            shift: false
+                        },
+                        "Alt+{keysym:?} grouped={grouped} types"
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn grouped_digits_with_alt_are_not_child_chords() {
-        // Rev 5: Alt+N is gone — the number row is never a chord in
-        // grouped mode. (Ctrl+N keeps its arm; flat mode never re-bound
-        // the digits.)
-        for keysym in [Keysym::KP_1, Keysym::KP_9] {
-            assert_eq!(
-                key_input(keysym, false, false, true, true),
-                GestureInput::Press {
-                    key: GestureKey::Other,
-                    shift: false
-                },
-                "Alt+{keysym:?} is no chord"
-            );
+    fn grouped_digits_with_alt_type_into_the_query() {
+        // Rev 5 removed Alt+N; `type-filter` claims the number row —
+        // digits type, through Alt, in grouped mode and out of it.
+        // (Ctrl+N keeps its chord arm.)
+        for grouped in [true, false] {
+            for keysym in [Keysym::KP_1, Keysym::KP_9] {
+                assert_eq!(
+                    key_input(keysym, false, false, true, grouped),
+                    GestureInput::Press {
+                        key: GestureKey::Type(keysym.key_char().expect("keypad digits map")),
+                        shift: false
+                    },
+                    "Alt+{keysym:?} grouped={grouped} types, never chords"
+                );
+            }
         }
     }
 
@@ -7392,12 +7483,12 @@ mod tests {
                 shift: false
             }
         );
-        // Without Ctrl the number row never surprise-activates — and
-        // Alt alone no longer binds it either (the digits are free).
+        // Without Ctrl the digit types into the query — Ctrl is the
+        // one modifier that wins over typing.
         assert_eq!(
             key_input(Keysym::_3, false, false, false, true),
             GestureInput::Press {
-                key: GestureKey::Other,
+                key: GestureKey::Type('3'),
                 shift: false
             }
         );

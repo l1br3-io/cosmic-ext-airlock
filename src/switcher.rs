@@ -240,6 +240,12 @@ impl Ring {
         self.selected()
     }
 
+    /// The frozen handle list the ring walks, in ring order — the
+    /// type-to-filter matcher's input (`matches`).
+    pub fn handles(&self) -> &[Handle] {
+        &self.handles
+    }
+
     /// Moves the selection to `handle` when the ring holds it, returning
     /// it. A handle the frozen ring does not hold — a window opened after
     /// the session froze its list — selects nothing and leaves the ring
