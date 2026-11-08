@@ -294,15 +294,6 @@ pub const TILE_CELL_H: u32 = TEXT_H + TILE_BADGE_GAP + TILE_ICON + TILE_TITLE_GA
 pub const fn band_card_height() -> u32 {
     2 * TILE_PAD_Y + TILE_CELL_H
 }
-/// The grouped-horizontal card's two bands' separation: the gap between
-/// band 1 (app tiles) and band 2 (window tiles) — GH1's working value,
-/// frozen by GH2's design pass.
-pub const BAND_SEPARATOR: u32 = 16;
-/// The combined card's height: two tile cells plus their padding and the
-/// band separation between them.
-pub const fn combined_card_height() -> u32 {
-    2 * TILE_PAD_Y + 2 * TILE_CELL_H + BAND_SEPARATOR
-}
 /// The band card's width: `slots` tiles plus gaps inside the padding —
 /// the `…` tile lives inside these slots, so the card never widens for
 /// it.
@@ -1036,11 +1027,6 @@ pub struct OverlayModel {
     /// — never headers or continuations). `None` on every pointerless
     /// card, so nothing paints without pointer presence.
     pub hovered: Option<usize>,
-    /// The grouped-horizontal card's two bands (`grouped-horizontal`):
-    /// `Some` marks the combination — `horizontal` is true and the rows
-    /// are band 1's app tiles followed by band 2's window tiles, split at
-    /// [`Combined::apps`] — `None` on every other card.
-    pub combined: Option<Combined>,
 }
 
 impl OverlayModel {
@@ -1078,10 +1064,7 @@ impl OverlayModel {
     /// logical pointer position × render `scale`, the point scaled down
     /// to the model's space. The footprint is the full band height
     /// (the cell is the unit); tile gaps, card padding, and points off
-    /// the card are `None`. The combined card stacks two bands and
-    /// returns the *flat* row index (band 1's tiles then band 2's), so
-    /// a band is unambiguous by position — `rows[..apps]` vs
-    /// `rows[apps..]` — and the separator between them is `None`.
+    /// the card are `None`.
     pub fn cell_at(&self, x: f64, y: f64, scale: u32) -> Option<usize> {
         let in_card = x >= 0.0
             && y >= 0.0
@@ -1090,39 +1073,22 @@ impl OverlayModel {
         if !in_card {
             return None;
         }
-        // The band this y lands in: its leading row index and its tile
-        // count. The combined card rejects its separator and the vertical
-        // padding; the single band admits every y inside the card (its
-        // height is exactly the cell plus padding).
-        let (band_offset, band_tiles) = if let Some(combined) = &self.combined {
-            let y = y / scale as f64;
-            let band1_top = TILE_PAD_Y as f64;
-            let band2_top = (TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR) as f64;
-            if y >= band2_top && y < band2_top + TILE_CELL_H as f64 {
-                (combined.apps, self.rows.len() - combined.apps)
-            } else if y >= band1_top && y < band1_top + TILE_CELL_H as f64 {
-                (0, combined.apps)
-            } else {
-                return None; // the separator or the card's vertical padding
-            }
-        } else {
-            (0, self.rows.len())
-        };
+        // The single band admits every y inside the card (its height is
+        // exactly the cell plus padding); x alone picks the tile.
         let x_px = x / scale as f64 - TILE_PAD_X as f64;
         let pitch = (TILE_W + TILE_GAP) as f64;
-        if x_px < 0.0 || x_px >= band_tiles as f64 * pitch {
+        if x_px < 0.0 || x_px >= self.rows.len() as f64 * pitch {
             return None; // card padding before the first tile / past the last
         }
         let cell = (x_px / pitch) as usize;
-        (x_px - cell as f64 * pitch < TILE_W as f64).then_some(band_offset + cell) // gap seam
+        (x_px - cell as f64 * pitch < TILE_W as f64).then_some(cell) // gap seam
     }
 
     /// The window the Nth *content* tile in reading order resolves to
-    /// (0-based) — continuation affordances skipped, band 1 left→right
-    /// then band 2 — the address the combined card's Ctrl+N chords
-    /// resolve against at event receipt. The hint ordinals number the
-    /// same sequence, so every displayed hint is wired. `None` past the
-    /// content tiles.
+    /// (0-based) — continuation affordances skipped, left→right — the
+    /// address a horizontal card's Ctrl+N chords resolve against at
+    /// event receipt. The hint ordinals number the same sequence, so
+    /// every displayed hint is wired. `None` past the content tiles.
     pub fn content_tile_handle(&self, n: usize) -> Option<Handle> {
         self.rows
             .iter()
@@ -1205,32 +1171,6 @@ pub enum Band {
     Apps,
     /// Band 2: the focused app's window tiles.
     Windows,
-}
-
-/// The combined card's windowing inputs, carried into
-/// [`overlay_model_grouped_horizontal`]: the session's shared tile
-/// budget (frozen from `columns` at open, one budget for both bands) and
-/// each band's own sticky viewport — the `…` follow is per band, so the
-/// two windows carry independently across rebuilds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CombinedBanding {
-    pub tiles: usize,
-    pub band1: Option<Viewport>,
-    pub band2: Option<Viewport>,
-}
-
-/// The combined card's two-band addressing: how many leading rows are
-/// app tiles (band 1) and each band's own window. `None` on every
-/// non-combined card.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Combined {
-    /// Band 1's tile count: `rows[..apps]` are app tiles, `rows[apps..]`
-    /// are the focused app's window tiles.
-    pub apps: usize,
-    /// Band 1's window over the app list.
-    pub band1: Viewport,
-    /// Band 2's window over the focused app's windows.
-    pub band2: Viewport,
 }
 
 /// Resolves the `columns` setting against the invoking output's
@@ -1483,7 +1423,6 @@ pub fn overlay_model_horizontal(
         horizontal: true,
         query: None,
         hovered: None,
-        combined: None,
     })
 }
 
@@ -1613,70 +1552,50 @@ pub fn overlay_model_grouped(
     finish_model(rows, sel, windowing, profile, bands)
 }
 
-/// Builds the grouped-horizontal card (`grouped-horizontal`): the frozen
-/// tree as two stacked bands — band 1 the app tiles (level-1 entries,
-/// parents and leaves), band 2 the focused app's window tiles — at one
-/// tile pitch and one card width, `columns` shared by both bands.
+/// Builds the grouped-horizontal strip (`inplace-strip`): the frozen
+/// tree as **one** sequence of tiles — the app tiles with the selected
+/// app's tile replaced in place by its window run, exactly as the
+/// daemon derived it — behind one [`band_window`], at one tile pitch.
 ///
-/// There is **no collapse state** anywhere in this card: `apps` is the
-/// whole level-1 sequence and `windows` the focused app's *whole* window
-/// set, so `↓` from any app tile enters that app's children in one press
-/// (band 2 is a viewport onto the focused parent, not an expansion
-/// gesture). `band` is focus, not expansion — it only says which band the
-/// selection sits in.
+/// The open group is derived, never carried: `sequence` is the pure
+/// function of the tree selection the daemon computed (a child
+/// selection ⇒ its parent's run at the parent's slot; a level-1
+/// selection ⇒ plain app tiles), so the card holds no band or collapse
+/// state of its own. The width arrives **frozen**: `width_slots` is the
+/// daemon's max of the closed and open shapes' slots, so ↓ and ↑ never
+/// resize the card — the narrower shape renders left-aligned in the
+/// wider grid.
 ///
-/// `apps` and `windows` are tree indices, liveness-filtered by the
-/// caller (the frozen window set), band 1 in MRU first-appearance order,
-/// band 2 the focused app's windows MRU-first. `selected` is the tree
-/// index of the selection; it sits in `apps` under [`Band::Apps`], in
-/// `windows` under [`Band::Windows`]. Each band windows per
-/// [`band_window`] with its own carried viewport (the `…` follow is per
-/// band), the `…` tile spending that band's last slot. Ctrl+N chords
-/// read band 1 left→right then band 2 left→right, ≤ 9. App tiles carry
-/// icon + label + count and a parent commits its MRU-front window;
-/// window tiles carry icon + title — activation always resolves the
-/// tile's own event-time handle.
+/// `sequence` holds tree indices, liveness-filtered by the caller (the
+/// frozen window set) in the strip's reading order; `selected` is the
+/// tree index of the selection. The strip windows per [`band_window`]
+/// with the carried viewport (the `…` tile spends the last slot at a
+/// truncated trailing edge and never holds the selection). Ctrl+N
+/// chords read the strip left→right, ≤ 9. App tiles carry icon, label,
+/// and count (a parent commits its MRU-front window); window tiles
+/// carry icon and title — activation always resolves the tile's own
+/// event-time handle.
 // Eleven render inputs — the banding joined the seam beside the
 // windowing (the geometry follow's note).
 #[expect(clippy::too_many_arguments)]
 pub fn overlay_model_grouped_horizontal(
     tree: &switcher::Grouping,
-    apps: &[usize],
-    windows: &[usize],
+    sequence: &[usize],
     selected: usize,
-    band: Band,
+    width_slots: usize,
     snapshot: &Snapshot,
     icons: &crate::icons::Cache,
     scale: u32,
     palette: &Palette,
     profile: StyleProfile,
-    banding: CombinedBanding,
+    banding: Banding,
     mut text: TextBackend<'_>,
 ) -> Option<OverlayModel> {
-    // The app band 2 shows: the selection's parent when band 2 holds
-    // focus (a child's app), the selection itself when band 1 does (a
-    // parent or leaf).
-    let focused = match band {
-        Band::Apps => selected,
-        Band::Windows => tree.parent_of(selected).unwrap_or(selected),
-    };
-    // Band 1 always keeps the focused app in view; band 2 follows the
-    // selection only while it holds focus, else shows the app's front
-    // window left-aligned.
-    let apps_pos = apps.iter().position(|&index| index == focused)?;
-    let windows_pos = windows.iter().position(|&index| index == selected);
-    let band1 = band_window(apps.len(), apps_pos, banding.tiles, banding.band1);
-    let band2 = match (band, windows_pos) {
-        (Band::Windows, Some(pos)) => band_window(windows.len(), pos, banding.tiles, banding.band2),
-        _ => band_window(windows.len(), 0, banding.tiles, None),
-    };
-    let band1_slots = band1.content + band1.bottom as usize;
-    let band2_slots = band2.content + band2.bottom as usize;
-    let mut rows = Vec::with_capacity(band1_slots + band2_slots);
-    // The chord ordinal rides the flat reading order across both bands.
-    let mut hint_pos = 0usize;
-    for position in 0..band1.content {
-        let index = apps[band1.start + position];
+    let sel = sequence.iter().position(|&index| index == selected)?;
+    let window = band_window(sequence.len(), sel, banding.tiles, banding.prev);
+    let mut rows = Vec::with_capacity(window.content + window.bottom as usize);
+    for (hint_pos, position) in (0..window.content).enumerate() {
+        let index = sequence[window.start + position];
         let grow = tree.rows().get(index)?;
         // Unreachable in practice: the caller filtered to live windows.
         let toplevel = snapshot
@@ -1690,7 +1609,7 @@ pub fn overlay_model_grouped_horizontal(
         rows.push(RowModel {
             title,
             icon: icons.bitmap(&grow.app_id, TILE_ICON, scale, palette),
-            selected: band == Band::Apps && index == selected,
+            selected: index == selected,
             handle: Some(grow.handle),
             kind: grow.kind,
             count: if grow.kind == RowKind::Parent {
@@ -1701,51 +1620,21 @@ pub fn overlay_model_grouped_horizontal(
             hint: RowHint::ctrl(hint_pos),
             expanded: false,
         });
-        hint_pos += 1;
     }
-    if band1.bottom {
+    if window.bottom {
         rows.push(continuation_row());
     }
-    for position in 0..band2.content {
-        let index = windows[band2.start + position];
-        let grow = tree.rows().get(index)?;
-        let toplevel = snapshot
-            .toplevels
-            .iter()
-            .find(|t| t.handle == grow.handle)?;
-        rows.push(RowModel {
-            title: compose_tile_title(&toplevel.title, &toplevel.app_id, &mut text, scale),
-            icon: icons.bitmap(&grow.app_id, TILE_ICON, scale, palette),
-            selected: band == Band::Windows && index == selected,
-            handle: Some(grow.handle),
-            kind: grow.kind,
-            count: 0,
-            hint: RowHint::ctrl(hint_pos),
-            expanded: false,
-        });
-        hint_pos += 1;
-    }
-    if band2.bottom {
-        rows.push(continuation_row());
-    }
-    let slots = band1_slots.max(band2_slots);
     Some(OverlayModel {
         rows,
-        // One card width for both bands: the wider band's grid, the
-        // narrower left-aligned (the spec's "one tile pitch and one card
-        // width throughout").
-        width: band_width(slots as u32),
-        height: combined_card_height(),
-        viewport: band1,
+        // The frozen grid: the daemon's max of the two shapes, whatever
+        // the strip is showing now.
+        width: band_width(width_slots as u32),
+        height: band_card_height(),
+        viewport: window,
         profile,
         horizontal: true,
         query: None,
         hovered: None,
-        combined: Some(Combined {
-            apps: band1_slots,
-            band1,
-            band2,
-        }),
     })
 }
 
@@ -1847,7 +1736,6 @@ fn finish_model(
         horizontal: false,
         query: None,
         hovered: None,
-        combined: None,
     })
 }
 
@@ -2020,45 +1908,19 @@ pub fn render(
         }
     }
     if model.horizontal {
-        if let Some(combined) = &model.combined {
-            // The combined card: band 1 (app tiles) on top, band 2 (the
-            // focused app's window tiles) below the separator — one tile
-            // renderer, two band tops.
-            render_band(
-                model,
-                canvas,
-                stride,
-                lw,
-                scale,
-                palette,
-                &mut text,
-                TILE_PAD_Y,
-                &model.rows[..combined.apps],
-            );
-            render_band(
-                model,
-                canvas,
-                stride,
-                lw,
-                scale,
-                palette,
-                &mut text,
-                TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR,
-                &model.rows[combined.apps..],
-            );
-        } else {
-            render_band(
-                model,
-                canvas,
-                stride,
-                lw,
-                scale,
-                palette,
-                &mut text,
-                TILE_PAD_Y,
-                &model.rows,
-            );
-        }
+        // One tile renderer, one band top: the flat band and the
+        // grouped strip share the single-band paint.
+        render_band(
+            model,
+            canvas,
+            stride,
+            lw,
+            scale,
+            palette,
+            &mut text,
+            TILE_PAD_Y,
+            &model.rows,
+        );
         border_ring(
             canvas,
             stride,
@@ -2601,8 +2463,8 @@ fn border_ring(
 /// no icon, no title, no badge (a tile beyond addressability earns
 /// nothing but its dots).
 /// Paints one band of tiles — `tiles` at a card top of `y0` — the shared
-/// tile renderer behind the flat horizontal band and each of the
-/// combined card's two bands. A tile is the honest analogue the
+/// tile renderer behind the flat horizontal band and the grouped strip.
+/// A tile is the honest analogue the
 /// research locked: the app icon over the clamped title, the selection
 /// filling the whole tile cell, the Ctrl+N chord as a corner badge, and
 /// a handleless tile drawing the wordless `…` centered in the cell.
@@ -3657,8 +3519,8 @@ pub fn key_input(
         // Ctrl+digits map with or without shift held; without Ctrl the
         // number row stays Other — it must never surprise-activate. In
         // vertical grouped mode the chord addresses level-1 entries; in
-        // flat and combined it addresses rows (the combined card's rows
-        // are already band 1 then band 2 in reading order).
+        // flat and combined it addresses rows (the strip's rows are
+        // already the reading order).
         _ if ctrl_held && let Some(row) = digit_row(keysym) => (
             match mode {
                 Grouped => GestureKey::SelectApp(row),
@@ -6369,7 +6231,6 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
-            combined: None,
         }
     }
 
@@ -7049,7 +6910,6 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
-            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -7089,7 +6949,6 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
-            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let glyph_x = (PAD_X + (ICON - GLYPH_W * GLYPH_SCALE) / 2) * 2;
@@ -7364,7 +7223,6 @@ mod tests {
                 horizontal: false,
                 query: None,
                 hovered: None,
-                combined: None,
             };
             let (canvas, stride) = rendered(&model, 2);
             // A probe column inside the band's horizontal extent, in the
@@ -7428,7 +7286,6 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
-            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -7463,7 +7320,6 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
-            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -7512,7 +7368,6 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
-            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -7553,7 +7408,6 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
-            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -7610,7 +7464,6 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
-            combined: None,
         };
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4;
@@ -8852,20 +8705,17 @@ mod tests {
         assert_eq!(hover.observe(Some(3)), None, "fresh session seeds again");
     }
 
-    // --- grouped-horizontal: the two-band card (GH1) ---------------------
+    // --- grouped-horizontal: the derived strip (`inplace-strip`) ---------
 
-    /// Like [`build_grouped`], combined: the two-band card over the same
-    /// fixture. `apps` and `windows` are the tree's level-1 and the
-    /// focused app's window rows (the daemon's liveness-filtered
-    /// domains), `selected` the tree row the session holds, `band`
-    /// which band holds it. The builder takes no expansion set — the
-    /// combination has no collapse state, pinned structurally.
-    fn build_combined(
+    /// The strip card over [`grouped_snap`]'s tree: `sequence` the
+    /// derived strip (tree indices, as the daemon derived it),
+    /// `selected` the tree row the session holds, `width_slots` the
+    /// frozen width — the daemon's max of the closed and open shapes.
+    fn build_strip(
         snap: &Snapshot,
-        apps: &[usize],
-        windows: &[usize],
+        sequence: &[usize],
         selected: usize,
-        band: Band,
+        width_slots: usize,
         tiles: usize,
     ) -> Option<OverlayModel> {
         let tree = crate::switcher::Grouping::new(
@@ -8875,32 +8725,28 @@ mod tests {
         );
         overlay_model_grouped_horizontal(
             &tree,
-            apps,
-            windows,
+            sequence,
             selected,
-            band,
+            width_slots,
             snap,
             &no_icons(),
             2,
             &Palette::dark(),
             StyleProfile::default(),
-            CombinedBanding {
-                tiles,
-                band1: None,
-                band2: None,
-            },
+            Banding { tiles, prev: None },
             TextBackend::Bitmap,
         )
     }
 
     /// The grouped fixture's tree indices: [P-a1, C-a1, C-a2, L-b, L-u]
-    /// over [`grouped_snap`] — apps [0, 3, 4], a's windows [1, 2].
+    /// over [`grouped_snap`] — the closed strip [0, 3, 4] (the level-1
+    /// rows), the open strip [1, 2, 3, 4] (a's run at a's slot).
     fn combined_fixture() -> (Snapshot, Vec<usize>, Vec<usize>) {
         let snap = grouped_snap();
         (
             snap.clone(),
             vec![0, 3, 4],
-            vec![1, 2], // app.a's children, front window first
+            vec![1, 2, 3, 4], // a's windows in a's slot, then the other apps
         )
     }
 
@@ -9089,16 +8935,43 @@ mod tests {
     }
 
     #[test]
-    fn combined_model_lays_both_bands_in_reading_order() {
-        // Band 1: every level-1 entry as an app tile — the parent
-        // labelled by its app_id with its window count, the leaves by
-        // their titles. Band 2: the focused app's whole window set,
-        // MRU-first. One selection, in whichever band holds it.
-        let (snap, apps, windows) = combined_fixture();
-        let model =
-            build_combined(&snap, &apps, &windows, 0, Band::Apps, 8).expect("eligible windows");
+    fn strip_model_lays_the_open_run_in_the_app_slot() {
+        // The open shape: the selected app's tile is replaced in place
+        // by its window run — window tiles at the app's slot, the other
+        // apps' tiles around it, one selection on the window tile. The
+        // strip's height is the single band's.
+        let (snap, _closed, open) = combined_fixture();
+        let model = build_strip(&snap, &open, 1, 4, 8).expect("eligible windows");
         assert!(model.horizontal);
-        let combined = model.combined.expect("the two-band card");
+        let rows: Vec<(crate::switcher::RowKind, Option<Handle>, bool)> = model
+            .rows
+            .iter()
+            .map(|row| (row.kind, row.handle, row.selected))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                // a's run — C-a1 selected, C-a2 — then the other apps.
+                (crate::switcher::RowKind::Child, Some(Handle(1)), true),
+                (crate::switcher::RowKind::Child, Some(Handle(3)), false),
+                (crate::switcher::RowKind::Leaf, Some(Handle(2)), false),
+                (crate::switcher::RowKind::Leaf, Some(Handle(4)), false),
+            ]
+        );
+        // A window tile carries its own title; the strip never grows a
+        // second band.
+        assert_eq!(model.rows[0].title, "a-front");
+        assert_eq!(model.height, band_card_height());
+    }
+
+    #[test]
+    fn strip_model_keeps_plain_app_tiles_on_a_level1_selection() {
+        // The closed shape: plain app tiles — the parent labelled by its
+        // app_id with its count, the leaves by their titles — and the
+        // width already frozen at the open shape's: ↓ opens the run
+        // inside the same grid, so the card never resizes.
+        let (snap, closed, _open) = combined_fixture();
+        let model = build_strip(&snap, &closed, 0, 4, 8).expect("eligible windows");
         let rows: Vec<(crate::switcher::RowKind, Option<Handle>, bool, usize)> = model
             .rows
             .iter()
@@ -9107,181 +8980,94 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                // Band 1: P-a (front window 1), L-b, L-u.
                 (crate::switcher::RowKind::Parent, Some(Handle(1)), true, 2),
                 (crate::switcher::RowKind::Leaf, Some(Handle(2)), false, 0),
                 (crate::switcher::RowKind::Leaf, Some(Handle(4)), false, 0),
-                // Band 2: a's windows, front first.
-                (crate::switcher::RowKind::Child, Some(Handle(1)), false, 0),
-                (crate::switcher::RowKind::Child, Some(Handle(3)), false, 0),
             ]
         );
-        // The parent commits its app's MRU-front window; a window tile
-        // commits itself (the GR parent rule, one axis over).
         assert_eq!(model.rows[0].title, "app.a");
-        assert_eq!(model.rows[3].title, "a-front");
-        // The chords read band 1 left→right then band 2 left→right.
-        let hints: Vec<Option<RowHint>> = model.rows.iter().map(|row| row.hint).collect();
+        assert_eq!(model.rows.len(), 3, "three tiles render");
         assert_eq!(
-            hints,
-            vec![
-                Some(RowHint::Ctrl(1)),
-                Some(RowHint::Ctrl(2)),
-                Some(RowHint::Ctrl(3)),
-                Some(RowHint::Ctrl(4)),
-                Some(RowHint::Ctrl(5)),
-            ]
+            model.width,
+            band_width(4),
+            "frozen at the open shape's four slots, not the shown three"
         );
-        assert_eq!(combined.apps, 3, "band 1's slots");
-        // One card width and height for both bands.
-        assert_eq!(model.width, band_width(3));
-        assert_eq!(model.height, combined_card_height());
-        // Neither band truncates inside the budget: whole windows, no
-        // affordance tiles, the shared `columns` budget honored by both.
-        assert_eq!(combined.band1.content, 3);
-        assert_eq!(combined.band2.content, 2);
     }
 
     #[test]
-    fn combined_band2_swaps_to_the_focused_app_and_single_windows_show_one_tile() {
-        // Band 2 is a viewport onto the *focused* app's windows — it
-        // swaps with band 1's selection, and a single-window app shows
-        // its one tile (uniform, no special case).
-        let (snap, apps, _) = combined_fixture();
-        let b_windows = [3usize]; // app.b's single window row
-        let model =
-            build_combined(&snap, &apps, &b_windows, 3, Band::Apps, 8).expect("eligible windows");
-        let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
-        assert_eq!(
-            handles,
-            vec![
-                Some(Handle(1)),
-                Some(Handle(2)),
-                Some(Handle(4)),
-                Some(Handle(2))
-            ],
-            "band 1 then b's single window tile"
-        );
-        let selected: Vec<bool> = model.rows.iter().map(|row| row.selected).collect();
-        assert_eq!(selected, vec![false, true, false, false]);
-    }
-
-    #[test]
-    fn combined_band2_holds_the_selection() {
-        // Focus in band 2: the window tile carries the selection, the
-        // focused app's own band-1 tile does not.
-        let (snap, apps, windows) = combined_fixture();
-        let model = build_combined(&snap, &apps, &windows, 1, Band::Windows, 8).expect("builds");
-        let selected: Vec<bool> = model.rows.iter().map(|row| row.selected).collect();
-        assert_eq!(selected, vec![false, false, false, true, false]);
-    }
-
-    #[test]
-    fn combined_bands_window_independently_with_dots() {
-        // Two budgets, two windows: band 1 truncated by `columns` spends
-        // its own trailing tile on `…`, band 2 keeps its whole (shorter)
-        // list — the affordance never widens the card, and the chords
-        // keep reading order across the affordance.
-        let (snap, apps, windows) = combined_fixture();
-        let model = build_combined(&snap, &apps, &windows, 0, Band::Apps, 2).expect("builds");
-        let combined = model.combined.expect("two bands");
-        assert_eq!(model.rows.len(), 4, "band 1: one tile + dots; band 2: two");
-        assert_eq!(model.rows[0].handle, Some(Handle(1)));
-        assert_eq!(model.rows[1].handle, None, "band 1's own affordance tile");
-        assert_eq!(model.rows[2].handle, Some(Handle(1)), "band 2's front");
-        assert_eq!(model.rows[3].handle, Some(Handle(3)));
-        assert_eq!(combined.apps, 2, "band 1's slots include its affordance");
-        assert_eq!(combined.band1.content, 1);
-        assert!(!combined.band2.bottom, "band 2 fits whole");
-        // The reading order skips the affordance: Ctrl+2 addresses
-        // band 2's first tile, not the dots.
-        let hints: Vec<Option<RowHint>> = model.rows.iter().map(|row| row.hint).collect();
-        assert_eq!(
-            hints,
-            vec![
-                Some(RowHint::Ctrl(1)),
-                None,
-                Some(RowHint::Ctrl(2)),
-                Some(RowHint::Ctrl(3))
-            ]
-        );
+    fn strip_hints_number_the_reading_order_under_nine() {
+        // Ctrl+N addresses the strip as shown: hints number the visible
+        // content tiles left→right, the `…` tile carries none, and
+        // `content_tile_handle` resolves the same order — the truncated
+        // edge under a two-tile budget.
+        let (snap, _closed, open) = combined_fixture();
+        let model = build_strip(&snap, &open, 1, 2, 2).expect("builds");
+        assert_eq!(model.rows.len(), 2, "one content tile plus the dots");
+        assert_eq!(model.rows[0].hint, Some(RowHint::Ctrl(1)));
+        assert_eq!(model.rows[1].hint, None, "the affordance tile");
+        assert_eq!(model.content_tile_handle(0), Some(Handle(1)));
         assert_eq!(
             model.content_tile_handle(1),
-            Some(Handle(1)),
-            "Ctrl+2 resolves band 2's front window, never the dots"
+            None,
+            "only one content tile shows"
         );
-        // The wider band sizes the shared card width.
-        assert_eq!(model.width, band_width(2));
+        assert_eq!(model.rows[1].handle, None, "the dots never hold a window");
     }
 
     #[test]
-    fn combined_ctrl_hints_address_content_tiles_in_reading_order() {
-        // Every displayed hint is wired: the Nth content tile in reading
-        // order (band 1 then band 2, affordances skipped) is exactly the
-        // tile the Nth chord addresses, and the ceiling past nine
-        // resolves nothing.
-        let (snap, apps, windows) = combined_fixture();
-        let model = build_combined(&snap, &apps, &windows, 0, Band::Apps, 8).expect("builds");
-        assert_eq!(model.content_tile_handle(0), Some(Handle(1)), "P-a");
-        assert_eq!(model.content_tile_handle(1), Some(Handle(2)), "L-b");
-        assert_eq!(model.content_tile_handle(2), Some(Handle(4)), "L-u");
-        assert_eq!(
-            model.content_tile_handle(3),
-            Some(Handle(1)),
-            "band 2's front"
-        );
-        assert_eq!(model.content_tile_handle(4), Some(Handle(3)));
-        assert_eq!(model.content_tile_handle(5), None, "past the content tiles");
-    }
-
-    #[test]
-    fn combined_cell_at_resolves_the_band_by_y() {
-        // The pointer addresses the geometry the user saw: y picks the
-        // band (band 1 above the separator, band 2 below), x the tile
-        // within it; the separator, the card's vertical padding, and
-        // tile gaps address nothing.
-        let (snap, apps, windows) = combined_fixture();
-        let model = build_combined(&snap, &apps, &windows, 0, Band::Apps, 8).expect("builds");
+    fn strip_cell_at_addresses_every_tile_and_nothing_else() {
+        // The pointer addresses the strip's geometry: every tile cell
+        // maps to its row at any y inside the card (the cell is the
+        // unit), while tile gaps, the card's side padding, and the
+        // space past the last tile address nothing.
+        let (snap, closed, _open) = combined_fixture();
+        let model = build_strip(&snap, &closed, 0, 4, 8).expect("builds");
         let scale = 2u32;
         let tile_center_x = |index: u32| {
             (TILE_PAD_X + index * (TILE_W + TILE_GAP) + TILE_W / 2) as f64 * scale as f64
         };
-        let band1_y = (TILE_PAD_Y + TILE_CELL_H / 2) as f64 * scale as f64;
-        let band2_top = TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR;
-        let band2_y = (band2_top + TILE_CELL_H / 2) as f64 * scale as f64;
-        let separator_y = (TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR / 2) as f64 * scale as f64;
-        assert_eq!(model.cell_at(tile_center_x(1), band1_y, scale), Some(1));
+        let mid_y = band_card_height() as f64 / 2.0 * scale as f64;
+        assert_eq!(model.cell_at(tile_center_x(0), mid_y, scale), Some(0));
+        assert_eq!(model.cell_at(tile_center_x(1), mid_y, scale), Some(1));
+        assert_eq!(model.cell_at(tile_center_x(2), mid_y, scale), Some(2));
         assert_eq!(
-            model.cell_at(tile_center_x(0), band2_y, scale),
-            Some(3),
-            "band 2's first tile is row 3 in reading order"
-        );
-        assert_eq!(
-            model.cell_at(tile_center_x(0), separator_y, scale),
+            model.cell_at(tile_center_x(3), mid_y, scale),
             None,
-            "the separator addresses nothing"
+            "past the last tile"
         );
-        assert_eq!(
-            model.cell_at(
-                tile_center_x(0),
-                (TILE_PAD_Y / 2) as f64 * scale as f64,
-                scale
-            ),
-            None,
-            "the card's top padding addresses nothing"
-        );
-        // A gap seam between band 1's tiles: x inside the gap, y valid.
         let gap_x = (TILE_PAD_X + TILE_W + TILE_GAP / 2) as f64 * scale as f64;
-        assert_eq!(model.cell_at(gap_x, band1_y, scale), None);
+        assert_eq!(model.cell_at(gap_x, mid_y, scale), None, "the gap seam");
+        assert_eq!(
+            model.cell_at((TILE_PAD_X / 2) as f64 * scale as f64, mid_y, scale),
+            None,
+            "the card's side padding"
+        );
     }
 
     #[test]
-    fn combined_render_paints_both_bands() {
-        // The paint contract, one axis over: the selected band-2 tile
-        // fills at its band's offset, band 1's unselected app tile stays
-        // the card, and the separator row never carries a band.
-        let (snap, apps, windows) = combined_fixture();
-        let model = build_combined(&snap, &apps, &windows, 1, Band::Windows, 8).expect("builds");
+    fn strip_model_shows_every_window_once() {
+        // The duplicate-tile bug's model-level regression: the strip's
+        // tiles never hold the same window twice — a single-window app
+        // is one leaf tile, no run below it.
+        let (snap, closed, _open) = combined_fixture();
+        let model = build_strip(&snap, &closed, 3, 3, 8).expect("builds");
+        let mut handles: Vec<Handle> = model.rows.iter().filter_map(|row| row.handle).collect();
+        handles.sort();
+        handles.dedup();
+        assert_eq!(
+            handles.len(),
+            model.rows.len(),
+            "every tile a distinct window"
+        );
+    }
+
+    #[test]
+    fn strip_render_paints_the_selection_in_place() {
+        // The paint contract, one band over: the selected window tile
+        // fills at its slot in the strip; the unselected tiles stay the
+        // card.
+        let (snap, _closed, open) = combined_fixture();
+        let model = build_strip(&snap, &open, 1, 4, 8).expect("builds");
         let scale = 2u32;
         let lw = model.width;
         let lh = model.height;
@@ -9303,23 +9089,17 @@ mod tests {
             u32::from_le_bytes(canvas[index..index + 4].try_into().expect("pixel"))
         };
         let tile_center_x = |index: u32| TILE_PAD_X + index * (TILE_W + TILE_GAP) + TILE_W / 2;
-        let band2_top = TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR;
         let band = Palette::dark().selected_bg;
         let background = Palette::dark().background;
         assert_eq!(
-            px(tile_center_x(0), band2_top + TILE_CELL_H / 2),
-            band,
-            "the selected band-2 tile fills at its band's offset"
-        );
-        assert_eq!(
             px(tile_center_x(0), TILE_PAD_Y + TILE_CELL_H / 2),
-            background,
-            "band 1's unselected app tile stays the card"
+            band,
+            "the selected window tile fills at its slot"
         );
         assert_eq!(
-            px(lw / 2, TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR / 2),
+            px(tile_center_x(1), TILE_PAD_Y + TILE_CELL_H / 2),
             background,
-            "the separator paints only the card"
+            "the unselected window tile stays the card"
         );
     }
 

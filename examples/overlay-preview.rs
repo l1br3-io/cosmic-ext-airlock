@@ -469,12 +469,12 @@ fn band_icons(scale: u32, palette: &ui::Palette) -> Vec<Option<Rc<IconBitmap>>> 
         .collect()
 }
 
-/// The grouped-horizontal family (`grouped-horizontal`): the two-band
-/// card composed the way the daemon composes it — band 1 the app tiles,
-/// band 2 the focused app's window tiles, each behind its own
-/// `band_window`, one shared card width, hints in reading order across
-/// both bands. GH1's working tokens (the band separator included); GH2's
-/// sheet freezes the hierarchy values on scenarios of this shape.
+/// The grouped-horizontal family (`grouped-horizontal`): the strip
+/// composed the way the daemon composes it — the app tiles with the
+/// selected app's tile replaced in place by its window run, one
+/// sequence behind one `band_window`, hints in reading order. GH1's
+/// working tokens; GH2's sheet freezes the hierarchy values on
+/// scenarios of this shape.
 fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Vec<Scenario> {
     let tile = |title: &str,
                 icon: Option<Rc<IconBitmap>>,
@@ -500,72 +500,74 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
         ..RowModel::default()
     };
     // apps: (label, window count); windows: the focused app's titles.
+    // selected: Some((Apps, i)) — the closed strip, an app tile; some
+    // ((Windows, pos)) — the open run, that window. The strip derives:
+    // the focused app's tile is replaced in place by its run exactly
+    // while a window holds the selection (`inplace-strip`).
     let combined = |apps: &[(&str, usize)],
                     focused: usize,
                     windows: &[&str],
                     selected: Option<(ui::Band, usize)>,
                     tiles: usize|
      -> OverlayModel {
-        let app_sel = focused;
-        let band1 = ui::band_window(apps.len(), app_sel, tiles, None);
-        let band2 = ui::band_window(
-            windows.len(),
-            selected.map_or(0, |(band, pos)| match band {
-                ui::Band::Windows => pos,
-                ui::Band::Apps => 0,
-            }),
-            tiles,
-            None,
-        );
-        let mut rows = Vec::new();
+        let open = matches!(selected, Some((ui::Band::Windows, _)));
+        let mut full: Vec<RowModel> = Vec::new();
+        let mut selected_row = 0usize;
+        let mut icon_index = 0usize;
         let mut hint_pos = 0usize;
-        for position in 0..band1.content {
-            let index = band1.start + position;
-            let (label, count) = apps[index];
-            let mut row = tile(
-                label,
-                icons[index % icons.len()].clone(),
-                false,
-                Some(hint_pos),
-            );
-            row.kind = switcher_row_kind(count);
-            row.count = count;
-            row.selected = selected == Some((ui::Band::Apps, index));
-            rows.push(row);
-            hint_pos += 1;
+        for (index, &(label, count)) in apps.iter().enumerate() {
+            if open && index == focused {
+                for (position, window) in windows.iter().enumerate() {
+                    let selected = selected == Some((ui::Band::Windows, position));
+                    if selected {
+                        selected_row = full.len();
+                    }
+                    full.push(tile(
+                        window,
+                        icons[icon_index % icons.len()].clone(),
+                        selected,
+                        Some(hint_pos),
+                    ));
+                    icon_index += 1;
+                    hint_pos += 1;
+                }
+            } else {
+                let mut row = tile(
+                    label,
+                    icons[icon_index % icons.len()].clone(),
+                    false,
+                    Some(hint_pos),
+                );
+                row.kind = switcher_row_kind(count);
+                row.count = count;
+                if selected == Some((ui::Band::Apps, index)) {
+                    selected_row = full.len();
+                    row.selected = true;
+                }
+                full.push(row);
+                icon_index += 1;
+                hint_pos += 1;
+            }
         }
-        if band1.bottom {
+        let viewport = ui::band_window(full.len(), selected_row, tiles, None);
+        let mut rows: Vec<RowModel> =
+            full[viewport.start..viewport.start + viewport.content].to_vec();
+        if viewport.bottom {
             rows.push(dots());
         }
-        for position in 0..band2.content {
-            let index = band2.start + position;
-            rows.push(tile(
-                windows[index],
-                icons[index % icons.len()].clone(),
-                selected == Some((ui::Band::Windows, index)),
-                Some(hint_pos),
-            ));
-            hint_pos += 1;
-        }
-        if band2.bottom {
-            rows.push(dots());
-        }
-        let slots =
-            (band1.content + band1.bottom as usize).max(band2.content + band2.bottom as usize);
+        // The width freeze: the closed and open shapes' slots, whichever
+        // the strip shows now.
+        let open_len = apps.len() + windows.len() - 1;
+        let width_slots = apps.len().min(tiles).max(open_len.min(tiles));
         OverlayModel {
             rows,
-            width: ui::band_width(slots as u32),
-            height: ui::combined_card_height(),
-            viewport: band1,
+            width: ui::band_width(width_slots as u32),
+            height: ui::band_card_height(),
+            viewport,
             profile: ui::StyleProfile::default(),
             horizontal: true,
             query: None,
             hovered: None,
-            combined: Some(ui::Combined {
-                apps: band1.content + band1.bottom as usize,
-                band1,
-                band2,
-            }),
         }
     };
     let editor_windows = [
@@ -690,7 +692,6 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
             horizontal: true,
             query: None,
             hovered: None,
-            combined: None,
         }
     };
     // The 48-column clamp input: the tile's own budget (eleven columns
@@ -801,7 +802,6 @@ fn windowed(
         horizontal: false,
         query: None,
         hovered: None,
-        combined: None,
     }
 }
 

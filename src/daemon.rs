@@ -81,20 +81,14 @@ impl Mru {
 /// is dismissed and the next press starts fresh against real state. The
 /// frozen scope extends the same philosophy to settings: an edit landing
 /// mid-gesture changes nothing until the next press.
-/// The combined card's addressing map: band 1's apps and band 2's
-/// windows (tree indices) exactly as the last model rendered them, beside
-/// each band's viewport — so a pointer row maps back to a tree index
-/// without handle guessing and the per-band `…` follow carries on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CombinedMap {
-    band1: crate::ui::Viewport,
-    band2: crate::ui::Viewport,
-    apps: Vec<usize>,
-    windows: Vec<usize>,
-}
-
 /// The frozen session — the selection ring over a scope plus the settings
 /// frozen at open. See [`session_step`] for how sessions are built.
+///
+/// For a grouped session, [`Self::visible`] and [`Self::viewport`] are
+/// the one-sequence map: the exact strip the last model rendered (the
+/// derived sequence, `inplace-strip`) beside the window it rendered it
+/// under, so pointer rows map back to tree rows without handle guessing
+/// and the sticky `…` follow carries on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Switch {
     ring: switcher::Ring,
@@ -192,13 +186,9 @@ pub struct Switch {
     /// band 2 (window tiles). `None` on every non-combined session; the
     /// band is focus, not collapse: the combined card has no collapse
     /// state, so band 2 always shows the focused app's whole window set.
+    /// (The strip derives its whole shape from the selection — this
+    /// field is the walks' legacy seam, deleted with them in S3.)
     band: Option<crate::ui::Band>,
-    /// The combined card's addressing map for the model last rendered:
-    /// band 1's apps and band 2's windows (tree indices) beside their
-    /// viewports, so a pointer row maps back to a tree index without
-    /// handle guessing and each band's `…` follow carries on. `None` on
-    /// every non-combined session.
-    combined_map: Option<CombinedMap>,
 }
 
 impl Switch {
@@ -228,27 +218,6 @@ impl Switch {
             return filtered.select(handle);
         }
         if let Some(tree) = &self.tree {
-            if let Some(map) = &self.combined_map {
-                // Combined: search band 1's apps then band 2's windows;
-                // the band follows which sequence the hit lives in (a
-                // leaf window tile is band 2 even though its kind is
-                // Leaf). A group's front window is both its parent and
-                // its first child, so the first hit lands on the parent
-                // — harmless, since a click/Ctrl+N commits immediately.
-                let found = map
-                    .apps
-                    .iter()
-                    .chain(map.windows.iter())
-                    .copied()
-                    .find(|&index| tree.rows()[index].handle == handle)?;
-                self.tree_sel = found;
-                self.band = Some(if map.apps.contains(&found) {
-                    crate::ui::Band::Apps
-                } else {
-                    crate::ui::Band::Windows
-                });
-                return Some(handle);
-            }
             let index = self
                 .visible
                 .iter()
@@ -267,22 +236,9 @@ impl Switch {
     /// past the window are `None`. The row index is exact where a
     /// handle alone is ambiguous — a group's front window is both its
     /// parent row and its first child, and hovering the child must
-    /// select the child. The combined card maps through its two bands
-    /// instead: band 1's apps then band 2's windows, each behind its own
-    /// viewport.
+    /// select the child. A combined session's stored sequence is its
+    /// derived strip (`inplace-strip`) — the same map, one sequence.
     fn tree_row_at(&self, row: usize) -> Option<usize> {
-        if let Some(map) = &self.combined_map {
-            let s1 = map.band1.content + map.band1.bottom as usize;
-            if row < s1 {
-                return (row < map.band1.content)
-                    .then(|| map.apps.get(map.band1.start + row).copied())
-                    .flatten();
-            }
-            let r2 = row - s1;
-            return (r2 < map.band2.content)
-                .then(|| map.windows.get(map.band2.start + r2).copied())
-                .flatten();
-        }
         let viewport = self.viewport?;
         let top = viewport.top as usize;
         if row < top || row >= top + viewport.content {
@@ -317,19 +273,11 @@ impl Switch {
     /// Applies a pointer hover crossing: flat sessions select by the
     /// event-time handle; grouped sessions by the event-time row — both
     /// captured against the model the user saw. Rev 5: every visible
-    /// row selects, headers included — the divider rule is gone. The
-    /// combined card derives its band from the row's position (band 1's
-    /// tiles come first), so a leaf window tile is never mistaken for
-    /// its band-1 app tile. Returns whether the selection moved.
+    /// row selects, headers included — the divider rule is gone. A
+    /// combined session selects through the same one-sequence map; the
+    /// strip's shape follows the selection by derivation. Returns
+    /// whether the selection moved.
     fn select_pointer_row(&mut self, row: usize, handle: Option<Handle>) -> bool {
-        if self.is_combined() {
-            let Some(index) = self.tree_row_at(row) else {
-                return false;
-            };
-            self.tree_sel = index;
-            self.band = Some(self.band_at_row(row).unwrap_or(crate::ui::Band::Apps));
-            return true;
-        }
         match &self.tree {
             Some(_) => {
                 let Some(index) = self.tree_row_at(row) else {
@@ -359,19 +307,6 @@ impl Switch {
                 Some(tree.parent_of(self.tree_sel).unwrap_or(self.tree_sel))
             }
             None => None,
-        }
-    }
-
-    /// The band a model row lives in: band 1 for rows before band 1's
-    /// slots, band 2 for the rest. `None` off the card or on a
-    /// continuation tile.
-    fn band_at_row(&self, row: usize) -> Option<crate::ui::Band> {
-        let map = self.combined_map.as_ref()?;
-        let s1 = map.band1.content + map.band1.bottom as usize;
-        if row < s1 {
-            (row < map.band1.content).then_some(crate::ui::Band::Apps)
-        } else {
-            (row - s1 < map.band2.content).then_some(crate::ui::Band::Windows)
         }
     }
 }
@@ -502,7 +437,6 @@ pub fn ring_step(
             visible: Vec::new(),
             viewport: None,
             band: combined.then_some(crate::ui::Band::Apps),
-            combined_map: None,
         });
         if open.as_ref().is_some_and(|session| session.tree.is_some()) {
             let session = open.as_mut()?;
@@ -834,7 +768,6 @@ fn combined_sequence(session: &Switch, snapshot: &Snapshot) -> (Vec<usize>, usiz
 /// frozen MRU order, a leaf's own single window. The shared domain of
 /// the run derivation and ↓'s ≥2 rule — the frozen window set decides
 /// liveness, as it always has.
-#[cfg_attr(not(test), allow(dead_code))]
 fn strip_windows(
     tree: &switcher::Grouping,
     snapshot: &Snapshot,
@@ -860,16 +793,24 @@ fn strip_windows(
 /// holding fewer than two live windows derives no run — the shrink
 /// rule's derivation half ([`coerce_shrunk_run`] owns the selection
 /// half), so a single-window app never shows the same handle twice.
-#[cfg_attr(not(test), allow(dead_code))]
+/// The strip's closed shape: the level-1 tree rows (parents and
+/// leaves), liveness-filtered — the plain app tiles every level-1
+/// selection shows.
+fn strip_level1(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
+    let Some(tree) = session.tree.as_ref() else {
+        return Vec::new();
+    };
+    tree.visible(&HashSet::new())
+        .into_iter()
+        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, session.scope))
+        .collect()
+}
+
 fn strip_sequence(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
     let Some(tree) = session.tree.as_ref() else {
         return Vec::new();
     };
-    let level1: Vec<usize> = tree
-        .visible(&HashSet::new())
-        .into_iter()
-        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, session.scope))
-        .collect();
+    let level1 = strip_level1(session, snapshot);
     // The open run: the selected child's parent's live windows, but
     // only while the ≥2 rule holds. Tree order is strip order, so the
     // run splices between the level-1 rows around the parent's slot —
@@ -899,7 +840,6 @@ fn strip_sequence(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
 /// is closed by derivation either way; this keeps the selection on a
 /// tile the card actually shows, never dangling inside a gone run.
 /// Returns whether the selection moved.
-#[cfg_attr(not(test), allow(dead_code))]
 fn coerce_shrunk_run(session: &mut Switch, snapshot: &Snapshot) -> bool {
     let Some(tree) = session.tree.as_ref() else {
         return false;
@@ -929,6 +869,38 @@ fn opens_run(session: &Switch, snapshot: &Snapshot, app: usize) -> bool {
         return false;
     };
     strip_windows(tree, snapshot, session.scope, app).len() >= 2
+}
+
+/// The strip's render inputs: the derived sequence beside the width
+/// frozen against both of the selection's shapes — the closed shape's
+/// slots (the level-1 rows under the tile budget) and the open shape's
+/// (the selection's app's run spliced in), whichever the card shows
+/// now. ↓ and ↑ toggle between the two; the max never moves, so the
+/// card never resizes on either key. A leaf or a shrunk parent opens
+/// nothing — its open shape is the closed one.
+fn strip_render(session: &Switch, snapshot: &Snapshot) -> (Vec<usize>, usize) {
+    let Some(tree) = session.tree.as_ref() else {
+        return (Vec::new(), 0);
+    };
+    let level1 = strip_level1(session, snapshot);
+    let sequence = strip_sequence(session, snapshot);
+    // The app whose run the freeze pins: the selection's parent when a
+    // child holds it, the selection itself when a tile does. A dead
+    // parent tile (its front window gone) still finds its slot, so the
+    // splice length drops the tile only when the level-1 list holds it.
+    let app = match tree.rows().get(session.tree_sel).map(|row| row.kind) {
+        Some(switcher::RowKind::Child) => tree.parent_of(session.tree_sel),
+        _ => Some(session.tree_sel),
+    };
+    let open_len = app.map_or(level1.len(), |app| {
+        level1.len() + strip_windows(tree, snapshot, session.scope, app).len()
+            - usize::from(level1.contains(&app))
+    });
+    let slots = level1
+        .len()
+        .min(session.tiles)
+        .max(open_len.min(session.tiles));
+    (sequence, slots)
 }
 
 /// ←/→ in the combined card: step the focused band's tiles, wrapping.
@@ -2196,8 +2168,11 @@ fn show_selection(
     );
     // A grouped session stores the visible sequence its card renders —
     // the exact list the pointer's row indexes address — beside the
-    // model that rendered it.
-    if let Some(current) = open.as_mut() {
+    // model that rendered it. The combined session's list is its
+    // derived strip, stored in its own branch below.
+    if let Some(current) = open.as_mut()
+        && !current.is_combined()
+    {
         current.visible = grouped_visible(current, snapshot, expanded);
     }
     let model = open.as_mut().and_then(|current| {
@@ -2270,66 +2245,52 @@ fn show_selection(
                 })
                 .map(|model| crate::ui::with_query(model, &current.query.clone()));
         }
+        // The combined session renders the derived strip
+        // (`inplace-strip`) — settled before the shared match, which
+        // borrows the tree immutably while this branch must mutate the
+        // session: settle the shrink rule, derive the sequence and its
+        // frozen width, render one band. The stored `visible` becomes
+        // the strip's sequence — the pointer's one-sequence map.
+        if current.is_combined() {
+            coerce_shrunk_run(current, snapshot);
+            let (sequence, width_slots) = strip_render(current, snapshot);
+            current.visible = sequence.clone();
+            let tree = current
+                .tree
+                .as_ref()
+                .expect("combined sessions carry a tree");
+            return crate::ui::overlay_model_grouped_horizontal(
+                tree,
+                &sequence,
+                current.tree_sel,
+                width_slots,
+                snapshot,
+                icons,
+                scale,
+                &palette,
+                current.profile,
+                crate::ui::Banding {
+                    tiles: current.tiles,
+                    prev: current.viewport,
+                },
+                crate::ui::text_backend(&text, session.text_system()),
+            );
+        }
         match (&current.tree, current.app.as_deref()) {
             // Grouped plain session: the frozen tree cut to the stored
-            // visible sequence, selection by tree row — or, combined,
-            // the two-band card.
-            (Some(tree), None) => {
-                if current.is_combined() {
-                    let apps = combined_apps(current, snapshot);
-                    let focused = current.combined_focused().unwrap_or(current.tree_sel);
-                    let windows = combined_windows(current, snapshot, focused);
-                    let band = current.band.unwrap_or(crate::ui::Band::Apps);
-                    let prev = current
-                        .combined_map
-                        .as_ref()
-                        .map(|map| (map.band1, map.band2));
-                    let model = crate::ui::overlay_model_grouped_horizontal(
-                        tree,
-                        &apps,
-                        &windows,
-                        current.tree_sel,
-                        band,
-                        snapshot,
-                        icons,
-                        scale,
-                        &palette,
-                        current.profile,
-                        crate::ui::CombinedBanding {
-                            tiles: current.tiles,
-                            band1: prev.map(|(band1, _)| band1),
-                            band2: prev.map(|(_, band2)| band2),
-                        },
-                        crate::ui::text_backend(&text, session.text_system()),
-                    );
-                    // Remember the two band sequences and viewports the
-                    // model just rendered — the pointer's row indexes and
-                    // the per-band follow address this exact map.
-                    if let Some(model) = &model
-                        && let Some(combined) = model.combined
-                    {
-                        current.combined_map = Some(CombinedMap {
-                            band1: combined.band1,
-                            band2: combined.band2,
-                            apps,
-                            windows,
-                        });
-                    }
-                    return model;
-                }
-                crate::ui::overlay_model_grouped(
-                    tree,
-                    &current.visible,
-                    current.tree_sel,
-                    snapshot,
-                    icons,
-                    scale,
-                    &palette,
-                    current.profile,
-                    windowing,
-                    crate::ui::text_backend(&text, session.text_system()),
-                )
-            }
+            // visible sequence, selection by tree row.
+            (Some(tree), None) => crate::ui::overlay_model_grouped(
+                tree,
+                &current.visible,
+                current.tree_sel,
+                snapshot,
+                icons,
+                scale,
+                &palette,
+                current.profile,
+                windowing,
+                crate::ui::text_backend(&text, session.text_system()),
+            ),
             // Flat and same-app sessions (the exemption): the flat
             // card over the (possibly re-filtered) snapshot, selection
             // by ring — the horizontal band for a horizontal session
@@ -4404,7 +4365,6 @@ mod tests {
             text: crate::text::TextDecision::Bitmap,
             viewport: None,
             band: None,
-            combined_map: None,
         };
         assert_eq!(commit_target(&confined, &snap), None);
     }
@@ -6832,33 +6792,33 @@ mod tests {
     }
 
     #[test]
-    fn combined_pointer_rows_map_to_the_exact_band() {
-        // A pointer crossing maps through the stored two-band map: the
-        // row index carries the band, so hovering the child tile
-        // selects the child (band 2) even though its handle is also its
-        // app's parent row — and hovering an app tile selects band 1.
+    fn combined_pointer_rows_map_through_the_strip_sequence() {
+        // A pointer crossing maps through the one-sequence map: the
+        // stored strip (visible + viewport) addresses the exact tree
+        // row, so hovering a window tile inside a run selects that
+        // window even though its handle is also its app's parent row —
+        // and the shape follows the selection by derivation.
         let snap = grouped_two_apps();
         let (mut open, _expanded) = combined_session(&snap);
         let session = open.as_mut().expect("open");
-        let whole = crate::ui::Viewport {
+        // a's run open at a's slot, b's tile after it.
+        session.visible = vec![1, 2, 3];
+        session.viewport = Some(crate::ui::Viewport {
             start: 0,
-            content: 2,
+            content: 3,
             top: false,
             bottom: false,
-        };
-        session.combined_map = Some(CombinedMap {
-            band1: whole,
-            band2: whole,
-            apps: vec![0, 3],
-            windows: vec![1, 2],
         });
-        session.band = Some(crate::ui::Band::Apps);
-        assert!(session.select_pointer_row(2, Some(Handle(1))));
-        assert_eq!(session.tree_sel, 1, "the child, not its parent");
-        assert_eq!(session.band, Some(crate::ui::Band::Windows));
+        assert!(session.select_pointer_row(1, Some(Handle(3))));
+        assert_eq!(session.tree_sel, 2, "a's second window, not its parent");
         assert!(session.select_pointer_row(0, Some(Handle(1))));
-        assert_eq!(session.tree_sel, 0, "the parent tile");
-        assert_eq!(session.band, Some(crate::ui::Band::Apps));
+        assert_eq!(session.tree_sel, 1, "the window tile, not its parent row");
+        assert!(session.select_pointer_row(2, Some(Handle(3))));
+        assert_eq!(session.tree_sel, 3, "b's app tile closes the run (derived)");
+        assert!(
+            !session.select_pointer_row(3, Some(Handle(3))),
+            "past the window addresses nothing"
+        );
     }
 
     #[test]
@@ -7015,6 +6975,31 @@ mod tests {
             !coerce_shrunk_run(open.as_mut().expect("open"), &shrunk),
             "a level-1 selection never coerces"
         );
+    }
+
+    #[test]
+    fn strip_width_freezes_across_down_and_up() {
+        // The width freeze: the closed and open shapes of one selection
+        // compute one slot count, so ↓ and ↑ never resize the card —
+        // the strip reflows inside the frozen grid and back.
+        let snap = combined_three_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 3; // b's parent tile
+        session.band = Some(crate::ui::Band::Apps);
+        let (closed, closed_width) = strip_render(session, &snap);
+        assert_eq!(closed, vec![0, 3, 6], "plain app tiles");
+        assert_eq!(
+            closed_width, 4,
+            "the open shape's slots: 3 apps - 1 tile + 2 windows"
+        );
+        assert!(enter_band(session, &snap), "↓ opens the run");
+        let (opened, opened_width) = strip_render(session, &snap);
+        assert_eq!(opened, vec![0, 4, 5, 6], "b's run at b's slot");
+        assert_eq!(opened_width, 4, "the same frozen width");
+        assert!(exit_band(session), "↑ closes the run");
+        let (reclosed, reclosed_width) = strip_render(session, &snap);
+        assert_eq!((reclosed, reclosed_width), (closed, closed_width));
     }
 
     #[test]
