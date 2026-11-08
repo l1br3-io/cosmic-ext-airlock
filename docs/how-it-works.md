@@ -60,6 +60,28 @@ set never changes mid-gesture, only which of it stands expanded. The
 full table, including how a quick tap lands, lives in
 [settings.md](settings.md#grouping).
 
+## Type-to-filter
+
+While the card is up, typing filters it. Printable keys type straight
+through the held **Alt** — the query collects in a strip above the rows,
+each keystroke narrowing the card to the windows whose title or
+application name contains what you typed (case-insensitive), the
+selection landing on the first match. **Tab**, the arrows, and the
+wheel step the matches; **Enter** or releasing **Alt** switches to the
+selected one. It works in every mode — the flat list, the grouped tree
+(which flattens to its matching windows while a query stands), and the
+same-app view — because it narrows the list the gesture froze, whatever
+its shape. **Ctrl+N** keeps its chord; every other printable key,
+digits included, types.
+
+Editing and escaping: **Backspace** erases the last character (on an
+empty query it does nothing); **Escape** clears a standing query first
+and only an empty query dismisses. Clearing the query restores the
+card you had, keeping the window you had selected when it is still
+there. Nothing matches: the card keeps the query with a one-word
+verdict, and commits as a no-op. The query dies with the gesture —
+nothing persists, and the window list never re-derives mid-gesture.
+
 ## The card
 
 Each row shows the window's application icon — resolved through the same

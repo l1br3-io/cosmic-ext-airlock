@@ -55,6 +55,9 @@ pipeline the COSMIC launcher uses) beside its title.
   expand one (remembered across gestures) and ← to collapse; Tab, arrows,
   and the wheel walk the visible rows linearly — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#grouping)
+- **Type to filter**: while the card is up, typing narrows it — title or
+  app name, case-insensitive, first match selected; Backspace edits,
+  Escape clears before it dismisses. Works in every mode
 - Titles render in the desktop's own interface font — real glyphs,
   real accents, fallback chains for CJK and emoji — at the card's
   pinned 12 px; a `font` key overrides the family (see

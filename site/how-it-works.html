@@ -97,6 +97,29 @@
       full table, including how a quick tap lands, lives in
       <a href="settings.html#grouping">settings</a>.</p>
     </section>
+    <section id="type-to-filter">
+      <h2>Type-to-filter</h2>
+      <p>While the card is up, typing filters it. Printable keys type
+      straight through the held <kbd>Alt</kbd> — the query collects in a
+      strip above the rows, each keystroke narrowing the card to the
+      windows whose title or application name contains what you typed
+      (case-insensitive), the selection landing on the first match.
+      <strong>Tab</strong>, the arrows, and the wheel step the matches;
+      <strong>Enter</strong> or releasing <kbd>Alt</kbd> switches to the
+      selected one. It works in every mode — the flat list, the grouped
+      tree (which flattens to its matching windows while a query
+      stands), and the same-app view — because it narrows the list the
+      gesture froze, whatever its shape. <strong>Ctrl+N</strong> keeps
+      its chord; every other printable key, digits included, types.</p>
+      <p>Editing and escaping: <strong>Backspace</strong> erases the
+      last character (on an empty query it does nothing);
+      <strong>Escape</strong> clears a standing query first and only an
+      empty query dismisses. Clearing the query restores the card you
+      had, keeping the window you had selected when it is still there.
+      Nothing matches: the card keeps the query with a one-word verdict,
+      and commits as a no-op. The query dies with the gesture — nothing
+      persists, and the window list never re-derives mid-gesture.</p>
+    </section>
     <section id="the-card">
       <h2>The card</h2>
       <p>Each row shows the window's application icon — resolved through the

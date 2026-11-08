@@ -292,6 +292,33 @@ binary.
       the last-good value holds; a config still carrying the removed
       `scoped_cycling` key parses fine (ignored unknown)
 
+### Type-to-filter
+
+- [ ] Hold Alt+Tab on a workspace with mixed apps; type a word from one
+      title: the card narrows to its matches, the query strip above the
+      rows showing what you typed with a caret; the first match is
+      selected
+- [ ] Typing filters on title *and* app name (type an app's name); the
+      match is case-insensitive
+- [ ] With `grouping = true`: typing flattens the card to matching
+      windows — collapsed groups' windows match all the same; clearing
+      the query restores the tree with the kept window selected
+- [ ] Alt+grave (same-app): typing filters within that app's windows
+- [ ] Tab / arrows / wheel step the matches only; Enter and Alt-release
+      commit the selected match
+- [ ] Ctrl+N still instant-commits over the filtered rows; plain digits
+      type
+- [ ] Backspace edits; on an empty query it does nothing — never
+      dismisses
+- [ ] Escape clears a standing query first (the card restores, selection
+      kept when live); the second Escape dismisses
+- [ ] A query matching nothing keeps the card with the "no matches"
+      verdict; Enter commits nothing; Backspace recovers
+- [ ] A 65th typed character is ignored; an overlong query shows its
+      tail in the strip with a leading ellipsis
+- [ ] Regression: without typing, every card and key behaves exactly as
+      before
+
 ## 4. Takeover and restore
 
 - [ ] `airlock install` redirects Alt+Tab / Shift+Alt+Tab to Airlock at user

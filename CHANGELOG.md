@@ -62,6 +62,17 @@ observe, not internal mechanics.
   disclosure triangle (right = collapsed, down = expanded) and a count
   chip beside its title. See
   docs/settings.md — Grouping.
+- **Type-to-filter** — while the card is up, typing narrows it: the
+  query collects in a strip above the rows (a static caret marking its
+  end, the tail shown when it overflows), matching windows by title or
+  application name case-insensitively, selecting the first match. Tab,
+  the arrows, and the wheel step the matches; Enter or Alt-release
+  commits the selected one. Backspace edits; Escape clears a standing
+  query before dismissing; a query matching nothing keeps the card with
+  a one-word verdict instead of closing it. Works in every mode — flat,
+  grouped (the tree flattens while a query stands), and the same-app
+  view — because it narrows the frozen list, and it never re-derives
+  that list mid-gesture. See docs/how-it-works.md — Type-to-filter.
 - **A starter config on install**: `airlock install` now drops a fully
   commented `~/.config/airlock/config.toml` — every setting documented,
   nothing enabled, so behavior is unchanged until you uncomment a line.
