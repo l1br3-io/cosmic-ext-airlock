@@ -271,6 +271,38 @@ const _: () = {
     assert!(COLOR_SELECTED_BG >> 24 >= 0xFA);
 };
 
+/// WCAG 2.x relative luminance of one straight sRGB color — the alpha
+/// byte ignored: channels linearized (`c/12.92` below the 0.04045 knee,
+/// `((c+0.055)/1.055)^2.4` above), weighted `0.2126 R + 0.7152 G +
+/// 0.0722 B`. The shared measure behind both the custom pair's floor
+/// and its card's icon-tint polarity.
+pub fn relative_luminance(argb: u32) -> f32 {
+    fn channel(argb: u32, shift: u32) -> f32 {
+        let c = f32::from(((argb >> shift) & 0xFF) as u8) / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * channel(argb, 16) + 0.7152 * channel(argb, 8) + 0.0722 * channel(argb, 0)
+}
+
+/// WCAG 2.x contrast ratio of two colors, lighter luminance first:
+/// `(L1 + 0.05) / (L2 + 0.05)`, spanning 1 (same color) to 21 (black on
+/// white). Argument order never matters.
+pub fn contrast_ratio(a: u32, b: u32) -> f32 {
+    let (a, b) = (relative_luminance(a), relative_luminance(b));
+    let (lighter, darker) = if a >= b { (a, b) } else { (b, a) };
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+/// The custom `card`/`text` pair's hard floor: WCAG 2.2 AA for 12-px
+/// text, checked when the pair parses. Below it the file is rejected
+/// whole (`settings` names both keys and the measured ratio), so
+/// last-good settings hold — the floor is never a silent clamp.
+pub const CONTRAST_FLOOR: f32 = 4.5;
+
 /// One card polarity: the five colors an overlay render paints with.
 /// `selected_bg`, `border`, and `muted` stay *derived* — the text color
 /// at 20% / 18% / 55% over the card ([`COLOR_SELECTED_BG`] /
@@ -3750,6 +3782,39 @@ mod tests {
             dark,
             "auto + unreadable system paints today's card"
         );
+    }
+
+    #[test]
+    fn contrast_formulas_reproduce_the_records_numbers() {
+        // The WCAG 2.x formulas, checked against appearance-settings'
+        // shipped-ratio numbers: dark title 14.66:1, light title
+        // 14.73:1 exactly. The record's light muted 3.60:1 was measured
+        // on the blend before integer flooring (0x808081 → 3.599); the
+        // shipped floored muted (0x7F7F80) measures 3.648 — the same
+        // derivation, one rounding apart, and below AA either way (the
+        // note that keeps the muted derivation out of the floor's
+        // jurisdiction).
+        let dark = Palette::dark();
+        let light = Palette::light();
+        assert!((contrast_ratio(dark.text, dark.background) - 14.66).abs() < 0.01);
+        assert!((contrast_ratio(light.text, light.background) - 14.73).abs() < 0.01);
+        assert!(
+            (contrast_ratio(light.muted, light.background) - 3.65).abs() < 0.01,
+            "the record's 3.60 is the pre-flooring blend; the shipped bytes are 3.648"
+        );
+    }
+
+    #[test]
+    fn relative_luminance_hits_the_wcag_anchors() {
+        // White is 1, black is 0, the ratio's full span is 21:1 — the
+        // formula's own anchor points.
+        assert!((relative_luminance(0xFFFF_FFFF) - 1.0).abs() < 1e-6);
+        assert!(relative_luminance(0xFF00_0000) < 1e-6);
+        assert!(
+            (relative_luminance(0xFF_FF_00_00) - 0.2126).abs() < 1e-3,
+            "pure red is its own weight, 0.2126"
+        );
+        assert!((contrast_ratio(0xFFFF_FFFF, 0xFF00_0000) - 21.0).abs() < 1e-3);
     }
 
     #[test]

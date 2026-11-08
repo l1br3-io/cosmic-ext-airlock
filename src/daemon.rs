@@ -3241,6 +3241,7 @@ mod tests {
             rows: DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            pair: None,
             workspaces: vec![crate::settings::WorkspaceRule {
                 reference: crate::settings::WorkspaceRef::Name("browse".to_owned()),
                 isolated: false,

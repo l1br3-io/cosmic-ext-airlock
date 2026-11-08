@@ -62,6 +62,12 @@ pub struct Settings {
     /// group's entry is a pure divider there). Meaningful only beside
     /// `grouping = true`; frozen at open with it.
     pub scoped_cycling: bool,
+    /// The custom card/text pair from the paired `card`/`text` keys,
+    /// each `0x00RRGGBB` (alpha unreachable by construction) and
+    /// contrast-checked against [`ui::CONTRAST_FLOOR`] at parse.
+    /// `None` when neither key is set; a present pair pins the card
+    /// over any `theme` value.
+    pub pair: Option<(u32, u32)>,
     pub workspaces: Vec<WorkspaceRule>,
 }
 
@@ -72,6 +78,7 @@ impl Default for Settings {
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            pair: None,
             workspaces: Vec::new(),
         }
     }
@@ -197,12 +204,38 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             problem: "`scoped_cycling` must be a boolean",
         })?,
     };
+    let card = color_key(
+        root.get("card"),
+        "`card` must be a string holding a 6-digit hex color",
+        "`card` must be a 6-digit hex color like \"#1E2126\"",
+    )?;
+    let text = color_key(
+        root.get("text"),
+        "`text` must be a string holding a 6-digit hex color",
+        "`text` must be a 6-digit hex color like \"#F2F4F8\"",
+    )?;
+    let pair = match (card, text) {
+        (None, None) => None,
+        (Some(card), Some(text)) => {
+            let ratio = ui::contrast_ratio(card, text);
+            if ratio < ui::CONTRAST_FLOOR {
+                return Err(SettingsError::InvalidContrast { ratio });
+            }
+            Some((card, text))
+        }
+        _ => {
+            return Err(SettingsError::InvalidFile {
+                problem: "`card` and `text` must be set together",
+            });
+        }
+    };
     let Some(entries) = root.get("workspace") else {
         return Ok(Settings {
             theme,
             rows,
             grouping,
             scoped_cycling,
+            pair,
             ..Settings::default()
         });
     };
@@ -221,8 +254,42 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         rows,
         grouping,
         scoped_cycling,
+        pair,
         workspaces,
     })
+}
+
+/// One of the paired color keys, as `0x00RRGGBB`: `None` when the key
+/// is absent, a 6-digit hex color (`#` optional, case-insensitive)
+/// otherwise. `not_string` and `not_hex` are the key's own problems —
+/// the messages name their key; alpha never parses (the 8-digit
+/// `#RRGGBBAA` form is `not_hex` by construction).
+fn color_key(
+    value: Option<&toml::Value>,
+    not_string: &'static str,
+    not_hex: &'static str,
+) -> Result<Option<u32>, SettingsError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(text) = value.as_str() else {
+        return Err(SettingsError::InvalidFile {
+            problem: not_string,
+        });
+    };
+    Ok(Some(
+        hex_rgb(text).ok_or(SettingsError::InvalidFile { problem: not_hex })?,
+    ))
+}
+
+/// A 6-digit hex color (`#RRGGBB`, `#` optional, case-insensitive) as
+/// `0x00RRGGBB`. `None` for anything else.
+fn hex_rgb(text: &str) -> Option<u32> {
+    let digits = text.trim().strip_prefix('#').unwrap_or(text.trim());
+    if digits.len() != 6 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(digits, 16).ok()
 }
 
 /// Parses one `[[workspace]]` entry; `entry_number` is its 1-based file
@@ -295,7 +362,7 @@ fn line_column(source: &str, offset: usize) -> (usize, usize) {
 }
 
 /// Why a config could not be used.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum SettingsError {
     /// The bytes are not valid UTF-8.
     InvalidUtf8,
@@ -307,6 +374,10 @@ pub enum SettingsError {
     },
     /// The document shape is wrong outside any single entry.
     InvalidFile { problem: &'static str },
+    /// The `card`/`text` pair parses but measures below the contrast
+    /// floor; `ratio` is the measured contrast (the floor itself is
+    /// [`ui::CONTRAST_FLOOR`]).
+    InvalidContrast { ratio: f32 },
     /// Entry `entry` (1-based, in file order) is not a valid rule.
     InvalidEntry { entry: usize, problem: &'static str },
 }
@@ -329,6 +400,11 @@ impl fmt::Display for SettingsError {
             SettingsError::InvalidFile { problem } => {
                 write!(f, "settings: {problem}")
             }
+            SettingsError::InvalidContrast { ratio } => write!(
+                f,
+                "settings: `card`/`text` contrast is {ratio:.1}:1, below the {:.1}:1 floor",
+                ui::CONTRAST_FLOOR
+            ),
             SettingsError::InvalidEntry { entry, problem } => {
                 write!(f, "settings: workspace entry {entry}: {problem}")
             }
@@ -498,6 +574,7 @@ isolated = false
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
                 scoped_cycling: false,
+                pair: None,
                 workspaces: vec![
                     WorkspaceRule {
                         reference: WorkspaceRef::Name("code".to_owned()),
@@ -915,6 +992,147 @@ isolated = false
         assert_eq!(settings.workspaces.len(), 1);
     }
 
+    // --- Custom palette ---------------------------------------------------
+
+    #[test]
+    fn parse_reads_a_valid_card_text_pair() {
+        let config = b"card = \"#1E2126\"\ntext = \"#F2F4F8\"\n";
+        let settings = Settings::parse(config).expect("valid pair");
+        assert_eq!(settings.pair, Some((0x00_1E_21_26, 0x00_F2_F4_F8)));
+    }
+
+    #[test]
+    fn parse_accepts_the_pair_without_the_hash_and_case_insensitively() {
+        // The digits are the value: `#` optional, case irrelevant.
+        let config = b"card = \"1e2126\"\ntext = \"f2F4f8\"\n";
+        let settings = Settings::parse(config).expect("valid pair");
+        assert_eq!(settings.pair, Some((0x00_1E_21_26, 0x00_F2_F4_F8)));
+    }
+
+    #[test]
+    fn parse_without_either_color_key_leaves_no_pair() {
+        // An empty file and a rules-only file alike: no `card`, no
+        // `text` — the `theme` key keeps deciding the card.
+        assert_eq!(Settings::parse(b"").expect("empty").pair, None);
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert_eq!(rules_only.pair, None);
+        assert_eq!(Settings::default().pair, None);
+    }
+
+    #[test]
+    fn parse_rejects_one_color_key_alone() {
+        // The keys are a pair: either both or neither.
+        for config in [&b"card = \"#1E2126\"\n"[..], b"text = \"#F2F4F8\"\n"] {
+            let error = Settings::parse(config).expect_err("pairs only");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: "`card` and `text` must be set together"
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_rejects_colors_that_are_not_6_hex_digits() {
+        // 3/4/8 digits, non-hex — the 8-digit rejection is the alpha
+        // guard: a `#RRGGBBAA` value has no path in.
+        for (config, key) in [
+            (&b"card = \"#F2F\"\ntext = \"#F2F4F8\"\n"[..], "card"),
+            (b"card = \"#F2F4\"\ntext = \"#F2F4F8\"\n", "card"),
+            (b"card = \"#F2F4F8FF\"\ntext = \"#F2F4F8\"\n", "card"),
+            (b"card = \"#GGGGGG\"\ntext = \"#F2F4F8\"\n", "card"),
+            (b"card = \"#1E2126\"\ntext = \"#F2F4F8FF\"\n", "text"),
+        ] {
+            let error = Settings::parse(config).expect_err("not 6 hex digits");
+            let SettingsError::InvalidFile { problem } = &error else {
+                panic!(
+                    "expected InvalidFile, got {error:?} for {}",
+                    String::from_utf8_lossy(config)
+                );
+            };
+            assert!(
+                problem.contains(key),
+                "the problem names its key ({key}): {problem}"
+            );
+        }
+        // The literals, pinned: each key carries its own message.
+        assert_eq!(
+            Settings::parse(b"card = \"#F2F4F8FF\"\ntext = \"#F2F4F8\"\n"),
+            Err(SettingsError::InvalidFile {
+                problem: "`card` must be a 6-digit hex color like \"#1E2126\""
+            })
+        );
+        assert_eq!(
+            Settings::parse(b"card = \"#1E2126\"\ntext = \"#F2F4F8FF\"\n"),
+            Err(SettingsError::InvalidFile {
+                problem: "`text` must be a 6-digit hex color like \"#F2F4F8\""
+            })
+        );
+    }
+
+    #[test]
+    fn parse_rejects_non_string_colors() {
+        assert_eq!(
+            Settings::parse(b"card = 3\ntext = \"#F2F4F8\"\n"),
+            Err(SettingsError::InvalidFile {
+                problem: "`card` must be a string holding a 6-digit hex color"
+            })
+        );
+        for config in [
+            &b"card = \"#1E2126\"\ntext = { hex = \"#F2F4F8\" }\n"[..],
+            b"card = \"#1E2126\"\ntext = [\"#F2F4F8\"]\n",
+        ] {
+            assert_eq!(
+                Settings::parse(config),
+                Err(SettingsError::InvalidFile {
+                    problem: "`text` must be a string holding a 6-digit hex color"
+                }),
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn a_below_floor_pair_rejects_with_the_measured_ratio() {
+        // #ADADAD on #FFFFFF measures ~2.24:1; the diagnostic names both
+        // keys and the ratio at one decimal.
+        let config = b"card = \"#FFFFFF\"\ntext = \"#ADADAD\"\n";
+        let error = Settings::parse(config).expect_err("below the floor");
+        match &error {
+            SettingsError::InvalidContrast { ratio } => {
+                assert!((ratio - 2.24).abs() < 0.01, "measured ratio, got {ratio}");
+            }
+            other => panic!("expected InvalidContrast, got {other:?}"),
+        }
+        assert_eq!(
+            error.to_string(),
+            "settings: `card`/`text` contrast is 2.2:1, below the 4.5:1 floor"
+        );
+    }
+
+    #[test]
+    fn the_contrast_floor_boundary_accepts() {
+        // #767676 on #FFFFFF measures ~4.54:1 — the WCAG AA boundary
+        // gray, a hair over the floor: the floor rejects below, not at.
+        let config = b"card = \"#FFFFFF\"\ntext = \"#767676\"\n";
+        let settings = Settings::parse(config).expect("just over the floor");
+        assert_eq!(settings.pair, Some((0x00_FF_FF_FF, 0x00_76_76_76)));
+    }
+
+    #[test]
+    fn a_bad_pair_fails_the_whole_file() {
+        // The last-good contract: a below-floor pair beside otherwise
+        // valid keys yields no settings at all, never a partial set.
+        // Top-level keys ride before the `[[workspace]]` table — in
+        // TOML, keys after it belong to the entry.
+        let config = b"theme = \"light\"\nrows = 6\ngrouping = true\ncard = \"#FFFFFF\"\ntext = \"#ADADAD\"\n\n[[workspace]]\nname = \"code\"\n";
+        assert!(Settings::parse(config).is_err());
+    }
+
     // --- Resolution ------------------------------------------------------
 
     fn rule(reference: WorkspaceRef, isolated: bool) -> WorkspaceRule {
@@ -931,6 +1149,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            pair: None,
             workspaces: vec![rule(WorkspaceRef::Name("browse".to_owned()), false)],
         };
         let scope = scope_for(
@@ -950,6 +1169,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            pair: None,
             workspaces: vec![rule(WorkspaceRef::Position(2), false)],
         };
         let scope = scope_for(
@@ -970,6 +1190,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            pair: None,
             workspaces: vec![
                 rule(WorkspaceRef::Position(1), true),
                 rule(WorkspaceRef::Name("code".to_owned()), false),
@@ -992,6 +1213,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            pair: None,
             workspaces: vec![rule(WorkspaceRef::Position(1), false)],
         };
         let scope = scope_for(
@@ -1011,6 +1233,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            pair: None,
             workspaces: vec![rule(WorkspaceRef::Position(9), false)],
         };
         let scope = scope_for(
@@ -1030,6 +1253,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            pair: None,
             workspaces: vec![
                 rule(WorkspaceRef::Name("browse".to_owned()), false),
                 rule(WorkspaceRef::Name("browse".to_owned()), true),
@@ -1052,6 +1276,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            pair: None,
             workspaces: vec![rule(WorkspaceRef::Name("elsewhere".to_owned()), false)],
         };
         let scope = scope_for(
@@ -1224,6 +1449,7 @@ isolated = false
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
                 scoped_cycling: false,
+                pair: None,
                 workspaces: vec![rule(WorkspaceRef::Name("code".to_owned()), false)]
             }
         );
