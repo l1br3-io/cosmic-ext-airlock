@@ -75,7 +75,10 @@ selected one. It works in every mode — the flat list, the grouped tree
 (which flattens to its matching windows while a query stands), and the
 same-app view — because it narrows the list the gesture froze, whatever
 its shape. **Ctrl+N** keeps its chord; every other printable key,
-digits included, types.
+digits included, types — with one carve-out: **grave** in the two-band
+card (grouping on the horizontal layout) steps the selected app's
+windows instead, and types only while a query stands — see
+[Grouping](settings.md#grouping).
 
 Editing and escaping: **Backspace** erases the last character (on an
 empty query it does nothing); **Escape** clears a standing query first
