@@ -172,6 +172,41 @@ pub fn app_view(snapshot: &Snapshot, app: &str, scope: Scope) -> Snapshot {
     }
 }
 
+/// Windows of `handles` whose title or app_id contains `query`
+/// (case-insensitive substring), in `handles`' order — the type-to-filter
+/// narrow (`type-filter`).
+///
+/// The input is a *frozen* handle list — the session's ring, or the
+/// grouped tree's windows — and the query only narrows it: the matcher
+/// never re-derives the window set, honoring the freeze philosophy. A
+/// handle the snapshot no longer carries (a window that closed
+/// mid-gesture) never matches — liveness rides the snapshot, exactly as
+/// every rebuild's does. The empty query is the identity: an empty
+/// filter filters nothing.
+pub fn matches(toplevels: &[Toplevel], handles: &[Handle], query: &str) -> Vec<Handle> {
+    if query.is_empty() {
+        // Identity over live handles only: a dead window drops off even
+        // with nothing typed, mirroring every other listing path.
+        return handles
+            .iter()
+            .copied()
+            .filter(|handle| toplevels.iter().any(|t| t.handle == *handle))
+            .collect();
+    }
+    let needle = query.to_lowercase();
+    handles
+        .iter()
+        .copied()
+        .filter(|handle| {
+            toplevels.iter().any(|t| {
+                t.handle == *handle
+                    && (t.title.to_lowercase().contains(&needle)
+                        || t.app_id.to_lowercase().contains(&needle))
+            })
+        })
+        .collect()
+}
+
 /// A selection ring over the MRU-ordered eligible list: `next`/`previous`
 /// move the selection with wrap-around, and an empty ring selects nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -716,6 +751,87 @@ mod tests {
         };
         let view = app_view(&snapshot, "editor", Scope::CurrentWorkspace);
         assert!(view.toplevels.is_empty());
+    }
+
+    /// Like [`toplevel`], with the title and app under test's choosing.
+    fn window(handle: u64, title: &str, app_id: &str) -> Toplevel {
+        Toplevel {
+            handle: Handle(handle),
+            title: title.to_string(),
+            app_id: app_id.to_string(),
+            state: State::default(),
+            workspaces: [1u64].iter().copied().map(WorkspaceId).collect(),
+            last_activated: 0,
+        }
+    }
+
+    #[test]
+    fn matches_hits_on_title_and_app_id_case_insensitively() {
+        let toplevels = vec![
+            window(1, "Invoice — March", "libreoffice.writer"),
+            window(2, "terminal", "org.contour.Terminal"),
+            window(3, "Inbox — 42 unread", "mail.desktop"),
+        ];
+        let frozen = vec![Handle(1), Handle(2), Handle(3)];
+        assert_eq!(
+            matches(&toplevels, &frozen, "inv"),
+            vec![Handle(1)],
+            "title hit, prefix"
+        );
+        assert_eq!(
+            matches(&toplevels, &frozen, "UNREAD"),
+            vec![Handle(3)],
+            "case-insensitive both ways"
+        );
+        assert_eq!(
+            matches(&toplevels, &frozen, "terminal"),
+            vec![Handle(2)],
+            "title and app_id hit on the same window, once"
+        );
+        assert_eq!(
+            matches(&toplevels, &frozen, "in"),
+            vec![Handle(1), Handle(2), Handle(3)],
+            "every window hits, order preserved"
+        );
+    }
+
+    #[test]
+    fn matches_empty_query_is_the_identity_over_live_handles() {
+        let toplevels = vec![window(1, "a", "app.a"), window(2, "b", "app.b")];
+        let frozen = vec![Handle(1), Handle(2), Handle(9)];
+        assert_eq!(
+            matches(&toplevels, &frozen, ""),
+            vec![Handle(1), Handle(2)],
+            "identity — minus the dead handle, which never lists"
+        );
+    }
+
+    #[test]
+    fn matches_no_hit_is_empty_and_dead_handles_never_match() {
+        let toplevels = vec![window(1, "editor", "app.a")];
+        let frozen = vec![Handle(1), Handle(2)];
+        assert!(matches(&toplevels, &frozen, "zzz").is_empty());
+        // Handle 2 is not in the snapshot (it closed mid-gesture): even
+        // a query its frozen title would match cannot resurrect it.
+        assert!(matches(&toplevels, &frozen, "toplevel 2").is_empty());
+        assert_eq!(
+            matches(&toplevels, &frozen, "editor"),
+            vec![Handle(1)],
+            "the live hit survives beside the dead handle"
+        );
+    }
+
+    #[test]
+    fn matches_on_an_empty_app_id_uses_the_title_alone() {
+        let toplevels = vec![window(1, "nowhere man", "")];
+        assert_eq!(matches(&toplevels, &[Handle(1)], "where"), vec![Handle(1)]);
+        // And the empty app_id matches nothing as an app_id — an empty
+        // needle is the identity, handled above; an empty *haystack*
+        // field simply never contains a non-empty needle.
+        assert_eq!(
+            matches(&toplevels, &[Handle(1)], "app"),
+            Vec::<Handle>::new()
+        );
     }
 
     #[test]
