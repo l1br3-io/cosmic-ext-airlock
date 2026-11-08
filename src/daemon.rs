@@ -887,6 +887,59 @@ fn exit_band(session: &mut Switch) -> bool {
     true
 }
 
+/// The key above Tab in the combined card (`` ` ``): the within-app
+/// walk. From an app tile, open that app's windows — Next on the
+/// MRU-front window (↓'s twin), Previous on the last; from a window
+/// tile, step the focused app's windows with wrap, never crossing into
+/// another app (that walk is ←/→ and Tab). A one-window app holds no
+/// dead end: entering from its tile selects it, stepping from it stays
+/// put. While a query stands the session is flat (the flatten-on-query
+/// rule), so the press types the backtick instead — the level lives
+/// here, keeping `key_input` pure. Returns whether a session was
+/// touched.
+fn step_window(open: &mut Option<Switch>, snapshot: &Snapshot, direction: Direction) -> bool {
+    if open
+        .as_ref()
+        .is_some_and(|session| session.filtered.is_some())
+    {
+        return type_into(open, snapshot, '`');
+    }
+    let Some(session) = open.as_mut() else {
+        return false;
+    };
+    if !session.is_combined() {
+        return false;
+    }
+    match session.band {
+        Some(crate::ui::Band::Apps) => {
+            let focused = session.combined_focused().unwrap_or(session.tree_sel);
+            let windows = combined_windows(session, snapshot, focused);
+            let target = match direction {
+                Direction::Next => windows.first(),
+                Direction::Previous => windows.last(),
+            };
+            let Some(&target) = target else {
+                return false;
+            };
+            session.tree_sel = target;
+            session.band = Some(crate::ui::Band::Windows);
+            true
+        }
+        Some(crate::ui::Band::Windows) => {
+            let focused = session.combined_focused().unwrap_or(session.tree_sel);
+            let windows = combined_windows(session, snapshot, focused);
+            if windows.is_empty() {
+                return false;
+            }
+            // A one-window set stays put (`step_in`'s len < 2 rule) —
+            // the no-dead-end guarantee, both directions alike.
+            session.tree_sel = step_in(&windows, session.tree_sel, direction);
+            true
+        }
+        None => false,
+    }
+}
+
 /// One character into the session's query (`type-filter`): append —
 /// the query caps at [`QUERY_MAX`], input past it ignored — then
 /// re-derive the narrowed ring over the frozen set and reselect its
@@ -1455,9 +1508,20 @@ pub fn run() -> Result<(), RunError> {
                         );
                     }
                 }
-                GestureOutput::StepWindow(_direction) => {
-                    // The key above Tab (B1 wires the key; the walk
-                    // lands in B2). No-op keeps the tree compiling.
+                GestureOutput::StepWindow(direction) => {
+                    // The key above Tab: the within-app walk, or the
+                    // type-into fallthrough while a query stands (the
+                    // walk fn owns that decision).
+                    if step_window(&mut open, &snapshot, direction) {
+                        show_selection(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            &expanded,
+                            &mut icons,
+                        );
+                    }
                 }
                 GestureOutput::Type(ch) => {
                     // One character into the query: narrow the frozen
@@ -6509,6 +6573,104 @@ mod tests {
             );
         }
         assert!(expanded.is_empty(), "no collapse state exists");
+    }
+
+    #[test]
+    fn combined_grave_opens_the_apps_windows_from_its_tile() {
+        // The key above Tab from an app tile: open that app's windows —
+        // Next on the MRU-front window (↓'s twin), Shift on the last —
+        // across all three apps.
+        let snap = combined_three_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        for (parent, front, last) in [(0usize, 1usize, 2usize), (3, 4, 5), (6, 7, 8)] {
+            let session = open.as_mut().expect("open");
+            session.tree_sel = parent;
+            session.band = Some(crate::ui::Band::Apps);
+            assert!(step_window(&mut open, &snap, Direction::Next));
+            let session = open.as_ref().expect("open");
+            assert_eq!(session.tree_sel, front, "the MRU-front window");
+            assert_eq!(session.band, Some(crate::ui::Band::Windows));
+            let session = open.as_mut().expect("open");
+            session.tree_sel = parent;
+            session.band = Some(crate::ui::Band::Apps);
+            assert!(step_window(&mut open, &snap, Direction::Previous));
+            let session = open.as_ref().expect("open");
+            assert_eq!(session.tree_sel, last, "Shift opens on the last");
+            assert_eq!(session.band, Some(crate::ui::Band::Windows));
+        }
+    }
+
+    #[test]
+    fn combined_grave_steps_within_the_app_and_wraps() {
+        // From a window tile the walk stays inside the focused app's
+        // window set, wrapping at both ends — never onto another app's
+        // rows (that walk is ←/→ and Tab).
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        open.as_mut().expect("open").tree_sel = 1; // a's front child
+        open.as_mut().expect("open").band = Some(crate::ui::Band::Windows);
+        assert!(step_window(&mut open, &snap, Direction::Next));
+        assert_eq!(open.as_ref().expect("open").tree_sel, 2, "a's second");
+        assert!(step_window(&mut open, &snap, Direction::Next));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            1,
+            "wraps to the front"
+        );
+        assert!(step_window(&mut open, &snap, Direction::Previous));
+        assert_eq!(open.as_ref().expect("open").tree_sel, 2, "Shift wraps back");
+        for _ in 0..4 {
+            assert!(step_window(&mut open, &snap, Direction::Next));
+            let session = open.as_ref().expect("open");
+            assert!(
+                session.tree_sel == 1 || session.tree_sel == 2,
+                "never crosses into b's rows (at {})",
+                session.tree_sel
+            );
+        }
+    }
+
+    #[test]
+    fn combined_grave_falls_through_to_the_query() {
+        // While a query stands the session is flat (flatten-on-query),
+        // so the press types the backtick instead of walking — the
+        // level lives in the daemon, key_input stays pure.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        open.as_mut().expect("open").tree_sel = 1;
+        assert!(type_into(&mut open, &snap, 'b'));
+        assert!(step_window(&mut open, &snap, Direction::Next));
+        let session = open.as_ref().expect("open");
+        assert_eq!(session.query, "b`", "the backtick appended");
+        assert!(session.filtered.is_some(), "still a querying session");
+        assert_eq!(session.tree_sel, 1, "the walk never ran");
+    }
+
+    #[test]
+    fn combined_grave_holds_a_one_window_app_without_dead_ends() {
+        // A single-window app: from its tile the key selects its one
+        // window; from the window itself it stays put — no dead end in
+        // either direction.
+        let lone = grouped_lone_parent();
+        let (mut open, _expanded) = combined_session(&lone);
+        open.as_mut().expect("open").tree_sel = 3; // c's leaf tile
+        open.as_mut().expect("open").band = Some(crate::ui::Band::Apps);
+        assert!(step_window(&mut open, &lone, Direction::Next));
+        let session = open.as_ref().expect("open");
+        assert_eq!(session.tree_sel, 3, "selects its one window");
+        assert_eq!(session.band, Some(crate::ui::Band::Windows));
+        assert!(step_window(&mut open, &lone, Direction::Next));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "stays put from the window"
+        );
+        assert!(step_window(&mut open, &lone, Direction::Previous));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "stays put backwards too"
+        );
     }
 
     #[test]
