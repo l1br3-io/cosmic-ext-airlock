@@ -93,8 +93,13 @@ same-application cycling gesture the platform default does not offer.
   2026-11-03 `pointer-select` approval: pointer interaction is in
   scope and shipped (hover moves the selection, click activates the
   row, the wheel steps the list); non-ASCII titles rendering as `?` is
-  accepted, documented degradation (a real font would be a deliberate future
-  decision); glance legibility on both wallpaper polarities is a floor,
+  accepted, documented degradation (a real font would be a deliberate
+  future decision) — superseded 2026-11-07, retroactive to that day's
+  owner note ("we should be able to update the font style through
+  settings"): titles render in the desktop's interface font by default
+  (a `font` key overrides the family; size stays the pinned 12 px),
+  Unicode renders true glyphs, and the ASCII fold is the zero-fonts
+  bitmap floor only; glance legibility on both wallpaper polarities is a floor,
   not a preference.
 - Decided (2026-11-02): app ID **`io.github.l1br3-io.Airlock`** (the
   real GitHub org), crate `cosmic-ext-airlock` owned personally on

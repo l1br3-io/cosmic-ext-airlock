@@ -49,10 +49,15 @@ pipeline the COSMIC launcher uses) beside its title.
   expand one (remembered across gestures), Alt+N to pick a window inside
   it — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#grouping)
-- Titles render in a built-in ASCII pixel font: typographic punctuation
-  folds to its ASCII lookalike (`—` → `-`), Latin accents fold to their
-  base letter (`é` → `e`), and anything with no ASCII form — CJK,
-  Cyrillic, ligatures like `æ` — shows as `?`. Stated, not papered over.
+- Titles render in the desktop's own interface font — real glyphs,
+  real accents, fallback chains for CJK and emoji — at the card's
+  pinned 12 px; a `font` key overrides the family (see
+  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#font)).
+  Before 2026-11-07 every title painted in a built-in ASCII pixel font
+  that folded punctuation and accents and showed `?` for anything
+  without an ASCII form; that fold survives only as the zero-fonts
+  floor — the deterministic paint of last resort on a system with no
+  loadable fonts.
 
 Preview the card without a COSMIC session:
 

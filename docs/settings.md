@@ -5,7 +5,8 @@ can opt individual workspaces out: there the switcher lists every
 non-minimized window across **all** workspaces, most-recently-used first,
 while workspaces without an entry stay isolated exactly as before. The
 same file also picks the switcher's card color — light, dark, or
-following the desktop — and how many windows the card keeps in view.
+following the desktop — its typeface, and how many windows the card
+keeps in view.
 
 Airlock reads the file; you edit it. `airlock install` drops a starter
 copy at the path below — every setting commented out, so it means the
@@ -32,6 +33,7 @@ configure.
 # Workspaces without an entry keep the default: isolated.
 
 theme = "auto"         # match the desktop's dark/light mode (the default)
+# font = "Fira Sans"   # absent (the default): follow the COSMIC interface font
 rows = 8               # windows the card keeps in view (the default)
 grouping = false       # the flat list; true groups it by app (the default)
 scoped_cycling = false # grouping only: true keeps Tab inside one group (the default)
@@ -58,11 +60,11 @@ flag:
 
 An entry needs `name` or `index` — never both.
 
-The four top-level keys: `theme` picks the card (see
-[Theme](#theme)); `rows` picks how many windows it keeps in view (see
-[Rows](#rows)); `grouping` picks the list's shape and
-`scoped_cycling` how Alt+Tab moves inside it (see
-[Grouping](#grouping)).
+The five top-level keys: `theme` picks the card (see
+[Theme](#theme)); `font` picks its typeface (see [Font](#font));
+`rows` picks how many windows it keeps in view (see [Rows](#rows));
+`grouping` picks the list's shape and `scoped_cycling` how Alt+Tab
+moves inside it (see [Grouping](#grouping)).
 
 ## Referencing workspaces
 
@@ -130,11 +132,47 @@ a non-integer) is named in a diagnostic and the last-good settings
 apply. At Spacious density the effective budget clamps to what fits —
 see [Follows](#follows).
 
+## Font
+
+`font` picks the typeface the card's titles paint in — a font family
+name, exactly as your font picker shows it. Family only: size stays
+the card's own 12 px and weight stays Regular, whatever is set.
+
+- **Absent key (the default)** — follow the COSMIC interface font: the
+  family your desktop already paints its UI in. Open Sans on a default
+  desktop, your own COSMIC Settings pick when you have made one. Every
+  card upgrades to real typography without configuring anything.
+- **`font = "Fira Sans"`** — any installed family; the next Alt+Tab
+  paints it.
+
+Any string is valid as far as the config is concerned — a family
+nothing installs is not a config error. Resolution happens when a
+gesture starts: a name the system does not know logs one diagnostic
+naming the `font` key and paints the interface font instead. A system
+with no loadable fonts at all paints the built-in bitmap face — the
+deterministic floor — and switching never breaks on font I/O either
+way.
+
+Real text is the point: Unicode titles render their actual glyphs —
+`未設定 — 端末`, `café.txt` — through the font's fallback chains, with
+grayscale anti-aliasing and proportional widths. (The ASCII folding
+older versions documented is the bitmap floor's behavior, kept for the
+no-fonts case only.)
+
+Fonts are scanned once at daemon startup: a font installed while the
+daemon runs is picked up at the next daemon restart, not before.
+
+Like every setting, `font` is read when a gesture starts. An edit
+mid-gesture changes nothing until the next press — a session keeps the
+face it was opened with until Alt is released.
+
 ## Follows
 
-Two of the card's values follow the COSMIC desktop itself. There are
-no keys for them because the desktop already owns the choice — flip
-the setting in COSMIC Settings and the next Alt+Tab already matches.
+Three of the card's values follow the COSMIC desktop itself. Two have
+no keys because the desktop already owns the choice — flip the setting
+in COSMIC Settings and the next Alt+Tab already matches — and the
+third is the *default* of its key (`font`), so it follows until you
+override it.
 
 - **Corner radius follows Appearance → Style.** Round, Slightly-Round,
   and Square round the card's corners at 12, 8, and 2 logical pixels.
@@ -143,6 +181,11 @@ the setting in COSMIC Settings and the next Alt+Tab already matches.
   Comfortable, and Spacious set the rows' height, gap, and the card's
   vertical padding — rows stay icon-driven, 40/48/56 px tall by
   density. The card's width never changes with density.
+- **The typeface follows the desktop's interface font** (the `font`
+  key's default — see [Font](#font)): the family COSMIC Settings'
+  own font picker writes, family-only, at the card's pinned 12 px. An
+  unreadable store keeps Open Sans — the desktop's own default — with
+  one diagnostic in the daemon log.
 
 Both are read when a gesture starts, like every setting: a flip
 mid-gesture changes nothing until the next press. An unreadable or
@@ -260,6 +303,11 @@ A bad config never breaks switching:
   or a number outside 3–10 — is named in a diagnostic ("must be a
   whole number" / "must be between 3 and 10") and the last-good
   settings apply, like any malformed edit.
+- **A bad `font` value** — a wrong type (`font = 12`, `[font]`) — is
+  named in a diagnostic ("`font` must be a font family name (a
+  string)") and the last-good settings apply, like any malformed edit.
+  A family name that simply is not installed is *not* a config error:
+  the daemon logs that it fell back to the interface font.
 - **A bad `grouping` value** — `grouping = 1`, `grouping = "yes"` —
   is named in a diagnostic ("`grouping` must be a boolean") and the
   last-good settings apply, like any malformed edit. A bad
@@ -291,6 +339,14 @@ A bad config never breaks switching:
 - At Spacious density, set `rows = 10`; the card opens clamped to eight
   windows and the daemon log names the clamp — the setting keeps its
   value
+- Set `font = "<an installed family>"`; the next Alt+Tab paints it —
+  no restart. Edit it under held Alt: the open card does not repaint
+  until the next press
+- Unset `font`: the next Alt+Tab paints the desktop's interface font —
+  flip COSMIC Settings' own font and the next press follows
+- Open a window with a CJK or emoji title: the glyphs render for real
+- Set `font = "Not Installed"`; the daemon log names the key and the
+  card paints the interface font
 - With `grouping = true`: expand a group (→), release Alt, press
   Alt+Tab again — under the default `scoped_cycling = false` the step
   leaves the group for the next app and the expanded entry shows no

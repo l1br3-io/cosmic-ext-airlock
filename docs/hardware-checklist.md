@@ -176,6 +176,32 @@ binary.
       next Alt+Tab paints the factory-default geometry with one
       aggregated diagnostic per follow, and switching is unaffected
 
+### Font (typography)
+
+- [ ] No `font` key: the card paints the COSMIC interface font at
+      12 px — Open Sans on the default desktop — at 1× and 2×, both
+      themes, over a light and a dark wallpaper
+- [ ] Flip COSMIC Settings' own interface font; the next Alt+Tab
+      follows (the follow is the key's default)
+- [ ] `font = "<an installed family>"` paints it at the next gesture,
+      live-apply without restart; an edit mid-gesture never repaints
+      the open card (frozen until the next press)
+- [ ] CJK, emoji, and accented title rows render their real glyphs —
+      fallback chains, no folding, no `?` (screenshot each)
+- [ ] A 64-char title truncates at the pixel budget with the font's
+      real `…`, a full gap clear of the hint band; the hint band
+      aligns on the new metrics
+- [ ] `font = "Not Installed"`: the daemon log names the key, the card
+      paints the interface font, switching is unaffected
+- [ ] A wrong-type `font` (`font = 12`) fails the file with the named
+      diagnostic and last-good holds
+- [ ] No loadable fonts on the guest (move the font directories
+      aside): the card paints the built-in bitmap face — the floor —
+      and switching still works
+- [ ] Regression: Tab / arrows / Enter / Escape / pointer input / Alt
+      release behave exactly as before; no added latency on open
+      (shaping and masks are cached; the scan is startup-only)
+
 ### Theme (card color)
 
 - [ ] `theme = "light"` on a dark-mode desktop: the next Alt+Tab paints

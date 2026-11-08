@@ -7,6 +7,20 @@ observe, not internal mechanics.
 
 ### Added
 
+- **The `font` setting and real typography** — titles render in the
+  desktop's own interface font by default (Open Sans on a default
+  desktop; flip COSMIC Settings' font and the next Alt+Tab follows),
+  and `font = "Fira Sans"` — any installed family — overrides it,
+  live-applying at the next gesture. Unicode titles render their real
+  glyphs — CJK, emoji, accents — through fallback chains, replacing
+  the ASCII folding of every earlier version (the fold survives only
+  as the zero-fonts bitmap floor, the paint of last resort on a system
+  with no loadable fonts). Size stays 12 px and weight Regular —
+  family only. A family nothing installs logs one diagnostic naming
+  the key and paints the interface font; font I/O can never break
+  switching. Note: fonts are scanned once at daemon startup, so a font
+  installed later needs a daemon restart to appear.
+
 - **Desktop-followed geometry** — the card's shape follows the COSMIC
   desktop, no keys. The corner radius follows Appearance → Style
   (Round / Slightly-Round / Square → 12 / 8 / 2 px, the selection

@@ -46,6 +46,15 @@ glyph, on an 8-pixel grid. That austerity is deliberate — it is what a
 hand-composited surface does well — and it is the identity. Don't furnish
 the room.
 
+Re-decided 2026-11-07 (the owner's note that day: "we should be able to
+update the font style through settings"): the *face* is no longer part of
+the austerity — titles paint the desktop's interface font by default (a
+`font` key overrides the family), real glyphs and fallback chains at the
+pinned 12 px, and the one-font line above described the bitmap floor that
+remains the zero-fonts paint of last resort. What the line still pins,
+undented: one text color, no size or weight knobs, one glyph vocabulary —
+the room stays unfurnished even though its tenant now owns the typeface.
+
 ## Tokens before values
 
 - **The design system is the constants block in `src/ui.rs`.** Glyph and
@@ -61,8 +70,12 @@ the room.
   steps at 4 px (COSMIC's own `space_xxs`, the one deliberate
   half-grid exception, row pad/gap only), Comfortable holds today's
   8-grid, Spacious breathes at 12; rows stay icon-driven (40/48/56)
-  and the card's width never moves with density. One 8×8 bitmap font drawn
-  at a 3/2 font scale, so 12-px text — re-pinned 2026-11-07 by the owner.
+  and the card's width never moves with density. Titles paint the
+  desktop's interface font through cosmic-text at the pinned 12 logical
+  px (the `typography` follow, 2026-11-07: grayscale AA, real `…`,
+  fallback chains; a `font` key overrides the family). The 8×8 bitmap
+  font is the zero-fonts floor — one face, whole-pixel, no AA — drawn
+  at a 3/2 font scale when no fonts load.
   The history matters: on 2026-11-02 the owner re-pinned 8 px twice in
   one day (16 px read oversized next to the 32-px icons, and so did
   12 px), judging on the 200 % VM where 8 logical px paint as 16
