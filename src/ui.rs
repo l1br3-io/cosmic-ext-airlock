@@ -1160,9 +1160,6 @@ pub fn visible_window(len: usize, sel: usize, rows: usize, prev: Option<Viewport
 /// selection stays interior (the sticky rule), one tile per step past
 /// the trailing edge. A start carried from a longer list re-clamps
 /// after a mid-gesture shrink.
-// Unconsumed until the horizontal card renders through it (CL3) — the
-// GE1 pattern; the property suite reads it from day one.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn band_window(len: usize, sel: usize, tiles: usize, prev: Option<Viewport>) -> Viewport {
     debug_assert!(sel < len, "the caller's selection indexes the list");
     debug_assert!(
