@@ -10,11 +10,18 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::switcher::{Scope, Workspace, WorkspaceId};
-use crate::ui::{self, SelectionSetting, ThemeSetting};
+use crate::ui::{self, ColumnsSetting, LayoutSetting, SelectionSetting, ThemeSetting};
 
 /// Cap on config size: reloads run at session open, on the gesture path,
 /// so a pathological file must never stall switching.
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
+
+/// The `columns` union's one diagnostic: any bad value — wrong type, a
+/// string that isn't `"auto"`, out of range — names the whole accepted
+/// shape (the key is a union; a split message would say the same thing
+/// twice). The range words must track [`ui::COLUMNS_MIN`]/
+/// [`ui::COLUMNS_MAX`]; a test pins the pair.
+const COLUMNS_PROBLEM: &str = "`columns` must be \"auto\" or a whole number between 3 and 12";
 
 /// One `[[workspace]]` rule.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +69,14 @@ pub struct Settings {
     /// group's entry is a pure divider there). Meaningful only beside
     /// `grouping = true`; frozen at open with it.
     pub scoped_cycling: bool,
+    /// Which way the card lays its list out; missing key =
+    /// [`LayoutSetting::Vertical`], today's card, so the no-config
+    /// card is unchanged.
+    pub layout: LayoutSetting,
+    /// The horizontal card's tile budget; missing key =
+    /// [`ColumnsSetting::Auto`] — fit to the invoking output. Binds
+    /// `layout = "horizontal"` only; the vertical card ignores it.
+    pub columns: ColumnsSetting,
     /// The custom card/text pair from the paired `card`/`text` keys,
     /// each `0x00RRGGBB` (alpha unreachable by construction) and
     /// contrast-checked against [`ui::CONTRAST_FLOOR`] at parse.
@@ -87,6 +102,8 @@ impl Default for Settings {
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            layout: LayoutSetting::Vertical,
+            columns: ColumnsSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -215,6 +232,46 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             problem: "`scoped_cycling` must be a boolean",
         })?,
     };
+    let layout = match root.get("layout") {
+        None => LayoutSetting::Vertical,
+        Some(value) => match value.as_str() {
+            Some("vertical") => LayoutSetting::Vertical,
+            Some("horizontal") => LayoutSetting::Horizontal,
+            Some(_) => {
+                return Err(SettingsError::InvalidFile {
+                    problem: "`layout` must be \"vertical\" or \"horizontal\"",
+                });
+            }
+            None => {
+                return Err(SettingsError::InvalidFile {
+                    problem: "`layout` must be a string",
+                });
+            }
+        },
+    };
+    let columns = match root.get("columns") {
+        None => ColumnsSetting::Auto,
+        Some(value) => match value.as_str() {
+            Some("auto") => ColumnsSetting::Auto,
+            Some(_) => {
+                return Err(SettingsError::InvalidFile {
+                    problem: COLUMNS_PROBLEM,
+                });
+            }
+            None => {
+                let count = value.as_integer().ok_or(SettingsError::InvalidFile {
+                    problem: COLUMNS_PROBLEM,
+                })?;
+                let count = usize::try_from(count)
+                    .ok()
+                    .filter(|count| (ui::COLUMNS_MIN..=ui::COLUMNS_MAX).contains(count))
+                    .ok_or(SettingsError::InvalidFile {
+                        problem: COLUMNS_PROBLEM,
+                    })?;
+                ColumnsSetting::Pinned(count)
+            }
+        },
+    };
     let card = color_key(
         root.get("card"),
         "`card` must be a string holding a 6-digit hex color",
@@ -274,6 +331,8 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             rows,
             grouping,
             scoped_cycling,
+            layout,
+            columns,
             pair,
             selection,
             font,
@@ -295,6 +354,8 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         rows,
         grouping,
         scoped_cycling,
+        layout,
+        columns,
         pair,
         selection,
         font,
@@ -617,6 +678,8 @@ isolated = false
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
                 scoped_cycling: false,
+                layout: LayoutSetting::Vertical,
+                columns: ColumnsSetting::Auto,
                 pair: None,
                 selection: SelectionSetting::Accent,
                 font: crate::text::FontSetting::Default,
@@ -1280,6 +1343,172 @@ isolated = false
         assert_eq!(settings.pair, Some((0x00_2A_1E_30, 0x00_E8_E6_E0)));
     }
 
+    // --- Layout -----------------------------------------------------------
+
+    #[test]
+    fn parse_reads_the_layout_key() {
+        for (config, layout) in [
+            (&b"layout = \"vertical\"\n"[..], LayoutSetting::Vertical),
+            (b"layout = \"horizontal\"\n", LayoutSetting::Horizontal),
+        ] {
+            let settings = Settings::parse(config).expect("valid layout value");
+            assert_eq!(settings.layout, layout);
+        }
+    }
+
+    #[test]
+    fn parse_without_a_layout_key_defaults_to_vertical() {
+        // An empty file and a rules-only file alike: no `layout`, the
+        // vertical card — the no-config card is unchanged.
+        assert_eq!(
+            Settings::parse(b"").expect("empty").layout,
+            LayoutSetting::Vertical
+        );
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert_eq!(rules_only.layout, LayoutSetting::Vertical);
+        assert_eq!(Settings::default().layout, LayoutSetting::Vertical);
+    }
+
+    #[test]
+    fn parse_rejects_an_unknown_layout_value() {
+        assert_eq!(
+            Settings::parse(b"layout = \"side\"\n"),
+            Err(SettingsError::InvalidFile {
+                problem: "`layout` must be \"vertical\" or \"horizontal\""
+            })
+        );
+    }
+
+    #[test]
+    fn parse_rejects_a_non_string_layout() {
+        assert_eq!(
+            Settings::parse(b"layout = 1\n"),
+            Err(SettingsError::InvalidFile {
+                problem: "`layout` must be a string"
+            })
+        );
+    }
+
+    #[test]
+    fn a_bad_layout_fails_the_whole_file() {
+        // The last-good contract: an unknown `layout` beside otherwise
+        // valid keys yields no settings at all, never a partial set.
+        let config = b"theme = \"light\"\nrows = 6\nlayout = \"side\"\n";
+        assert!(Settings::parse(config).is_err());
+    }
+
+    #[test]
+    fn parse_coexists_layout_with_the_other_keys() {
+        let config =
+            b"theme = \"light\"\nrows = 6\ngrouping = true\nlayout = \"horizontal\"\n\n[[workspace]]\nname = \"code\"\n";
+        let settings = Settings::parse(config).expect("valid config");
+        assert_eq!(settings.layout, LayoutSetting::Horizontal);
+        assert_eq!(settings.theme, ThemeSetting::Light);
+        assert_eq!(settings.rows, 6);
+        assert_eq!(settings.workspaces.len(), 1);
+    }
+
+    // --- Columns ----------------------------------------------------------
+
+    #[test]
+    fn parse_reads_the_columns_key() {
+        for (config, columns) in [
+            (&b"columns = \"auto\"\n"[..], ColumnsSetting::Auto),
+            (b"columns = 3\n", ColumnsSetting::Pinned(ui::COLUMNS_MIN)),
+            (b"columns = 12\n", ColumnsSetting::Pinned(ui::COLUMNS_MAX)),
+            (b"columns = 7\n", ColumnsSetting::Pinned(7)),
+        ] {
+            let settings = Settings::parse(config).expect("valid columns value");
+            assert_eq!(settings.columns, columns);
+        }
+    }
+
+    #[test]
+    fn parse_without_a_columns_key_defaults_to_auto() {
+        // An empty file and a rules-only file alike: no `columns`, the
+        // responsive band — the no-config card is unchanged.
+        assert_eq!(
+            Settings::parse(b"").expect("empty").columns,
+            ColumnsSetting::Auto
+        );
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert_eq!(rules_only.columns, ColumnsSetting::Auto);
+        assert_eq!(Settings::default().columns, ColumnsSetting::Auto);
+    }
+
+    #[test]
+    fn parse_rejects_columns_out_of_range() {
+        // Below the floor, above the ceiling, zero, negative, and
+        // absurd alike: named, never clamped.
+        for config in [
+            &b"columns = 2\n"[..],
+            b"columns = 13\n",
+            b"columns = 0\n",
+            b"columns = -1\n",
+            b"columns = 99999999999\n",
+        ] {
+            assert_eq!(
+                Settings::parse(config),
+                Err(SettingsError::InvalidFile {
+                    problem: "`columns` must be \"auto\" or a whole number between 3 and 12"
+                }),
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_rejects_columns_shapes_that_are_neither_auto_nor_a_whole_number() {
+        // A string that isn't "auto", a float, a bool, an array, a
+        // table — the union names its whole accepted shape.
+        for config in [
+            &b"columns = \"many\"\n"[..],
+            b"columns = \"8\"\n",
+            b"columns = 8.5\n",
+            b"columns = true\n",
+            b"columns = [3]\n",
+            b"[columns]\ncount = 3\n",
+        ] {
+            assert_eq!(
+                Settings::parse(config),
+                Err(SettingsError::InvalidFile {
+                    problem: "`columns` must be \"auto\" or a whole number between 3 and 12"
+                }),
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn the_columns_diagnostic_names_the_accepted_range() {
+        // The literal in the parser must track the constants: a re-pin
+        // of either bound touches this test (the rows twin).
+        assert_eq!((ui::COLUMNS_MIN, ui::COLUMNS_MAX), (3, 12));
+        let error = Settings::parse(b"columns = 1\n").expect_err("below the floor");
+        assert_eq!(
+            error.to_string(),
+            "settings: `columns` must be \"auto\" or a whole number between 3 and 12"
+        );
+    }
+
+    #[test]
+    fn a_bad_columns_fails_the_whole_file() {
+        // The last-good contract: an out-of-range `columns` beside
+        // valid rules yields no settings at all, never a partial set.
+        let config = b"columns = 42\n\n[[workspace]]\nname = \"code\"\nisolated = false\n";
+        assert!(Settings::parse(config).is_err());
+    }
+
+    #[test]
+    fn parse_coexists_columns_with_layout() {
+        let config = b"layout = \"horizontal\"\ncolumns = 5\n";
+        let settings = Settings::parse(config).expect("valid config");
+        assert_eq!(settings.layout, LayoutSetting::Horizontal);
+        assert_eq!(settings.columns, ColumnsSetting::Pinned(5));
+    }
+
     // --- Resolution ------------------------------------------------------
 
     fn rule(reference: WorkspaceRef, isolated: bool) -> WorkspaceRule {
@@ -1296,6 +1525,8 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            layout: LayoutSetting::Vertical,
+            columns: ColumnsSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1318,6 +1549,8 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            layout: LayoutSetting::Vertical,
+            columns: ColumnsSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1341,6 +1574,8 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            layout: LayoutSetting::Vertical,
+            columns: ColumnsSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1366,6 +1601,8 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            layout: LayoutSetting::Vertical,
+            columns: ColumnsSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1388,6 +1625,8 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            layout: LayoutSetting::Vertical,
+            columns: ColumnsSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1410,6 +1649,8 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            layout: LayoutSetting::Vertical,
+            columns: ColumnsSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1435,6 +1676,8 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             scoped_cycling: false,
+            layout: LayoutSetting::Vertical,
+            columns: ColumnsSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1610,6 +1853,8 @@ isolated = false
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
                 scoped_cycling: false,
+                layout: LayoutSetting::Vertical,
+                columns: ColumnsSetting::Auto,
                 pair: None,
                 selection: SelectionSetting::Accent,
                 font: crate::text::FontSetting::Default,

@@ -227,6 +227,17 @@ pub const ROWS_MAX: usize = 10;
 /// budget.
 pub const ROWS_SLACK: usize = 2;
 
+/// Smallest `columns` the setting accepts — the floor below which the
+/// horizontal band stops reading as a strip (the [`ROWS_MIN`]
+/// reasoning, one axis over): three tiles is the shortest thing that
+/// still looks like a band rather than a pair.
+pub const COLUMNS_MIN: usize = 3;
+
+/// Largest `columns` the setting accepts — the ceiling that keeps a
+/// pinned band a glance, not a wall: twelve tiles at the spec's working
+/// pitch (~140–160 px) already spans a 4-K output's logical width.
+pub const COLUMNS_MAX: usize = 12;
+
 /// The panel the card must always fit: 720 logical px (1440p@2x, any
 /// 1× panel) — `overlay-density`'s headroom rule, unchanged. Since the
 /// density follow the guarantee is by construction: the effective rows
@@ -636,6 +647,36 @@ pub enum SelectionSetting {
     Accent,
     /// The text color at 20 % over the card — the shipped band.
     Neutral,
+}
+
+/// Which way the card lays its list out. `Vertical` (the default) is
+/// today's card — the tall column of rows, byte-identical. `Horizontal`
+/// is the wide, short band of window tiles, centered. Parsed by
+/// `settings` from the `layout` key, resolved once at open and frozen
+/// like the palette (the `ThemeSetting` arrangement).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LayoutSetting {
+    /// Today's column of rows (default).
+    #[default]
+    Vertical,
+    /// The horizontal band of tiles.
+    Horizontal,
+}
+
+/// The horizontal card's tile budget. `Auto` (the default) fits as many
+/// tiles as a fraction of the invoking output's logical width allows —
+/// read at map, frozen for the session; `Pinned(n)` fixes the budget at
+/// [`COLUMNS_MIN`]..=[`COLUMNS_MAX`] tiles, card width = n × pitch.
+/// Parsed by `settings` from the `columns` key; binds
+/// [`LayoutSetting::Horizontal`] only — the vertical card ignores it,
+/// `rows` never constrains the band.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ColumnsSetting {
+    /// Fit tiles to the invoking output (default).
+    #[default]
+    Auto,
+    /// A fixed tile budget, `COLUMNS_MIN..=COLUMNS_MAX`.
+    Pinned(usize),
 }
 
 /// The text backend one card paints through, chosen once at session
