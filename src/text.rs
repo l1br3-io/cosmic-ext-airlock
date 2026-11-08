@@ -18,13 +18,6 @@
 //! The cache is bounded ([`GLYPH_CACHE_CAP`]) and cleared when the
 //! shaped family changes (OQ 3).
 
-// The binary consumes the System path from TY4, when the daemon
-// resolves the backend per open (`FontQuery::Named` is the configured
-// key's arm, `from_dir`/`face_count` the floor's); until then only the
-// lib's render path and the tests touch this surface. Removed in TY4
-// (the GE1→GE3 precedent).
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -59,6 +52,10 @@ pub const GLYPH_CACHE_CAP: usize = 1024;
 /// logs the diagnostic (the `font` key's never-a-broken-switch rule).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontQuery<'a> {
+    // Constructed by the preview example and the tests (the fixture
+    // db's default family); the daemon resolves a Named family at open
+    // and never queries the generic sans.
+    #[allow(dead_code)]
     SansSerif,
     Named(&'a str),
 }
@@ -69,6 +66,41 @@ pub enum FontQuery<'a> {
 enum ResolvedFamily {
     SansSerif,
     Named(String),
+}
+
+/// Which family the card's titles paint in, as the `font` key carries
+/// it. `Default` follows the COSMIC interface font (family-only, the
+/// store carries no size); `Family` names an installed font. Any string
+/// is valid *syntax* — resolution happens at open, and an unresolvable
+/// name logs a diagnostic naming the key and paints the follow's answer
+/// instead: never a parse error, never a broken switch. Parsed by
+/// `settings` from the config's top-level `font` key (the
+/// `ThemeSetting` arrangement: the decision type lives with the text
+/// stack, the parser reads into it).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum FontSetting {
+    /// The COSMIC interface font's family — Open Sans on a default
+    /// desktop, the user's own COSMIC Settings pick when set.
+    #[default]
+    Default,
+    /// A configured family name, verbatim.
+    Family(String),
+}
+
+/// The per-session text decision, resolved once at open and frozen for
+/// the gesture's life beside the palette (a font edit or a desktop
+/// flip mid-gesture never repaints the open card): the Bitmap floor —
+/// zero loadable fonts, the deterministic paint of last resort — or the
+/// System stack in one family string, already resolved (the follow's
+/// answer or the configured key; the diagnostics have already printed).
+/// Frozen owned data, not a borrow: the daemon maps it to a
+/// [`crate::ui::TextBackend`] at each build and draw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextDecision {
+    /// The font8x8 floor: today's card, byte-identical.
+    Bitmap,
+    /// The system stack in `family`.
+    System { family: String },
 }
 
 /// One whole-pixel-positioned glyph: the cache key that rasterizes it
@@ -172,12 +204,15 @@ impl GlyphCache {
         self.masks.insert(key, mask);
     }
 
-    /// Distinct masks held — the bound's observable.
+    /// Distinct masks held — the bound's observable (a test surface;
+    /// the daemon's paints never read the count).
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.masks.len()
     }
 
-    /// Whether the cache holds nothing.
+    /// Whether the cache holds nothing (a test surface, like `len`).
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.masks.is_empty()
     }
@@ -229,15 +264,32 @@ impl TextSystem {
         Self::with_fonts(fonts)
     }
 
+    /// A system holding no fonts at all — the pre-injection state (the
+    /// connection starts empty and the daemon installs its scan right
+    /// after) and the zero-fonts floor's own marker. Cheap by
+    /// construction: no directory is read.
+    pub fn empty() -> Self {
+        Self::from_dir(Path::new("/nonexistent-airlock-empty"))
+    }
+
     /// Faces the database holds. Zero is the zero-fonts floor's marker:
     /// the daemon paints the bitmap card (SC 5).
     pub fn face_count(&self) -> usize {
         self.fonts.db().faces().count()
     }
 
-    /// The glyph-mask cache (tests and the rasterizer share it).
-    pub fn cache(&mut self) -> &mut GlyphCache {
-        &mut self.cache
+    /// Whether the database carries a face whose family is `name`
+    /// (case-insensitive, matching how a font picker displays it) — the
+    /// `font` key's resolution check. A miss is not an error: the caller
+    /// logs the diagnostic naming the key and paints the follow's
+    /// family instead.
+    pub fn knows_family(&self, name: &str) -> bool {
+        let wanted = name.trim().to_ascii_lowercase();
+        self.fonts.db().faces().any(|face| {
+            face.families
+                .iter()
+                .any(|(family, _)| family.to_ascii_lowercase() == wanted)
+        })
     }
 
     /// The rasterized mask for `key`, rasterizing through swash on the
@@ -700,6 +752,27 @@ mod tests {
         let (display, run) = system.shape_budgeted("Airlock", FontQuery::SansSerif, 2, band_px());
         assert_eq!(display, "Airlock");
         assert!(run.width_px <= band_px());
+    }
+
+    #[test]
+    fn empty_is_the_zero_face_floor_marker() {
+        let system = TextSystem::empty();
+        assert_eq!(system.face_count(), 0);
+        // No family is known against an empty database — the daemon
+        // resolves the Bitmap floor before ever asking.
+        assert!(!system.knows_family("Open Sans"));
+    }
+
+    #[test]
+    fn knows_family_matches_case_insensitively_on_the_fixture_face() {
+        let system = TextSystem::from_dir(&fixture_dir());
+        assert!(system.knows_family("Open Sans"), "the fixture family");
+        assert!(
+            system.knows_family("open sans"),
+            "matching is case-insensitive"
+        );
+        assert!(!system.knows_family("Not Installed"));
+        assert!(!system.knows_family(""));
     }
 
     #[test]

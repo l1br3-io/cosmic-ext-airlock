@@ -106,6 +106,12 @@ pub struct Switch {
     /// rows: a desktop settings flip landing mid-gesture never
     /// re-rhythms the open card; the next press applies it.
     profile: crate::ui::StyleProfile,
+    /// The card's face — the Bitmap floor or the System stack in one
+    /// resolved family, resolved once at open from the `font` key, the
+    /// interface-font follow, and the zero-fonts floor, frozen like the
+    /// palette: a font edit landing mid-gesture never repaints the open
+    /// card; the next press applies it.
+    text: crate::text::TextDecision,
     /// Whether this session groups its list by app, resolved once at
     /// open from the `grouping` setting and frozen like the rows: a
     /// config edit landing mid-gesture never regroups the open session.
@@ -296,10 +302,10 @@ pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> 
 /// presses reuse the same frozen selection basis instead of rebuilding
 /// it: walking three windows takes three presses, unlike T4's
 /// per-press rebuild which toggled between the front two. `scope`,
-/// `palette`, `profile`, `rows`, `grouping`, and `scoped_cycling` are
-/// consumed only when the session opens; an already-open session keeps
-/// the ones it was built with.
-// Ten open-path parameters: the frozen-at-open values ride
+/// `palette`, `profile`, `rows`, `grouping`, `scoped_cycling`, and
+/// `text` are consumed only when the session opens; an already-open
+/// session keeps the ones it was built with.
+// Eleven open-path parameters: the frozen-at-open values ride
 // individually (see session_step's note).
 #[expect(clippy::too_many_arguments)]
 pub fn ring_step(
@@ -312,6 +318,7 @@ pub fn ring_step(
     rows: usize,
     grouping: bool,
     scoped_cycling: bool,
+    text: crate::text::TextDecision,
     expanded: &mut std::collections::HashSet<String>,
 ) -> Option<Handle> {
     if open.is_none() {
@@ -338,6 +345,7 @@ pub fn ring_step(
             palette,
             rows,
             profile,
+            text,
             grouping,
             scoped: scoped_cycling,
             tree,
@@ -378,10 +386,10 @@ pub fn ring_step(
 /// [`step_and_show`]), but the selection basis never rebuilds — the same
 /// freeze philosophy as the scope and the palette, both consumed only when
 /// the session opens.
-// Eleven open-path parameters: the frozen-at-open values (palette,
-// profile, rows, grouping, scoped cycling) each ride individually and
-// the expansion state is daemon memory the open may write — no bundle
-// introduced (the GR3 note).
+// Twelve open-path parameters: the frozen-at-open values (palette,
+// profile, rows, grouping, scoped cycling, text) each ride individually
+// and the expansion state is daemon memory the open may write — no
+// bundle introduced (the GR3 note).
 #[expect(clippy::too_many_arguments)]
 pub fn session_step(
     open: &mut Option<Switch>,
@@ -394,6 +402,7 @@ pub fn session_step(
     rows: usize,
     grouping: bool,
     scoped_cycling: bool,
+    text: crate::text::TextDecision,
     expanded: &mut std::collections::HashSet<String>,
 ) -> Option<Handle> {
     // An open grouped session steps its visible rows (↓/↑ and the
@@ -416,6 +425,7 @@ pub fn session_step(
             rows,
             grouping,
             scoped_cycling,
+            text,
             expanded,
         );
     }
@@ -432,7 +442,7 @@ pub fn session_step(
     // windows with no tree whatever the `grouping` setting says —
     // and no cycle scope either.
     let selected = ring_step(
-        open, &view, direction, scope, palette, profile, rows, false, false, expanded,
+        open, &view, direction, scope, palette, profile, rows, false, false, text, expanded,
     );
     // ring_step stored the session on the filtered ring; freeze the anchor
     // into it so later steps re-filter by it.
@@ -825,6 +835,11 @@ pub fn run() -> Result<(), RunError> {
     session
         .wait_until_settled(wayland::SETTLE_TIMEOUT)
         .map_err(RunError::Session)?;
+    // The card's text backend (`typography`): the one font scan paid
+    // here at daemon start — OQ 1 puts its tens-of-ms cost at login,
+    // never on the first gesture. Fonts installed after startup stay
+    // unseen until the daemon restarts (documented limitation).
+    session.set_text_system(crate::text::TextSystem::scan_system());
 
     let path = ipc::socket_path().map_err(RunError::Ipc)?;
     let listener = match ipc::bind_exclusive(&path).map_err(RunError::Io)? {
@@ -842,13 +857,6 @@ pub fn run() -> Result<(), RunError> {
     // Desktop-entry enumeration once per daemon (tens of ms, off the
     // press path); rasterization happens per first-seen app.
     let mut icons = crate::icons::Cache::new();
-    // The card's text backend (`typography`): the one font scan paid
-    // here at daemon start — OQ 1 puts its tens-of-ms cost at login,
-    // never on the first gesture. Fonts installed after startup stay
-    // unseen until the daemon restarts (documented limitation). The
-    // System render path consumes it from TY3; until then the scan and
-    // this ownership are the whole change (hence the underscore).
-    let _text = crate::text::TextSystem::scan_system();
     let mut pending: Vec<UnixStream> = Vec::new();
     let mut last_activity = Instant::now();
 
@@ -1251,7 +1259,7 @@ fn step_and_show(
     icons: &mut crate::icons::Cache,
     expanded: &mut std::collections::HashSet<String>,
 ) {
-    let (scope, palette, profile, rows, grouping, scoped_cycling) = match open {
+    let (scope, palette, profile, rows, grouping, scoped_cycling, text) = match open {
         Some(open) => (
             open.scope,
             open.palette,
@@ -1259,6 +1267,7 @@ fn step_and_show(
             open.rows,
             open.grouping,
             open.scoped,
+            open.text.clone(),
         ),
         None => {
             settings.refresh();
@@ -1307,6 +1316,14 @@ fn step_and_show(
                     crate::ui::CARD_FIT_PX
                 );
             }
+            // The face follows, per open like the palette: the `font`
+            // key, the interface-font follow, and the zero-fonts floor
+            // resolve to one decision, frozen onto the session with
+            // everything else (an edit mid-gesture never repaints the
+            // open card; the next press applies it).
+            let text = resolve_text(session.text_system(), &settings.settings.font, || {
+                crate::theme::interface_font(palette.is_dark)
+            });
             (
                 resolve_scope(snapshot, &settings.settings),
                 palette,
@@ -1314,6 +1331,7 @@ fn step_and_show(
                 rows,
                 settings.settings.grouping,
                 settings.settings.scoped_cycling,
+                text,
             )
         }
     };
@@ -1328,9 +1346,45 @@ fn step_and_show(
         rows,
         grouping,
         scoped_cycling,
+        text,
         expanded,
     );
     show_selection(session, gesture, open, snapshot, expanded, icons);
+}
+
+/// The session's text decision, resolved once at open: the zero-fonts
+/// floor first (no loadable faces paints the bitmap card — SC 5), then
+/// the `font` key — a configured family the database knows, or a
+/// diagnostic naming the key and `follow`'s answer when it does not —
+/// and `Default` is `follow` itself. The caller passes the interface-
+/// font follow as a closure so it is read only on the paths that need
+/// it (a configured, installed family never touches the store); tests
+/// inject their own answer. Never a broken switch: every miss lands on
+/// a paintable answer.
+fn resolve_text(
+    system: &mut crate::text::TextSystem,
+    setting: &crate::text::FontSetting,
+    follow: impl FnOnce() -> String,
+) -> crate::text::TextDecision {
+    if system.face_count() == 0 {
+        eprintln!("airlock daemon: no loadable fonts; the card paints the built-in bitmap face");
+        return crate::text::TextDecision::Bitmap;
+    }
+    match setting {
+        crate::text::FontSetting::Family(name) => {
+            if system.knows_family(name) {
+                crate::text::TextDecision::System {
+                    family: name.clone(),
+                }
+            } else {
+                eprintln!(
+                    "airlock daemon: font family \"{name}\" is not installed (font key); painting the desktop's interface font instead"
+                );
+                crate::text::TextDecision::System { family: follow() }
+            }
+        }
+        crate::text::FontSetting::Default => crate::text::TextDecision::System { family: follow() },
+    }
 }
 
 /// Builds and shows the overlay for the open session's current selection
@@ -1376,6 +1430,9 @@ fn show_selection(
             rows: current.rows,
             prev: current.viewport,
         };
+        // The frozen decision builds what the frozen decision paints:
+        // compose and render share one backend for the session's life.
+        let text = current.text.clone();
         match (&current.tree, current.app.as_deref()) {
             // Grouped plain session: the frozen tree cut to the stored
             // visible sequence, selection by tree row.
@@ -1390,11 +1447,7 @@ fn show_selection(
                 &palette,
                 current.profile,
                 windowing,
-                // TY3 wires the daemon's builds through the floor while
-                // the render path gains its System twin; TY4 resolves
-                // the backend per open (the `font` key, the follow, the
-                // zero-fonts floor) and freezes it on the session.
-                crate::ui::TextBackend::Bitmap,
+                crate::ui::text_backend(&text, session.text_system()),
             ),
             // Flat and same-app sessions (the exemption): the flat
             // card over the (possibly re-filtered) snapshot, selection
@@ -1414,7 +1467,7 @@ fn show_selection(
                         &palette,
                         current.profile,
                         windowing,
-                        crate::ui::TextBackend::Bitmap,
+                        crate::ui::text_backend(&text, session.text_system()),
                     )
                 })
             }
@@ -1431,11 +1484,16 @@ fn show_selection(
             // The key map rides the shown card: Tab/→/←/W and the two
             // number chords mean tree walks exactly when the card
             // paints the tree, and the divider rule rides its cycle
-            // scope.
+            // scope. The text decision rides it too — the overlay
+            // freezes what it draws under.
             let open_session = open.as_ref();
             let grouped = open_session.is_some_and(|session| session.tree.is_some());
             let scoped = open_session.is_some_and(|session| session.scoped);
-            session.overlay_show(model, palette, grouped, scoped)
+            let text = open_session.map_or_else(
+                || crate::text::TextDecision::Bitmap,
+                |session| session.text.clone(),
+            );
+            session.overlay_show(model, palette, text, grouped, scoped)
         }
         None => {
             session.overlay_hide("nothing eligible");
@@ -1622,7 +1680,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(2))
         );
@@ -1650,7 +1709,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(3))
         );
@@ -1678,7 +1738,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(2))
         );
@@ -1693,7 +1754,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(3))
         );
@@ -1708,7 +1770,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(1))
         );
@@ -1723,7 +1786,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(3))
         );
@@ -1754,7 +1818,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(4))
         );
@@ -1775,7 +1840,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             None
         );
@@ -1790,7 +1856,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             None
         );
@@ -1811,7 +1878,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             None
         );
@@ -1829,7 +1897,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(1))
         );
@@ -1855,6 +1924,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -1881,6 +1951,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -1917,6 +1988,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -1945,6 +2017,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -1979,6 +2052,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2014,6 +2088,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2048,6 +2123,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2074,6 +2150,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2113,6 +2190,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2145,6 +2223,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2176,6 +2255,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2214,6 +2294,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2273,6 +2354,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2330,6 +2412,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2414,6 +2497,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2480,6 +2564,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2539,6 +2624,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2590,6 +2676,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -2655,6 +2742,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2687,6 +2775,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2720,6 +2809,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let mut open = open.expect("session opened");
@@ -2843,7 +2933,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(3)),
             "the browser never enters the ring; the app's own MRU-second lands first"
@@ -2869,7 +2960,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(4))
         );
@@ -2898,7 +2990,8 @@ mod tests {
                     DEFAULT_ROWS,
                     false,
                     false,
-                    &mut HashSet::new(),
+                    crate::text::TextDecision::Bitmap,
+                    &mut HashSet::new()
                 ),
                 expected
             );
@@ -2927,7 +3020,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             None
         );
@@ -2956,7 +3050,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             None
         );
@@ -2978,6 +3073,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
 
@@ -3004,7 +3100,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(4))
         );
@@ -3031,6 +3128,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3045,7 +3143,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(4))
         );
@@ -3069,7 +3168,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(2)),
             "a plain session steps the full ring: the global MRU-second"
@@ -3086,7 +3186,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(3)),
             "the frozen plain ring keeps walking; the anchor never applies"
@@ -3118,6 +3219,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("same-app session opened");
@@ -3141,6 +3243,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("same-app session opened");
@@ -3193,7 +3296,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(2))
         );
@@ -3208,7 +3312,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(3))
         );
@@ -3223,7 +3328,8 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
-                &mut HashSet::new(),
+                crate::text::TextDecision::Bitmap,
+                &mut HashSet::new()
             ),
             Some(Handle(1))
         );
@@ -3249,6 +3355,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let open = open.expect("session opened");
@@ -3270,6 +3377,7 @@ mod tests {
             tree_sel: 0,
             visible: Vec::new(),
             profile: StyleProfile::default(),
+            text: crate::text::TextDecision::Bitmap,
             viewport: None,
         };
         assert_eq!(commit_target(&confined, &snap), None);
@@ -3298,6 +3406,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert!(
@@ -3336,6 +3445,7 @@ mod tests {
                 DEFAULT_ROWS,
                 false,
                 false,
+                crate::text::TextDecision::Bitmap,
                 &mut HashSet::new(),
             );
             let open = open.expect("session opened");
@@ -3362,6 +3472,7 @@ mod tests {
             scoped_cycling: false,
             pair: None,
             selection: crate::ui::SelectionSetting::Accent,
+            font: crate::text::FontSetting::Default,
             workspaces: vec![crate::settings::WorkspaceRule {
                 reference: crate::settings::WorkspaceRef::Name("browse".to_owned()),
                 isolated: false,
@@ -3592,6 +3703,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3612,6 +3724,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3633,6 +3746,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3667,6 +3781,7 @@ mod tests {
             5,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert_eq!(open.as_ref().expect("session opened").rows, 5);
@@ -3684,6 +3799,7 @@ mod tests {
             9,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3705,6 +3821,7 @@ mod tests {
             9,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert_eq!(open.as_ref().expect("fresh session opened").rows, 9);
@@ -3744,6 +3861,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert_eq!(open.as_ref().expect("session opened").profile, spacious);
@@ -3761,6 +3879,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3782,6 +3901,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert_eq!(
@@ -3816,6 +3936,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert!(!open.as_ref().expect("session opened").grouping);
@@ -3833,6 +3954,7 @@ mod tests {
             DEFAULT_ROWS,
             true,
             true,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert!(
@@ -3853,6 +3975,7 @@ mod tests {
             DEFAULT_ROWS,
             true,
             true,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert!(open.as_ref().expect("fresh session opened").grouping);
@@ -3906,6 +4029,7 @@ mod tests {
             DEFAULT_ROWS,
             true,
             true,
+            crate::text::TextDecision::Bitmap,
             &mut expanded,
         );
         (open, expanded)
@@ -3928,6 +4052,7 @@ mod tests {
             DEFAULT_ROWS,
             true,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut expanded,
         );
         (open, expanded)
@@ -4017,6 +4142,7 @@ mod tests {
             DEFAULT_ROWS,
             true,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut expanded,
         );
         assert_eq!(
@@ -4221,6 +4347,7 @@ mod tests {
             DEFAULT_ROWS,
             false,
             false,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         assert_eq!(flat_target, Some(Handle(2)), "flat keeps the MRU-second");
@@ -4563,6 +4690,7 @@ mod tests {
             DEFAULT_ROWS,
             true,
             true,
+            crate::text::TextDecision::Bitmap,
             &mut expanded,
         );
         let visible = grouped_visible(open.as_ref().expect("reopened"), &snap, &expanded);
@@ -4666,10 +4794,169 @@ mod tests {
             DEFAULT_ROWS,
             true,
             true,
+            crate::text::TextDecision::Bitmap,
             &mut HashSet::new(),
         );
         let session = open.as_ref().expect("session opened");
         assert!(session.tree.is_none(), "same-app sessions carry no tree");
         assert_eq!(session.ring.selected(), Some(Handle(3)));
+    }
+
+    // --- the text decision (typography TY4) --------------------------------
+
+    /// The committed fixture's text system (see `res/test-fonts`).
+    fn fixture_text_system() -> crate::text::TextSystem {
+        crate::text::TextSystem::from_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("res/test-fonts"),
+        )
+    }
+
+    #[test]
+    fn resolve_text_paints_the_bitmap_floor_when_no_fonts_load() {
+        // SC 5: an injected empty fontdb paints the font8x8 card.
+        let mut empty = crate::text::TextSystem::empty();
+        assert_eq!(empty.face_count(), 0);
+        assert_eq!(
+            resolve_text(&mut empty, &crate::text::FontSetting::Default, || {
+                "Follow Face".to_owned()
+            }),
+            crate::text::TextDecision::Bitmap
+        );
+        // Even a configured family cannot reach the System stack
+        // against an empty database — the floor is the floor.
+        assert_eq!(
+            resolve_text(
+                &mut empty,
+                &crate::text::FontSetting::Family("Open Sans".to_owned()),
+                || "Follow Face".to_owned()
+            ),
+            crate::text::TextDecision::Bitmap
+        );
+    }
+
+    #[test]
+    fn resolve_text_keeps_a_configured_family_the_database_knows() {
+        let mut system = fixture_text_system();
+        assert_eq!(
+            resolve_text(
+                &mut system,
+                &crate::text::FontSetting::Family("Open Sans".to_owned()),
+                || unreachable!("an installed family never reads the follow store")
+            ),
+            crate::text::TextDecision::System {
+                family: "Open Sans".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_text_falls_back_to_the_follow_for_unknown_and_default() {
+        let mut system = fixture_text_system();
+        // A configured-but-missing family: the diagnostic names the key
+        // (stderr) and the follow's answer paints.
+        assert_eq!(
+            resolve_text(
+                &mut system,
+                &crate::text::FontSetting::Family("Not Installed".to_owned()),
+                || "Follow Face".to_owned()
+            ),
+            crate::text::TextDecision::System {
+                family: "Follow Face".to_owned()
+            }
+        );
+        // Default: the follow's answer, nothing else consulted.
+        assert_eq!(
+            resolve_text(&mut system, &crate::text::FontSetting::Default, || {
+                "Follow Face".to_owned()
+            }),
+            crate::text::TextDecision::System {
+                family: "Follow Face".to_owned()
+            }
+        );
+    }
+
+    /// The text twin of the frozen-palette seam: the decision resolves
+    /// once at open and freezes for the session's life — a font edit
+    /// landing mid-gesture (here: the decision the next invocation
+    /// would resolve) changes nothing until the session closes and the
+    /// next press starts fresh.
+    #[test]
+    fn an_open_session_keeps_its_frozen_text_across_a_font_edit() {
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            false,
+            crate::text::TextDecision::System {
+                family: "Open Sans".to_owned(),
+            },
+            &mut HashSet::new(),
+        );
+        assert_eq!(
+            open.as_ref().expect("session opened").text,
+            crate::text::TextDecision::System {
+                family: "Open Sans".to_owned()
+            }
+        );
+
+        // The config flips fonts between presses; the open session
+        // still paints the face it was opened with.
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            false,
+            crate::text::TextDecision::Bitmap,
+            &mut HashSet::new(),
+        );
+        assert_eq!(
+            open.as_ref().expect("session still open").text,
+            crate::text::TextDecision::System {
+                family: "Open Sans".to_owned()
+            },
+            "a mid-gesture font edit must not repaint the open session"
+        );
+
+        // The next press after the session ends starts fresh: the new
+        // decision applies.
+        open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            false,
+            crate::text::TextDecision::Bitmap,
+            &mut HashSet::new(),
+        );
+        assert_eq!(
+            open.as_ref().expect("fresh session opened").text,
+            crate::text::TextDecision::Bitmap
+        );
     }
 }

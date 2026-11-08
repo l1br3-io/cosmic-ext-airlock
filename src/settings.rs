@@ -72,6 +72,11 @@ pub struct Settings {
     /// [`SelectionSetting::Accent`] — the follow, the desktop's accent
     /// at 20 % over the effective card. `Neutral` is the shipped band.
     pub selection: SelectionSetting,
+    /// Which family the card's titles paint in; missing key =
+    /// [`text::FontSetting::Default`] — the COSMIC interface font's
+    /// family. Any string is valid syntax; resolution (and its
+    /// diagnostics) happen at open, never at parse.
+    pub font: crate::text::FontSetting,
     pub workspaces: Vec<WorkspaceRule>,
 }
 
@@ -84,6 +89,7 @@ impl Default for Settings {
             scoped_cycling: false,
             pair: None,
             selection: SelectionSetting::Accent,
+            font: crate::text::FontSetting::Default,
             workspaces: Vec::new(),
         }
     }
@@ -251,6 +257,17 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             }
         },
     };
+    let font = match root.get("font") {
+        None => crate::text::FontSetting::Default,
+        Some(value) => crate::text::FontSetting::Family(
+            value
+                .as_str()
+                .ok_or(SettingsError::InvalidFile {
+                    problem: "`font` must be a font family name (a string)",
+                })?
+                .to_owned(),
+        ),
+    };
     let Some(entries) = root.get("workspace") else {
         return Ok(Settings {
             theme,
@@ -259,6 +276,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             scoped_cycling,
             pair,
             selection,
+            font,
             ..Settings::default()
         });
     };
@@ -279,6 +297,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         scoped_cycling,
         pair,
         selection,
+        font,
         workspaces,
     })
 }
@@ -600,6 +619,7 @@ isolated = false
                 scoped_cycling: false,
                 pair: None,
                 selection: SelectionSetting::Accent,
+                font: crate::text::FontSetting::Default,
                 workspaces: vec![
                     WorkspaceRule {
                         reference: WorkspaceRef::Name("code".to_owned()),
@@ -638,6 +658,57 @@ isolated = false
         let settings =
             Settings::parse(b"[[workspace]]\nname = \"a\"\nunexpected = 1\n").expect("valid");
         assert_eq!(settings.workspaces.len(), 1);
+    }
+
+    // --- The font key ----------------------------------------------------
+
+    #[test]
+    fn parse_defaults_font_to_the_follow_when_absent() {
+        let settings = Settings::parse(b"").expect("valid");
+        assert_eq!(settings.font, crate::text::FontSetting::Default);
+    }
+
+    #[test]
+    fn parse_reads_a_font_family_name() {
+        let settings = Settings::parse(b"font = \"Fira Sans\"\n").expect("valid");
+        assert_eq!(
+            settings.font,
+            crate::text::FontSetting::Family("Fira Sans".to_owned())
+        );
+        // Any string is valid syntax — resolution is paint-time by
+        // design, so even a family nothing installs parses.
+        let settings = Settings::parse(b"font = \"Not Installed\"\n").expect("valid");
+        assert_eq!(
+            settings.font,
+            crate::text::FontSetting::Family("Not Installed".to_owned())
+        );
+    }
+
+    #[test]
+    fn parse_rejects_a_non_string_font_with_the_named_problem() {
+        let error = Settings::parse(b"font = 12\n").expect_err("wrong type");
+        assert_eq!(
+            error,
+            SettingsError::InvalidFile {
+                problem: "`font` must be a font family name (a string)",
+            }
+        );
+        let error = Settings::parse(b"[font]\nfamily = \"x\"\n").expect_err("wrong type");
+        assert_eq!(
+            error,
+            SettingsError::InvalidFile {
+                problem: "`font` must be a font family name (a string)",
+            }
+        );
+    }
+
+    #[test]
+    fn parse_a_bad_font_beside_valid_keys_fails_the_whole_file() {
+        // The `theme`/`rows` half is fine on its own; one bad `font`
+        // rejects the file, same as every other key — last-good holds.
+        let error = Settings::parse(b"theme = \"dark\"\nrows = 6\nfont = true\n")
+            .expect_err("the file fails whole");
+        assert!(matches!(error, SettingsError::InvalidFile { .. }));
     }
 
     #[test]
@@ -1227,6 +1298,7 @@ isolated = false
             scoped_cycling: false,
             pair: None,
             selection: SelectionSetting::Accent,
+            font: crate::text::FontSetting::Default,
             workspaces: vec![rule(WorkspaceRef::Name("browse".to_owned()), false)],
         };
         let scope = scope_for(
@@ -1248,6 +1320,7 @@ isolated = false
             scoped_cycling: false,
             pair: None,
             selection: SelectionSetting::Accent,
+            font: crate::text::FontSetting::Default,
             workspaces: vec![rule(WorkspaceRef::Position(2), false)],
         };
         let scope = scope_for(
@@ -1270,6 +1343,7 @@ isolated = false
             scoped_cycling: false,
             pair: None,
             selection: SelectionSetting::Accent,
+            font: crate::text::FontSetting::Default,
             workspaces: vec![
                 rule(WorkspaceRef::Position(1), true),
                 rule(WorkspaceRef::Name("code".to_owned()), false),
@@ -1294,6 +1368,7 @@ isolated = false
             scoped_cycling: false,
             pair: None,
             selection: SelectionSetting::Accent,
+            font: crate::text::FontSetting::Default,
             workspaces: vec![rule(WorkspaceRef::Position(1), false)],
         };
         let scope = scope_for(
@@ -1315,6 +1390,7 @@ isolated = false
             scoped_cycling: false,
             pair: None,
             selection: SelectionSetting::Accent,
+            font: crate::text::FontSetting::Default,
             workspaces: vec![rule(WorkspaceRef::Position(9), false)],
         };
         let scope = scope_for(
@@ -1336,6 +1412,7 @@ isolated = false
             scoped_cycling: false,
             pair: None,
             selection: SelectionSetting::Accent,
+            font: crate::text::FontSetting::Default,
             workspaces: vec![
                 rule(WorkspaceRef::Name("browse".to_owned()), false),
                 rule(WorkspaceRef::Name("browse".to_owned()), true),
@@ -1360,6 +1437,7 @@ isolated = false
             scoped_cycling: false,
             pair: None,
             selection: SelectionSetting::Accent,
+            font: crate::text::FontSetting::Default,
             workspaces: vec![rule(WorkspaceRef::Name("elsewhere".to_owned()), false)],
         };
         let scope = scope_for(
@@ -1534,6 +1612,7 @@ isolated = false
                 scoped_cycling: false,
                 pair: None,
                 selection: SelectionSetting::Accent,
+                font: crate::text::FontSetting::Default,
                 workspaces: vec![rule(WorkspaceRef::Name("code".to_owned()), false)]
             }
         );

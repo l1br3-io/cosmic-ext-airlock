@@ -396,6 +396,95 @@ fn parse_density(text: &str) -> Option<Density> {
     }
 }
 
+// --- The interface-font follow ---------------------------------------------
+//
+// The card's typeface follows the desktop's chosen interface font,
+// family-only (the store carries no size — record §7; the 12-px pin
+// has nothing to follow and stands). The store moved two days after
+// this machine's cosmic-settings was built (record §3.4): the
+// installed vintage keeps `CosmicTk/v1/interface_font`, master reads
+// `Theme.<polarity>/v2/font` — Airlock reads the installed vintage
+// first, then master, each through the shared ladder, and both miss
+// onto the same default constant cosmic-settings itself embeds.
+
+/// The font keys: the toolkit config's installed-vintage key and the
+/// per-polarity theme store's master key (record §3.4).
+const INTERFACE_FONT_KEY: &str = "interface_font";
+const THEME_FONT_KEY: &str = "font";
+
+/// The floor when both vintages miss — `cosmic-theme`'s own
+/// `DEFAULT_FONT_FAMILY` (record §3.4), the family a default desktop
+/// shapes even with no font-store file.
+const DEFAULT_INTERFACE_FONT: &str = "Open Sans";
+
+/// The desktop's interface font family, or [`DEFAULT_INTERFACE_FONT`]
+/// on a total ladder miss (with one aggregated diagnostic naming every
+/// rung) — the `typography` follow's answer, family-only.
+pub fn interface_font(dark: bool) -> String {
+    let (value, missed) = interface_font_at(
+        user_cosmic_root().as_deref(),
+        Path::new(SYSTEM_COSMIC_ROOT),
+        dark,
+    );
+    value.unwrap_or_else(|| {
+        eprintln!(
+            "airlock daemon: no readable COSMIC interface font ({}); the card paints {DEFAULT_INTERFACE_FONT}",
+            missed.join(", ")
+        );
+        DEFAULT_INTERFACE_FONT.to_owned()
+    })
+}
+
+/// The interface-font answer over explicit store roots — the testable
+/// core of [`interface_font`], the accent ladder's shape twice: the
+/// installed vintage's `CosmicTk` rungs first, then the per-polarity
+/// theme store's (first-wins across the two, per the chunk's pinned
+/// order). `None` only when every rung of both missed.
+fn interface_font_at(
+    user_root: Option<&Path>,
+    system_root: &Path,
+    dark: bool,
+) -> (Option<String>, Vec<String>) {
+    let (installed, mut missed) = ladder_at(
+        user_root,
+        system_root,
+        TK_ID,
+        1,
+        INTERFACE_FONT_KEY,
+        parse_font_family,
+    );
+    if installed.is_some() {
+        return (installed, missed);
+    }
+    let (master, master_missed) = ladder_at(
+        user_root,
+        system_root,
+        if dark { THEME_DARK_ID } else { THEME_LIGHT_ID },
+        ACCENT_VERSION,
+        THEME_FONT_KEY,
+        parse_font_family,
+    );
+    missed.extend(master_missed);
+    (master, missed)
+}
+
+/// The family from one `FontConfig` file's `family:` line — the one
+/// field the follow reads. The disk shape beyond the quoted string is
+/// source-verified, never seen on disk (record §3.4's honest silence):
+/// the parse takes the quoted RON string and nothing else, so an
+/// unquoted or absent line is a miss, never a guess.
+fn parse_font_family(text: &str) -> Option<String> {
+    let value = text.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("family:")
+            .map(|rest| rest.trim().trim_end_matches(','))
+    })?;
+    let family = value
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))?;
+    (!family.is_empty()).then(|| family.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -901,5 +990,65 @@ mod tests {
         assert_eq!(missed.len(), 3, "three rungs tried, three misses");
         assert!(!user.exists(), "no user store directory was created");
         assert!(!system.exists(), "no system store directory was created");
+    }
+
+    // --- interface-font follow ----------------------------------------------
+
+    #[test]
+    fn parse_font_family_takes_the_quoted_family_line_only() {
+        // The v2 shape cosmic-settings writes (record §3.4): a quoted
+        // RON string, other FontConfig fields ignored.
+        assert_eq!(
+            parse_font_family("FontConfig(\n    family: \"Fira Sans\",\n    weight: Normal,\n)"),
+            Some("Fira Sans".to_owned())
+        );
+        // An unquoted word is not the disk shape ever verified — a
+        // miss, never a guess (the record's honest silence).
+        assert_eq!(parse_font_family("family: FiraSans"), None);
+        assert_eq!(parse_font_family("weight: Normal"), None);
+        assert_eq!(parse_font_family("family: \"\""), None);
+        assert_eq!(parse_font_family(""), None);
+    }
+
+    #[test]
+    fn interface_font_prefers_the_installed_vintage_then_the_theme_store() {
+        let user = TempDir::new("font-follow");
+        let system = TempDir::new("font-follow-system");
+        // The installed vintage's user rung wins over the theme store.
+        user.rung(TK_ID, 1, INTERFACE_FONT_KEY, "family: \"Fira Sans\"");
+        user.rung(THEME_DARK_ID, 2, THEME_FONT_KEY, "family: \"Noto Sans\"");
+        let (value, _) = interface_font_at(Some(&user.0), &system.0, true);
+        assert_eq!(value.as_deref(), Some("Fira Sans"));
+
+        // Without the Tk file, the theme store's side answers by
+        // polarity — per-polarity font stores are as real as the
+        // accent's (record §3.4's update_theme sync writes both).
+        let user2 = TempDir::new("font-follow-polarity");
+        let system2 = TempDir::new("font-follow-polarity-system");
+        user2.rung(THEME_DARK_ID, 2, THEME_FONT_KEY, "family: \"Noto Sans\"");
+        user2.rung(THEME_LIGHT_ID, 2, THEME_FONT_KEY, "family: \"Inter\"");
+        let (dark, _) = interface_font_at(Some(&user2.0), &system2.0, true);
+        assert_eq!(dark.as_deref(), Some("Noto Sans"));
+        let (light, _) = interface_font_at(Some(&user2.0), &system2.0, false);
+        assert_eq!(light.as_deref(), Some("Inter"));
+
+        // Both vintages absent everywhere: the miss, every rung labeled.
+        let user3 = TempDir::new("font-follow-miss");
+        let system3 = TempDir::new("font-follow-miss-system");
+        let (value, missed) = interface_font_at(Some(&user3.0), &system3.0, true);
+        assert_eq!(value, None);
+        assert_eq!(
+            missed.len(),
+            5,
+            "Tk's two rungs and the theme store's three"
+        );
+    }
+
+    #[test]
+    fn interface_font_floors_to_open_sans_on_a_total_miss() {
+        // `interface_font` itself (not the _at core): the floor is the
+        // default constant, reached with an empty store tree.
+        let family = interface_font(false);
+        assert_eq!(family, DEFAULT_INTERFACE_FONT);
     }
 }

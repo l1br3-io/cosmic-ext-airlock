@@ -263,6 +263,11 @@ pub(crate) struct App {
     /// First output seen; hosts the overlay surface.
     first_output: Option<wl_output::WlOutput>,
     overlay: Option<Overlay>,
+    /// The daemon's text system, installed right after connect (one
+    /// font scan at startup, OQ 1; `airlock list` never pays it — the
+    /// connection starts [`TextSystem::empty`], which is also the
+    /// zero-fonts floor's marker).
+    text: crate::text::TextSystem,
     /// Gesture inputs queued by keyboard handlers during dispatch; the
     /// daemon's serve loop drains them after each poll.
     gesture_inputs: Vec<GestureInput>,
@@ -759,9 +764,13 @@ impl LayerShellHandler for App {
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        if let Some(overlay) = &mut self.overlay {
+        // The overlay and its text system are sibling fields: borrow
+        // them together so the redraw draws through the frozen
+        // decision.
+        let App { overlay, text, .. } = self;
+        if let Some(overlay) = overlay.as_mut() {
             let (width, height) = configure.new_size;
-            overlay.on_configure(width, height);
+            overlay.on_configure(width, height, text);
             let model = overlay.model();
             eprintln!(
                 "airlock daemon: overlay configured {}x{} ({} rows)",
@@ -980,6 +989,11 @@ pub struct Overlay {
     /// The card colors `model` renders with; swapped with the model so a
     /// redraw never mixes a new model with the previous palette.
     palette: ui::Palette,
+    /// The text decision `model` renders with, frozen at open beside
+    /// the palette — the floor or the system stack in its resolved
+    /// family; swapped with the model so a redraw never repaints a card
+    /// under a mid-gesture font edit.
+    text: crate::text::TextDecision,
     /// Whether the shown card paints the grouped tree — the key map's
     /// mode, swapped with the model so Tab/→/← always mean what the
     /// visible list shows.
@@ -1021,6 +1035,7 @@ impl Overlay {
     pub fn new(
         model: OverlayModel,
         palette: ui::Palette,
+        text: crate::text::TextDecision,
         grouped: bool,
         scoped: bool,
         env: OverlayEnv<'_>,
@@ -1064,6 +1079,7 @@ impl Overlay {
             pool,
             model,
             palette,
+            text,
             grouped,
             scoped,
             scale,
@@ -1080,18 +1096,21 @@ impl Overlay {
         &mut self,
         model: OverlayModel,
         palette: ui::Palette,
+        text: crate::text::TextDecision,
         grouped: bool,
         scoped: bool,
+        system: &mut crate::text::TextSystem,
     ) {
         let unchanged = self.size == Some((model.width, model.height));
         self.close_at = Instant::now() + ui::CLOSE_AFTER;
         let (width, height) = (model.width, model.height);
         self.model = model;
         self.palette = palette;
+        self.text = text;
         self.grouped = grouped;
         self.scoped = scoped;
         if unchanged {
-            self.draw();
+            self.draw(system);
         } else {
             self.layer.set_size(width, height);
             self.layer.commit();
@@ -1101,7 +1120,7 @@ impl Overlay {
     /// Applies a configure: remember the granted size and draw. A zero
     /// dimension means "pick your own", which for this surface is the model
     /// size.
-    pub fn on_configure(&mut self, width: u32, height: u32) {
+    pub fn on_configure(&mut self, width: u32, height: u32, system: &mut crate::text::TextSystem) {
         let width = if width == 0 { self.model.width } else { width };
         let height = if height == 0 {
             self.model.height
@@ -1109,7 +1128,7 @@ impl Overlay {
             height
         };
         self.size = Some((width, height));
-        self.draw();
+        self.draw(system);
     }
 
     /// Whether the idle close deadline has passed at `now`.
@@ -1138,10 +1157,11 @@ impl Overlay {
         self.layer.wl_surface()
     }
 
-    /// Renders the model into a fresh buffer and commits it. A no-op before
-    /// the first configure; draw failures are logged and leave the surface
-    /// as-is — the next press retries with a fresh pool slot.
-    fn draw(&mut self) {
+    /// Renders the model into a fresh buffer and commits it, text
+    /// through the decision frozen at open. A no-op before the first
+    /// configure; draw failures are logged and leave the surface as-is —
+    /// the next press retries with a fresh pool slot.
+    fn draw(&mut self, system: &mut crate::text::TextSystem) {
         let Some((width, height)) = self.size else {
             return;
         };
@@ -1165,10 +1185,7 @@ impl Overlay {
             stride,
             self.scale,
             &self.palette,
-            // The floor while the render path gains its System twin
-            // (TY3); TY4 resolves the backend per open and carries it
-            // onto the overlay with the model.
-            ui::TextBackend::Bitmap,
+            ui::text_backend(&self.text, system),
         );
         let surface = self.layer.wl_surface();
         surface.damage_buffer(0, 0, bw as i32, bh as i32);
@@ -1280,6 +1297,7 @@ impl Session {
             alt_held: false,
             first_output: None,
             overlay: None,
+            text: crate::text::TextSystem::empty(),
             gesture_inputs: Vec::new(),
             pointer_inputs: Vec::new(),
             wheel_residual: 0,
@@ -1508,18 +1526,27 @@ impl Session {
     }
 
     /// Maps the switcher overlay with `model` in the card colors of
-    /// `palette`, or refreshes it if it is already up. Creation failures
-    /// are logged, not fatal: a press that cannot draw still cycles
-    /// focus.
+    /// `palette` under the text `decision`, or refreshes it if it is
+    /// already up. Creation failures are logged, not fatal: a press
+    /// that cannot draw still cycles focus.
     pub fn overlay_show(
         &mut self,
         model: OverlayModel,
         palette: ui::Palette,
+        text: crate::text::TextDecision,
         grouped: bool,
         scoped: bool,
     ) {
-        if let Some(overlay) = self.app.overlay.as_mut() {
-            overlay.update(model, palette, grouped, scoped);
+        // The overlay and its text system are sibling fields: borrow
+        // them together so a refresh draws through the decision it
+        // freezes.
+        let App {
+            overlay,
+            text: system,
+            ..
+        } = &mut self.app;
+        if let Some(overlay) = overlay.as_mut() {
+            overlay.update(model, palette, text, grouped, scoped, system);
             let rows = overlay.model().rows.len();
             eprintln!("airlock daemon: overlay updated ({rows} rows)");
             let _ = self.conn.flush();
@@ -1536,6 +1563,7 @@ impl Session {
         let overlay = Overlay::new(
             model,
             palette,
+            text,
             grouped,
             scoped,
             OverlayEnv {
@@ -1568,6 +1596,20 @@ impl Session {
     /// Unmaps the overlay if one is up.
     pub fn overlay_hide(&mut self, reason: &str) {
         self.app.overlay_hide(reason);
+    }
+
+    /// Installs the daemon's font scan (OQ 1: one scan at startup, paid
+    /// at login). The connection starts with an empty system so
+    /// `airlock list` never scans — and an empty system is itself the
+    /// zero-fonts floor's marker.
+    pub fn set_text_system(&mut self, system: crate::text::TextSystem) {
+        self.app.text = system;
+    }
+
+    /// The daemon's text system: the model builders and the overlay's
+    /// draws borrow it.
+    pub fn text_system(&mut self) -> &mut crate::text::TextSystem {
+        &mut self.app.text
     }
 
     /// Idle and hard close deadlines of a mapped overlay, as

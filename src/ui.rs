@@ -655,14 +655,29 @@ pub enum TextBackend<'a> {
     /// the font's own `…`. `query` is the family the session froze
     /// (`FontQuery::SansSerif` is the default face — the interface-font
     /// follow resolves before this, at open).
-    // Constructed from TY4, when the daemon resolves the backend per
-    // open; until then the lib's render path and the tests are its only
-    // constructors. Removed in TY4 (the GE1→GE3 precedent).
-    #[allow(dead_code)]
     System {
         system: &'a mut crate::text::TextSystem,
         query: crate::text::FontQuery<'a>,
     },
+}
+
+/// The backend a frozen [`crate::text::TextDecision`] paints through,
+/// borrowing the daemon's [`crate::text::TextSystem`]: the floor maps
+/// to [`TextBackend::Bitmap`], the system decision to
+/// [`TextBackend::System`] in its resolved family. The one mapping —
+/// the model builders and the renderer share it, so a card is composed
+/// and painted under one decision end to end.
+pub fn text_backend<'a>(
+    decision: &'a crate::text::TextDecision,
+    system: &'a mut crate::text::TextSystem,
+) -> TextBackend<'a> {
+    match decision {
+        crate::text::TextDecision::Bitmap => TextBackend::Bitmap,
+        crate::text::TextDecision::System { family } => TextBackend::System {
+            system,
+            query: crate::text::FontQuery::Named(family),
+        },
+    }
 }
 
 // Geometry pins. The 8-grid holds for every stepped metric; the row is
