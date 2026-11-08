@@ -116,11 +116,6 @@ pub struct Switch {
     /// open from the `grouping` setting and frozen like the rows: a
     /// config edit landing mid-gesture never regroups the open session.
     grouping: bool,
-    /// Whether grouped Alt+Tab cycles *within* the entered group
-    /// (`scoped_cycling = true`) or across every app (the default,
-    /// open cycling) — resolved once at open beside `grouping` and
-    /// frozen the same way.
-    scoped: bool,
     /// Which way this session's card lays out, resolved once at open
     /// from the `layout` setting and frozen like the palette: a config
     /// edit landing mid-gesture never re-lays-out the open session.
@@ -135,8 +130,8 @@ pub struct Switch {
     /// output change mid-gesture never re-windows the open band.
     tiles: usize,
     /// The frozen tree a grouped plain session walks: the partition of
-    /// the eligible list at open, kept so every grouped input — Alt+Tab's
-    /// scoped steps, →/←'s level walks, the card's rows — addresses one
+    /// the eligible list at open, kept so every grouped input — Tab's
+    /// linear steps, →/←'s level walks, the card's rows — addresses one
     /// frozen window set. `None` for flat sessions and same-app sessions
     /// (the exemption — already app-scoped, rendered flat).
     tree: Option<switcher::Grouping>,
@@ -205,44 +200,17 @@ impl Switch {
         self.visible.get(viewport.start + row).copied()
     }
 
-    /// Whether the tree row at `index` renders as a pure divider — an
-    /// expanded group's entry while open cycling ([`Switch::scoped`] =
-    /// `false`): it never holds the selection, hints no chord, and
-    /// resolves no pointer input (the owner's "just a divider").
-    /// Scoped sessions have no dividers — level-1 Tab targets the
-    /// entries themselves, expansion and all.
-    fn is_divider(&self, index: usize, expanded: &std::collections::HashSet<String>) -> bool {
-        !self.scoped
-            && self
-                .tree
-                .as_ref()
-                .and_then(|tree| tree.rows().get(index))
-                .is_some_and(|row| {
-                    row.kind == switcher::RowKind::Parent && expanded.contains(&row.app_id)
-                })
-    }
-
     /// Applies a pointer hover crossing: flat sessions select by the
     /// event-time handle; grouped sessions by the event-time row — both
-    /// captured against the model the user saw. A divider row selects
-    /// nothing (open cycling): the row is addressable for the crossing
-    /// policy, inert as a target — the daemon-side twin of the
-    /// boundary's divider handle suppression. Returns whether the
-    /// selection moved.
-    fn select_pointer_row(
-        &mut self,
-        row: usize,
-        handle: Option<Handle>,
-        expanded: &std::collections::HashSet<String>,
-    ) -> bool {
+    /// captured against the model the user saw. Rev 5: every visible
+    /// row selects, headers included — the divider rule is gone.
+    /// Returns whether the selection moved.
+    fn select_pointer_row(&mut self, row: usize, handle: Option<Handle>) -> bool {
         match &self.tree {
             Some(_) => {
                 let Some(index) = self.tree_row_at(row) else {
                     return false;
                 };
-                if self.is_divider(index, expanded) {
-                    return false;
-                }
                 self.tree_sel = index;
                 true
             }
@@ -308,17 +276,18 @@ pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> 
 ///
 /// A session's first press builds it from the MRU front — the focused
 /// window's row — so the opening Alt+Tab (Alt+Shift+Tab) is the first
-/// step of the session's cycle scope in grouped mode: the next app
-/// entry at level 1 under scoped cycling; one row of the dividerless
-/// sequence — one past the active window — under open cycling; a step
-/// inside it when the workspace holds a single group. Later
+/// step of the session's linear walk in grouped mode: one visible row
+/// past the active window — the next app entry while the active group
+/// stands collapsed (a quick tap activates the MRU-second app's front
+/// window), the next window while it stands expanded (flat quick-tap
+/// parity). Later
 /// presses reuse the same frozen selection basis instead of rebuilding
 /// it: walking three windows takes three presses, unlike T4's
 /// per-press rebuild which toggled between the front two. `scope`,
-/// `palette`, `profile`, `rows`, `grouping`, `scoped_cycling`,
+/// `palette`, `profile`, `rows`, `grouping`,
 /// `layout`, `columns`, and `text` are consumed only when the session
 /// opens; an already-open session keeps the ones it was built with.
-// Fourteen open-path parameters: the frozen-at-open values ride
+// Thirteen open-path parameters: the frozen-at-open values ride
 // individually (see session_step's note).
 #[expect(clippy::too_many_arguments)]
 pub fn ring_step(
@@ -330,7 +299,6 @@ pub fn ring_step(
     profile: crate::ui::StyleProfile,
     rows: usize,
     grouping: bool,
-    scoped_cycling: bool,
     text: crate::text::TextDecision,
     layout: crate::ui::LayoutSetting,
     columns: crate::ui::ColumnsSetting,
@@ -341,10 +309,9 @@ pub fn ring_step(
         let active = snapshot.active?;
         // A grouped session opens on the frozen tree with its selection
         // on row 0 — the focused window's entry, its app's parent when
-        // the app is multi-window — and the opening press steps *within
-        // its level*: the next app entry (a quick tap activates the
-        // MRU-second app's front window), or into the only group there
-        // is. Flat sessions keep the eligible-list ring, no tree.
+        // the app is multi-window — and the opening press is the first
+        // linear step past the active window's rows. Flat sessions keep
+        // the eligible-list ring, no tree.
         let (handles, tree) = if grouping {
             (
                 Vec::new(), // grouped selections live on the tree, not a ring
@@ -363,7 +330,6 @@ pub fn ring_step(
             profile,
             text,
             grouping,
-            scoped: scoped_cycling,
             layout,
             columns,
             tiles,
@@ -374,14 +340,7 @@ pub fn ring_step(
         });
         if open.as_ref().is_some_and(|session| session.tree.is_some()) {
             let session = open.as_mut()?;
-            // Open cycling: row 0 may be a divider (the active app's
-            // group left expanded); the step bases itself on the
-            // active window instead — the child carrying the same
-            // window the entry implies.
-            if !session.scoped {
-                step_off_divider(session, snapshot, expanded);
-            }
-            step_scope(session, snapshot, expanded, direction);
+            step_open(session, snapshot, expanded, direction);
             return session.selected_handle();
         }
     }
@@ -405,8 +364,8 @@ pub fn ring_step(
 /// [`step_and_show`]), but the selection basis never rebuilds — the same
 /// freeze philosophy as the scope and the palette, both consumed only when
 /// the session opens.
-// Fifteen open-path parameters: the frozen-at-open values (palette,
-// profile, rows, grouping, scoped cycling, layout, columns + its
+// Fourteen open-path parameters: the frozen-at-open values (palette,
+// profile, rows, grouping, layout, columns + its
 // resolved tiles, text) each ride individually and the expansion state
 // is daemon memory the open may write — no bundle introduced (the GR3
 // note).
@@ -421,16 +380,16 @@ pub fn session_step(
     profile: crate::ui::StyleProfile,
     rows: usize,
     grouping: bool,
-    scoped_cycling: bool,
     text: crate::text::TextDecision,
     layout: crate::ui::LayoutSetting,
     columns: crate::ui::ColumnsSetting,
     tiles: usize,
     expanded: &mut std::collections::HashSet<String>,
 ) -> Option<Handle> {
-    // An open grouped session steps its visible rows (↓/↑ and the
-    // wheel); the snapshot, scope, palette, rows, and grouping only
-    // matter when a session opens. Plain opens go straight through.
+    // An open grouped session steps its visible rows (Tab, ↓/↑, and
+    // the wheel share the one linear walk); the snapshot, scope,
+    // palette, rows, and grouping only matter when a session opens.
+    // Plain opens go straight through.
     if let Some(session) = open.as_mut()
         && session.tree.is_some()
     {
@@ -439,20 +398,8 @@ pub fn session_step(
     }
     if open.is_some() || !same_app {
         return ring_step(
-            open,
-            snapshot,
-            direction,
-            scope,
-            palette,
-            profile,
-            rows,
-            grouping,
-            scoped_cycling,
-            text,
-            layout,
-            columns,
-            tiles,
-            expanded,
+            open, snapshot, direction, scope, palette, profile, rows, grouping, text, layout,
+            columns, tiles, expanded,
         );
     }
     // A new same-app session: anchor, narrow, and hold the two-window
@@ -465,11 +412,10 @@ pub fn session_step(
     }
     // The same-app exemption rides here: the session is already
     // app-scoped and renders flat, so it opens on the app's eligible
-    // windows with no tree whatever the `grouping` setting says —
-    // and no cycle scope either.
+    // windows with no tree whatever the `grouping` setting says.
     let selected = ring_step(
-        open, &view, direction, scope, palette, profile, rows, false, false, text, layout, columns,
-        tiles, expanded,
+        open, &view, direction, scope, palette, profile, rows, false, text, layout, columns, tiles,
+        expanded,
     );
     // ring_step stored the session on the filtered ring; freeze the anchor
     // into it so later steps re-filter by it.
@@ -496,107 +442,39 @@ fn step_in(order: &[usize], current: usize, direction: Direction) -> usize {
     order[(position + delta) % len]
 }
 
-/// Alt+Tab's step. **Scoped** (`scoped_cycling = true`, the owner's
-/// 2026-11-08 collapse re-decision): level 1 cycles app entries —
-/// never descending into children — and level 2 cycles the selected
-/// group's windows. **Open cycling** (the default, the owner's rev-4
-/// scope setting): one sequence — every visible window and collapsed
-/// entry, dividers (expanded entries) skipped — so the step crosses
-/// group boundaries. Either way a workspace holding a single
-/// multi-window group and nothing else is entered and cycled inside,
-/// so the step is never a dead key. Returns whether anything moved.
-fn step_scope(
-    session: &mut Switch,
-    snapshot: &Snapshot,
-    expanded: &mut std::collections::HashSet<String>,
-    direction: Direction,
-) -> bool {
-    let visible = grouped_visible(session, snapshot, expanded);
-    let Some(tree) = session.tree.as_ref() else {
-        return false;
-    };
-    let moved = |session: &mut Switch, target: usize| {
-        if target == session.tree_sel {
-            false
-        } else {
-            session.tree_sel = target;
-            true
-        }
-    };
-    if !session.scoped {
-        // Open cycling: the dividerless walk over everything the card
-        // shows — expanded groups' children, collapsed entries, leaves.
-        let peers: Vec<usize> = visible
-            .iter()
-            .copied()
-            .filter(|&index| !session.is_divider(index, expanded))
-            .collect();
-        let lone_parent =
-            peers.len() == 1 && tree.rows()[peers[0]].kind == switcher::RowKind::Parent;
-        return if lone_parent {
-            enter_group(session, snapshot, expanded, direction)
-        } else {
-            moved(session, step_in(&peers, session.tree_sel, direction))
-        };
-    }
-    let Some(kind) = tree.rows().get(session.tree_sel).map(|row| row.kind) else {
-        return false;
-    };
-    match kind {
-        // Level 2: the selected group's children only — the step is
-        // scoped within its parent by contract.
-        switcher::RowKind::Child => {
-            let Some(parent) = tree.parent_of(session.tree_sel) else {
-                return false;
-            };
-            let peers: Vec<usize> = tree
-                .children_of(parent)
-                .into_iter()
-                .filter(|index| visible.contains(index))
-                .collect();
-            moved(session, step_in(&peers, session.tree_sel, direction))
-        }
-        // Level 1: app entries. A lone multi-window group is entered
-        // and cycled inside; anything else simply has no peer to move
-        // to.
-        _ => {
-            let peers: Vec<usize> = visible
-                .iter()
-                .copied()
-                .filter(|&index| tree.rows()[index].kind != switcher::RowKind::Child)
-                .collect();
-            if peers.len() == 1 && tree.rows()[peers[0]].kind == switcher::RowKind::Parent {
-                return enter_group(session, snapshot, expanded, direction);
-            }
-            moved(session, step_in(&peers, session.tree_sel, direction))
-        }
-    }
-}
-
-/// Moves a divider selection onto its group's first shown child — the
-/// same window the divider's entry carries, so the move changes which
-/// *row* is selected, not which window. Open cycling's one such
-/// moment: a session opens on row 0, the active app's entry, and
-/// expansion persists across gestures — the opening step must base
-/// itself on the active window, never step onto the divider.
-fn step_off_divider(
+/// The opening press of a grouped session: one step of the linear walk
+/// past the active window's rows. The basis is the *last* visible row
+/// carrying the active window — its app's header while the group stands
+/// collapsed, its first child while expanded — so the opening Alt+Tab
+/// lands one window past the active one (flat quick-tap parity) when
+/// the group is expanded, and on the next app entry when it is
+/// collapsed. A lone collapsed entry wraps onto itself: rev 5 never
+/// descends into a collapsed group, so the press is a stay, never an
+/// entry.
+fn step_open(
     session: &mut Switch,
     snapshot: &Snapshot,
     expanded: &std::collections::HashSet<String>,
+    direction: Direction,
 ) {
     let visible = grouped_visible(session, snapshot, expanded);
-    if !session.is_divider(session.tree_sel, expanded) {
+    let Some(tree) = session.tree.as_ref() else {
         return;
-    }
-    // Children sit contiguously after their parent; the first shown
-    // child is the next row, visible exactly while the group expands.
-    let child = session.tree_sel + 1;
-    if visible.contains(&child) {
-        session.tree_sel = child;
-    }
+    };
+    // The gesture's starting window: the frozen tree's MRU front (the
+    // session opened on it).
+    let Some(active) = tree.rows().first().map(|row| row.handle) else {
+        return;
+    };
+    let basis = visible
+        .iter()
+        .rposition(|&index| tree.rows()[index].handle == active)
+        .and_then(|position| visible.get(position).copied())
+        .unwrap_or(session.tree_sel);
+    session.tree_sel = step_in(&visible, basis, direction);
 }
 
-/// → (and Alt+W at level 1, and Tab into a lone group): expand the
+/// → : expand the
 /// selected parent — the expansion persists across gestures — and land
 /// on its enter target: the group's most recently used window, one past
 /// the gesture's still-active window when that is the front (entering
@@ -662,12 +540,11 @@ fn enter_group(
     true
 }
 
-/// ← : a child exits to its parent row (the group stays expanded under
-/// scoped cycling; under open cycling the expanded entry is a divider
-/// that cannot hold the selection, so the exit collapses the group in
-/// the same motion); an expanded parent collapses — the state persists
-/// across gestures; a collapsed top-level row is the W3C root no-op.
-/// Returns whether the selection or the visible list changed.
+/// ← : a child exits to its parent row (the group stays expanded — the
+/// header holds the selection under rev 5); an expanded parent
+/// collapses — the state persists across gestures; a collapsed
+/// top-level row is the W3C root no-op. Returns whether the selection
+/// or the visible list changed.
 fn exit_group(session: &mut Switch, expanded: &mut std::collections::HashSet<String>) -> bool {
     let Some(tree) = session.tree.as_ref() else {
         return false;
@@ -680,9 +557,6 @@ fn exit_group(session: &mut Switch, expanded: &mut std::collections::HashSet<Str
             let Some(parent) = tree.parent_of(session.tree_sel) else {
                 return false;
             };
-            if !session.scoped {
-                expanded.remove(&tree.rows()[parent].app_id);
-            }
             session.tree_sel = parent;
             true
         }
@@ -695,33 +569,11 @@ fn exit_group(session: &mut Switch, expanded: &mut std::collections::HashSet<Str
     }
 }
 
-/// Alt+W: the level toggle — →'s enter at level 1, ←'s exit at level 2
-/// (the exit collapses only under open cycling, exactly ←'s rule —
-/// the flip and the arrow are the same motion).
-fn toggle_level(
-    session: &mut Switch,
-    snapshot: &Snapshot,
-    expanded: &mut std::collections::HashSet<String>,
-) -> bool {
-    let kind = session
-        .tree
-        .as_ref()
-        .and_then(|tree| tree.rows().get(session.tree_sel).map(|row| row.kind));
-    match kind {
-        Some(switcher::RowKind::Child) => exit_group(session, expanded),
-        Some(switcher::RowKind::Parent) => {
-            enter_group(session, snapshot, expanded, Direction::Next)
-        }
-        _ => false,
-    }
-}
-
-/// ↓/↑ and the wheel: one row of the linear walk — everything the card
-/// shows under scoped cycling (parents and expanded children alike,
-/// crossing group boundaries); under open cycling the same walk minus
-/// the dividers, matching Tab's sequence. Either way it wraps, and a
-/// collapsed group's children are skipped exactly as they are not
-/// shown.
+/// Tab, ↓/↑, and the wheel: one row of the linear walk — everything
+/// the card shows, headers and expanded children alike, crossing group
+/// boundaries. It wraps, and a collapsed group's children are skipped
+/// exactly as they are not shown (rev 5: nothing ever descends into a
+/// collapsed group).
 fn step_visible(
     session: &mut Switch,
     snapshot: &Snapshot,
@@ -729,16 +581,7 @@ fn step_visible(
     direction: Direction,
 ) {
     let visible = grouped_visible(session, snapshot, expanded);
-    let peers: Vec<usize> = if session.scoped {
-        visible
-    } else {
-        visible
-            .iter()
-            .copied()
-            .filter(|&index| !session.is_divider(index, expanded))
-            .collect()
-    };
-    session.tree_sel = step_in(&peers, session.tree_sel, direction);
+    session.tree_sel = step_in(&visible, session.tree_sel, direction);
 }
 
 /// One step request into [`step_and_show`]: the direction, and whether a
@@ -931,6 +774,7 @@ pub fn run() -> Result<(), RunError> {
                 GestureOutput::Step(direction) => {
                     // Keyboard steps only arrive while a session is open,
                     // so which ring a new session would open is moot here.
+                    // Tab, ↓/↑ share this arm: rev 5's one linear walk.
                     step_and_show(
                         &mut session,
                         &mut gesture,
@@ -944,41 +788,6 @@ pub fn run() -> Result<(), RunError> {
                         &mut icons,
                         &mut expanded,
                     );
-                }
-                GestureOutput::StepScope(direction) => {
-                    // Grouped Alt+Tab: the session's cycle scope —
-                    // entries/children by level when scoped, the
-                    // dividerless walk across every app when open. Either
-                    // way the lone group is entered and cycled inside.
-                    if open.as_mut().is_some_and(|session| {
-                        step_scope(session, &snapshot, &mut expanded, direction)
-                    }) {
-                        show_selection(
-                            &mut session,
-                            &mut gesture,
-                            &mut open,
-                            &snapshot,
-                            &expanded,
-                            &mut icons,
-                        );
-                    }
-                }
-                GestureOutput::ToggleLevel => {
-                    // Alt+W: flip one level — enter at level 1, exit at
-                    // level 2 — never touching the expansion state.
-                    if open
-                        .as_mut()
-                        .is_some_and(|session| toggle_level(session, &snapshot, &mut expanded))
-                    {
-                        show_selection(
-                            &mut session,
-                            &mut gesture,
-                            &mut open,
-                            &snapshot,
-                            &expanded,
-                            &mut icons,
-                        );
-                    }
                 }
                 GestureOutput::EnterChild => {
                     // → expands the selected parent (persistently) and
@@ -1027,7 +836,7 @@ pub fn run() -> Result<(), RunError> {
                     open = None;
                 }
                 GestureOutput::Activate { handle } => {
-                    // Ctrl+1..9, Alt+1..9, and clicks: select and commit
+                    // Ctrl+1..9 and clicks: select and commit
                     // in one motion, the same flow each shares —
                     // addressing the handle the boundary captured at the
                     // key press or click. A `None` handle (a continuation
@@ -1077,9 +886,9 @@ pub fn run() -> Result<(), RunError> {
                     if hover.observe(row).is_some()
                         && let Some(content_row) = row
                         && handle.is_some()
-                        && open.as_mut().is_some_and(|open| {
-                            open.select_pointer_row(content_row, handle, &expanded)
-                        })
+                        && open
+                            .as_mut()
+                            .is_some_and(|open| open.select_pointer_row(content_row, handle))
                     {
                         show_selection(
                             &mut session,
@@ -1286,101 +1095,96 @@ fn step_and_show(
     icons: &mut crate::icons::Cache,
     expanded: &mut std::collections::HashSet<String>,
 ) {
-    let (scope, palette, profile, rows, grouping, scoped_cycling, layout, columns, tiles, text) =
-        match open {
-            Some(open) => (
-                open.scope,
-                open.palette,
-                open.profile,
-                open.rows,
-                open.grouping,
-                open.scoped,
-                open.layout,
-                open.columns,
-                open.tiles,
-                open.text.clone(),
-            ),
-            None => {
-                settings.refresh();
-                // `auto` asks the system once per open — two small file reads
-                // at most — and pinned values never touch the disk at all; a
-                // present `card`/`text` pair pins the card over every
-                // `theme` value, so it skips the read too (its polarity is
-                // its own, the constructor's luminance rule). `None`
-                // (unreadable preference) paints dark, never a broken
-                // switch.
-                let system_prefers_dark = (settings.settings.theme
-                    == crate::ui::ThemeSetting::Auto
-                    && settings.settings.pair.is_none())
-                .then(crate::theme::system_prefers_dark)
+    let (scope, palette, profile, rows, grouping, layout, columns, tiles, text) = match open {
+        Some(open) => (
+            open.scope,
+            open.palette,
+            open.profile,
+            open.rows,
+            open.grouping,
+            open.layout,
+            open.columns,
+            open.tiles,
+            open.text.clone(),
+        ),
+        None => {
+            settings.refresh();
+            // `auto` asks the system once per open — two small file reads
+            // at most — and pinned values never touch the disk at all; a
+            // present `card`/`text` pair pins the card over every
+            // `theme` value, so it skips the read too (its polarity is
+            // its own, the constructor's luminance rule). `None`
+            // (unreadable preference) paints dark, never a broken
+            // switch.
+            let system_prefers_dark = (settings.settings.theme == crate::ui::ThemeSetting::Auto
+                && settings.settings.pair.is_none())
+            .then(crate::theme::system_prefers_dark)
+            .flatten();
+            // The card first, then its band: the accent side follows the
+            // effective card's polarity — the resolved card's own
+            // `is_dark` — through the store ladder, read only when the
+            // band follows (`neutral` never touches the accent store).
+            // A ladder miss is the neutral lift (with the one aggregated
+            // diagnostic the reader prints), and the whole answer
+            // freezes onto the session with everything else.
+            let mut palette = crate::ui::Palette::resolve(
+                settings.settings.theme,
+                system_prefers_dark,
+                settings.settings.pair,
+            );
+            let accent_base = (settings.settings.selection == crate::ui::SelectionSetting::Accent)
+                .then(|| crate::theme::accent_base(palette.is_dark))
                 .flatten();
-                // The card first, then its band: the accent side follows the
-                // effective card's polarity — the resolved card's own
-                // `is_dark` — through the store ladder, read only when the
-                // band follows (`neutral` never touches the accent store).
-                // A ladder miss is the neutral lift (with the one aggregated
-                // diagnostic the reader prints), and the whole answer
-                // freezes onto the session with everything else.
-                let mut palette = crate::ui::Palette::resolve(
-                    settings.settings.theme,
-                    system_prefers_dark,
-                    settings.settings.pair,
+            palette = palette.with_selection(settings.settings.selection, accent_base);
+            // The shape follows, per open like the palette: the
+            // desktop's style and density derive the card's radius and
+            // rhythm (a store miss is the Round + Standard default,
+            // with the reader's one aggregated diagnostic), and the
+            // rows budget clamps to what that rhythm fits — the fit is
+            // by construction, the diagnostic names density, setting,
+            // and clamp when it binds, and the setting keeps its value.
+            let style = crate::theme::style().unwrap_or_default();
+            let density = crate::theme::density().unwrap_or_default();
+            let profile = crate::ui::StyleProfile::resolve(style, density);
+            let configured_rows = settings.settings.rows;
+            let rows = crate::ui::effective_rows(density, configured_rows);
+            // The band's budget resolves once, here: `auto` reads
+            // the invoking output's logical width (a 1080p
+            // fallback when no output has reported one) and
+            // freezes with the open.
+            let tiles = crate::ui::resolved_tiles(
+                settings.settings.columns,
+                session
+                    .output_logical_width()
+                    .unwrap_or(crate::ui::FALLBACK_OUTPUT_WIDTH),
+            );
+            if rows < configured_rows {
+                eprintln!(
+                    "airlock daemon: {density:?} density: rows {configured_rows} clamps to {rows} to keep the card inside {} px; the setting keeps its value",
+                    crate::ui::CARD_FIT_PX
                 );
-                let accent_base = (settings.settings.selection
-                    == crate::ui::SelectionSetting::Accent)
-                    .then(|| crate::theme::accent_base(palette.is_dark))
-                    .flatten();
-                palette = palette.with_selection(settings.settings.selection, accent_base);
-                // The shape follows, per open like the palette: the
-                // desktop's style and density derive the card's radius and
-                // rhythm (a store miss is the Round + Standard default,
-                // with the reader's one aggregated diagnostic), and the
-                // rows budget clamps to what that rhythm fits — the fit is
-                // by construction, the diagnostic names density, setting,
-                // and clamp when it binds, and the setting keeps its value.
-                let style = crate::theme::style().unwrap_or_default();
-                let density = crate::theme::density().unwrap_or_default();
-                let profile = crate::ui::StyleProfile::resolve(style, density);
-                let configured_rows = settings.settings.rows;
-                let rows = crate::ui::effective_rows(density, configured_rows);
-                // The band's budget resolves once, here: `auto` reads
-                // the invoking output's logical width (a 1080p
-                // fallback when no output has reported one) and
-                // freezes with the open.
-                let tiles = crate::ui::resolved_tiles(
-                    settings.settings.columns,
-                    session
-                        .output_logical_width()
-                        .unwrap_or(crate::ui::FALLBACK_OUTPUT_WIDTH),
-                );
-                if rows < configured_rows {
-                    eprintln!(
-                        "airlock daemon: {density:?} density: rows {configured_rows} clamps to {rows} to keep the card inside {} px; the setting keeps its value",
-                        crate::ui::CARD_FIT_PX
-                    );
-                }
-                // The face follows, per open like the palette: the `font`
-                // key, the interface-font follow, and the zero-fonts floor
-                // resolve to one decision, frozen onto the session with
-                // everything else (an edit mid-gesture never repaints the
-                // open card; the next press applies it).
-                let text = resolve_text(session.text_system(), &settings.settings.font, || {
-                    crate::theme::interface_font(palette.is_dark)
-                });
-                (
-                    resolve_scope(snapshot, &settings.settings),
-                    palette,
-                    profile,
-                    rows,
-                    settings.settings.grouping,
-                    settings.settings.scoped_cycling,
-                    settings.settings.layout,
-                    settings.settings.columns,
-                    tiles,
-                    text,
-                )
             }
-        };
+            // The face follows, per open like the palette: the `font`
+            // key, the interface-font follow, and the zero-fonts floor
+            // resolve to one decision, frozen onto the session with
+            // everything else (an edit mid-gesture never repaints the
+            // open card; the next press applies it).
+            let text = resolve_text(session.text_system(), &settings.settings.font, || {
+                crate::theme::interface_font(palette.is_dark)
+            });
+            (
+                resolve_scope(snapshot, &settings.settings),
+                palette,
+                profile,
+                rows,
+                settings.settings.grouping,
+                settings.settings.layout,
+                settings.settings.columns,
+                tiles,
+                text,
+            )
+        }
+    };
     session_step(
         open,
         snapshot,
@@ -1391,7 +1195,6 @@ fn step_and_show(
         profile,
         rows,
         grouping,
-        scoped_cycling,
         text,
         layout,
         columns,
@@ -1502,7 +1305,6 @@ fn show_selection(
                 tree,
                 &current.visible,
                 current.tree_sel,
-                current.scoped,
                 snapshot,
                 icons,
                 scale,
@@ -1563,19 +1365,17 @@ fn show_selection(
             if let Some(session) = open.as_mut() {
                 session.viewport = Some(model.viewport);
             }
-            // The key map rides the shown card: Tab/→/←/W and the two
-            // number chords mean tree walks exactly when the card
-            // paints the tree, and the divider rule rides its cycle
-            // scope. The text decision rides it too — the overlay
-            // freezes what it draws under.
+            // The key map rides the shown card: Tab/→/← mean tree
+            // walks exactly when the card paints the tree. The text
+            // decision rides it too — the overlay freezes what it
+            // draws under.
             let open_session = open.as_ref();
             let grouped = open_session.is_some_and(|session| session.tree.is_some());
-            let scoped = open_session.is_some_and(|session| session.scoped);
             let text = open_session.map_or_else(
                 || crate::text::TextDecision::Bitmap,
                 |session| session.text.clone(),
             );
-            session.overlay_show(model, palette, text, grouped, scoped)
+            session.overlay_show(model, palette, text, grouped)
         }
         None => {
             session.overlay_hide("nothing eligible");
@@ -1765,7 +1565,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -1796,7 +1595,6 @@ mod tests {
                 Palette::dark(),
                 StyleProfile::default(),
                 DEFAULT_ROWS,
-                false,
                 false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
@@ -1829,7 +1627,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -1847,7 +1644,6 @@ mod tests {
                 Palette::dark(),
                 StyleProfile::default(),
                 DEFAULT_ROWS,
-                false,
                 false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
@@ -1867,7 +1663,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -1885,7 +1680,6 @@ mod tests {
                 Palette::dark(),
                 StyleProfile::default(),
                 DEFAULT_ROWS,
-                false,
                 false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
@@ -1921,7 +1715,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -1946,7 +1739,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -1964,7 +1756,6 @@ mod tests {
                 Palette::dark(),
                 StyleProfile::default(),
                 DEFAULT_ROWS,
-                false,
                 false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
@@ -1990,7 +1781,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -2011,7 +1801,6 @@ mod tests {
                 Palette::dark(),
                 StyleProfile::default(),
                 DEFAULT_ROWS,
-                false,
                 false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
@@ -2042,7 +1831,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -2071,7 +1859,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -2112,7 +1899,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -2143,7 +1929,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -2181,7 +1966,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -2221,7 +2005,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -2259,7 +2042,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -2288,7 +2070,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -2332,7 +2113,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -2368,7 +2148,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -2402,7 +2181,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -2444,7 +2222,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -2508,7 +2285,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -2568,7 +2344,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -2657,7 +2432,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -2727,7 +2501,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -2790,7 +2563,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -2844,7 +2616,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -2914,7 +2685,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -2949,7 +2719,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -2986,7 +2755,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -3114,7 +2882,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -3143,7 +2910,6 @@ mod tests {
                 Palette::dark(),
                 StyleProfile::default(),
                 DEFAULT_ROWS,
-                false,
                 false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
@@ -3177,7 +2943,6 @@ mod tests {
                     StyleProfile::default(),
                     DEFAULT_ROWS,
                     false,
-                    false,
                     crate::text::TextDecision::Bitmap,
                     crate::ui::LayoutSetting::Vertical,
                     crate::ui::ColumnsSetting::Auto,
@@ -3209,7 +2974,6 @@ mod tests {
                 Palette::dark(),
                 StyleProfile::default(),
                 DEFAULT_ROWS,
-                false,
                 false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
@@ -3243,7 +3007,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -3268,7 +3031,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -3298,7 +3060,6 @@ mod tests {
                 Palette::dark(),
                 StyleProfile::default(),
                 DEFAULT_ROWS,
-                false,
                 false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
@@ -3330,7 +3091,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -3347,7 +3107,6 @@ mod tests {
                 Palette::dark(),
                 StyleProfile::default(),
                 DEFAULT_ROWS,
-                false,
                 false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
@@ -3376,7 +3135,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -3396,7 +3154,6 @@ mod tests {
                 Palette::dark(),
                 StyleProfile::default(),
                 DEFAULT_ROWS,
-                false,
                 false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
@@ -3433,7 +3190,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -3459,7 +3215,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -3516,7 +3271,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -3535,7 +3289,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -3553,7 +3306,6 @@ mod tests {
                 Palette::dark(),
                 StyleProfile::default(),
                 DEFAULT_ROWS,
-                false,
                 false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
@@ -3584,7 +3336,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -3605,7 +3356,6 @@ mod tests {
             palette: Palette::dark(),
             rows: DEFAULT_ROWS,
             grouping: false,
-            scoped: false,
             layout: crate::ui::LayoutSetting::Vertical,
             columns: crate::ui::ColumnsSetting::Auto,
             tiles: TILES,
@@ -3640,7 +3390,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -3683,7 +3432,6 @@ mod tests {
                 StyleProfile::default(),
                 DEFAULT_ROWS,
                 false,
-                false,
                 crate::text::TextDecision::Bitmap,
                 crate::ui::LayoutSetting::Vertical,
                 crate::ui::ColumnsSetting::Auto,
@@ -3711,7 +3459,6 @@ mod tests {
             theme: crate::ui::ThemeSetting::Auto,
             rows: DEFAULT_ROWS,
             grouping: false,
-            scoped_cycling: false,
             layout: crate::ui::LayoutSetting::Vertical,
             columns: crate::ui::ColumnsSetting::Auto,
             pair: None,
@@ -3946,7 +3693,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -3969,7 +3715,6 @@ mod tests {
             crate::ui::Palette::light(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -3994,7 +3739,6 @@ mod tests {
             crate::ui::Palette::light(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -4033,7 +3777,6 @@ mod tests {
             StyleProfile::default(),
             5,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -4053,7 +3796,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             9,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -4078,7 +3820,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             9,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -4114,7 +3855,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Horizontal,
             crate::ui::ColumnsSetting::Auto,
@@ -4137,7 +3877,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -4162,7 +3901,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -4201,7 +3939,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Horizontal,
             crate::ui::ColumnsSetting::Auto,
@@ -4224,7 +3961,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Horizontal,
@@ -4249,7 +3985,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Horizontal,
@@ -4289,7 +4024,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Horizontal,
             crate::ui::ColumnsSetting::Auto,
@@ -4309,7 +4043,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Horizontal,
@@ -4334,7 +4067,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Horizontal,
@@ -4428,7 +4160,6 @@ mod tests {
             spacious,
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -4448,7 +4179,6 @@ mod tests {
             Palette::dark(),
             compact,
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -4473,7 +4203,6 @@ mod tests {
             Palette::dark(),
             compact,
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -4512,7 +4241,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -4532,7 +4260,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            true,
             true,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -4556,7 +4283,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            true,
             true,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -4614,33 +4340,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             true,
-            true,
-            crate::text::TextDecision::Bitmap,
-            crate::ui::LayoutSetting::Vertical,
-            crate::ui::ColumnsSetting::Auto,
-            TILES,
-            &mut expanded,
-        );
-        (open, expanded)
-    }
-
-    /// Opens a grouped *open-cycling* session on `snap`
-    /// (`scoped_cycling = false`, the default): Tab walks the
-    /// dividerless sequence across every app.
-    fn grouped_session_open(snap: &Snapshot) -> (Option<Switch>, HashSet<String>) {
-        let mut open = None;
-        let mut expanded = HashSet::new();
-        session_step(
-            &mut open,
-            snap,
-            Direction::Next,
-            Scope::CurrentWorkspace,
-            false,
-            Palette::dark(),
-            StyleProfile::default(),
-            DEFAULT_ROWS,
-            true,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -4651,74 +4350,12 @@ mod tests {
     }
 
     #[test]
-    fn open_cycling_tab_crosses_groups_skipping_dividers() {
-        // Both groups expanded: the step sequence is every window —
-        // a1, a2, b1, b2 — the two expanded entries are dividers the
-        // highlight never rests on, crossed without stopping.
-        let snap = grouped_two_apps();
-        let (mut open, mut expanded) = grouped_session_open(&snap);
-        expanded.insert("app.a".to_string());
-        expanded.insert("app.b".to_string());
-        open.as_mut().expect("open").tree_sel = 2; // a's last child
-        assert!(step_scope(
-            open.as_mut().expect("open"),
-            &snap,
-            &mut expanded,
-            Direction::Next
-        ));
-        assert_eq!(
-            open.as_ref().expect("open").tree_sel,
-            4,
-            "crosses into b's first child, skipping the divider"
-        );
-        assert!(step_scope(
-            open.as_mut().expect("open"),
-            &snap,
-            &mut expanded,
-            Direction::Next
-        ));
-        assert_eq!(open.as_ref().expect("open").tree_sel, 5);
-        assert!(step_scope(
-            open.as_mut().expect("open"),
-            &snap,
-            &mut expanded,
-            Direction::Next
-        ));
-        assert_eq!(
-            open.as_ref().expect("open").tree_sel,
-            1,
-            "wraps to a's front child, skipping both dividers"
-        );
-    }
-
-    #[test]
-    fn open_cycling_tab_from_a_child_reaches_a_collapsed_entry() {
-        // The owner's trace: cycling "to all apps" — from inside a's
-        // windows the step reaches b's entry, the only row a collapsed
-        // group contributes.
-        let snap = grouped_two_apps();
-        let (mut open, mut expanded) = grouped_session_open(&snap);
-        expanded.insert("app.a".to_string());
-        open.as_mut().expect("open").tree_sel = 2; // a's last child
-        assert!(step_scope(
-            open.as_mut().expect("open"),
-            &snap,
-            &mut expanded,
-            Direction::Next
-        ));
-        assert_eq!(
-            open.as_ref().expect("open").tree_sel,
-            3,
-            "b's collapsed entry is the next stop"
-        );
-    }
-
-    #[test]
-    fn open_cycling_opening_press_never_lands_on_a_divider() {
-        // The active app's group stood expanded (the state persists),
-        // so row 0 is a divider: the opening press bases itself on the
-        // active window — the divider's own implied window — and steps
-        // one past it, flat-quick-tap parity. Never onto the divider.
+    fn rev5_opening_press_steps_past_the_active_window() {
+        // The active app's group stood expanded (the state persists), so
+        // the header and its first child both carry the active window
+        // a1: the opening press steps past *both* rows and lands on
+        // a2 — flat quick-tap parity — never resting on the window the
+        // gesture started from.
         let snap = grouped_two_apps();
         let mut expanded = HashSet::new();
         expanded.insert("app.a".to_string());
@@ -4733,7 +4370,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             true,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -4752,82 +4388,44 @@ mod tests {
     }
 
     #[test]
-    fn open_cycling_lone_group_is_still_entered_and_cycled() {
-        // One app, two windows, collapsed: the dividerless sequence
-        // holds a single entry, so the opening press enters the group
-        // (past the active window) and further presses cycle it — the
-        // step is never a dead key under either scope.
-        let snap = snapshot(
-            vec![
-                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 40),
-                app_toplevel(2, "app.a", &[1], State::default(), 30),
-            ],
-            Some(1),
-        );
-        let (mut open, mut expanded) = grouped_session_open(&snap);
-        assert_eq!(
-            open.as_ref().expect("opened").tree_sel,
-            2,
-            "the opening press enters past the active window to a2"
-        );
-        assert!(step_scope(
-            open.as_mut().expect("open"),
-            &snap,
-            &mut expanded,
-            Direction::Next
-        ));
+    fn rev5_collapsed_tab_steps_the_entries_linearly() {
+        // Nothing expanded: the visible sequence is exactly the
+        // level-1 entries, and Tab steps them linearly, wrapping.
+        let snap = grouped_two_apps();
+        let (mut open, expanded) = grouped_session(&snap);
         assert_eq!(
             open.as_ref().expect("open").tree_sel,
-            1,
-            "cycles within the only group there is"
+            3,
+            "the opening press steps to b's entry"
         );
-    }
-
-    #[test]
-    fn open_cycling_left_arrow_on_a_child_collapses_and_lands_on_the_entry() {
-        // The expanded entry cannot hold the selection, so the scoped
-        // mode's two-step exit-then-collapse is one motion: ← lands on
-        // the entry with the group collapsed.
-        let snap = grouped_two_apps();
-        let (mut open, mut expanded) = grouped_session_open(&snap);
-        expanded.insert("app.a".to_string());
-        open.as_mut().expect("open").tree_sel = 2; // a's second child
-        assert!(exit_group(open.as_mut().expect("open"), &mut expanded));
-        assert_eq!(
-            open.as_ref().expect("open").tree_sel,
-            0,
-            "lands on a's entry"
-        );
-        assert!(
-            !expanded.contains("app.a"),
-            "collapsed in the same motion, persistently"
-        );
-    }
-
-    #[test]
-    fn open_cycling_alt_w_on_a_child_collapses_too() {
-        // W's flip shares ←'s merged exit: out of the children means
-        // onto the entry, and the group cannot stay expanded under a
-        // selection that has nowhere to rest inside it.
-        let snap = grouped_two_apps();
-        let (mut open, mut expanded) = grouped_session_open(&snap);
-        expanded.insert("app.a".to_string());
-        open.as_mut().expect("open").tree_sel = 2; // a's second child
-        assert!(toggle_level(
+        step_visible(
             open.as_mut().expect("open"),
             &snap,
-            &mut expanded
-        ));
+            &expanded,
+            Direction::Next,
+        );
         assert_eq!(open.as_ref().expect("open").tree_sel, 0);
-        assert!(!expanded.contains("app.a"), "the flip collapses");
+        step_visible(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Direction::Previous,
+        );
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "Previous returns to b's entry"
+        );
     }
 
     #[test]
-    fn open_cycling_visible_steps_skip_dividers() {
-        // ↓/↑ and the wheel walk the same dividerless sequence as Tab —
-        // expanded entries are crossed, never rested on.
+    fn rev5_linear_steps_stop_on_expanded_headers() {
+        // Rev 5: headers are normal rows — the walk from a's last child
+        // stops on b's entry, then its children, and the wrap from b's
+        // last child lands on a's entry. Nothing is skipped, nothing is
+        // unrestable.
         let snap = grouped_two_apps();
-        let (mut open, mut expanded) = grouped_session_open(&snap);
+        let (mut open, mut expanded) = grouped_session(&snap);
         expanded.insert("app.a".to_string());
         expanded.insert("app.b".to_string());
         open.as_mut().expect("open").tree_sel = 2; // a's last child
@@ -4839,8 +4437,8 @@ mod tests {
         );
         assert_eq!(
             open.as_ref().expect("open").tree_sel,
-            4,
-            "skips b's divider onto its first child"
+            3,
+            "b's entry is a stop"
         );
         step_visible(
             open.as_mut().expect("open"),
@@ -4848,44 +4446,84 @@ mod tests {
             &expanded,
             Direction::Next,
         );
-        assert_eq!(open.as_ref().expect("open").tree_sel, 5);
-        step_visible(
-            open.as_mut().expect("open"),
-            &snap,
-            &expanded,
-            Direction::Next,
-        );
-        assert_eq!(open.as_ref().expect("open").tree_sel, 1);
-    }
-
-    #[test]
-    fn open_cycling_collapsed_tab_cycles_entries_like_level_one() {
-        // Nothing expanded: the dividerless sequence is exactly the
-        // level-1 entries, so the default scope steps app entries just
-        // as the scoped one does.
-        let snap = grouped_two_apps();
-        let (mut open, mut expanded) = grouped_session_open(&snap);
         assert_eq!(
             open.as_ref().expect("open").tree_sel,
-            3,
-            "the opening press steps to b's entry"
+            4,
+            "then its first child"
         );
-        assert!(step_scope(
+        open.as_mut().expect("open").tree_sel = 5; // b's last child
+        step_visible(
             open.as_mut().expect("open"),
             &snap,
-            &mut expanded,
-            Direction::Next
-        ));
-        assert_eq!(open.as_ref().expect("open").tree_sel, 0);
+            &expanded,
+            Direction::Next,
+        );
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            0,
+            "wraps onto a's entry"
+        );
     }
 
     #[test]
-    fn open_cycling_a_divider_holds_no_selection() {
-        // The pointer-side twin of the boundary rule: a hover crossing
-        // of a divider row selects nothing; its first child, carrying
-        // the same window, selects fine.
+    fn rev5_a_lone_collapsed_group_is_never_entered() {
+        // Rev 5: nothing descends into a collapsed group — a lone entry
+        // keeps the selection, and the press is a stay, never an entry.
+        let snap = snapshot(
+            vec![
+                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 40),
+                app_toplevel(2, "app.a", &[1], State::default(), 30),
+            ],
+            Some(1),
+        );
+        let (mut open, expanded) = grouped_session(&snap);
+        assert_eq!(
+            open.as_ref().expect("opened").tree_sel,
+            0,
+            "the entry holds the selection"
+        );
+        assert_eq!(
+            open.as_ref().expect("opened").selected_handle(),
+            Some(Handle(1)),
+            "committing it activates the app's front window"
+        );
+        step_visible(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Direction::Next,
+        );
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            0,
+            "a lone row wraps onto itself"
+        );
+        assert!(expanded.is_empty(), "nothing expanded the group");
+    }
+
+    #[test]
+    fn rev5_left_on_a_child_exits_without_collapsing() {
+        // Rev 5: the header can hold the selection, so ←'s exit no
+        // longer merges with a collapse — the group stays expanded.
         let snap = grouped_two_apps();
-        let (mut open, mut expanded) = grouped_session_open(&snap);
+        let (mut open, mut expanded) = grouped_session(&snap);
+        expanded.insert("app.a".to_string());
+        open.as_mut().expect("open").tree_sel = 2; // a's second child
+        assert!(exit_group(open.as_mut().expect("open"), &mut expanded));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            0,
+            "lands on a's entry"
+        );
+        assert!(expanded.contains("app.a"), "the group stays expanded");
+    }
+
+    #[test]
+    fn rev5_the_pointer_selects_an_expanded_header() {
+        // Rev 5: the divider rule is gone — hovering the expanded
+        // entry selects that row itself, exactly like any other row.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = grouped_session(&snap);
         expanded.insert("app.a".to_string());
         let session = open.as_mut().expect("open");
         session.visible = grouped_visible(session, &snap, &expanded);
@@ -4896,24 +4534,16 @@ mod tests {
             bottom: false,
         });
         assert!(
-            !open
-                .as_mut()
+            open.as_mut()
                 .expect("open")
-                .select_pointer_row(0, Some(Handle(1)), &expanded),
-            "the divider never holds the selection"
+                .select_pointer_row(0, Some(Handle(1))),
+            "the expanded header selects"
         );
         assert_eq!(
             open.as_ref().expect("open").tree_sel,
-            3,
-            "the refused crossing leaves the selection where it was"
+            0,
+            "the header row holds the selection"
         );
-        assert!(
-            open.as_mut()
-                .expect("open")
-                .select_pointer_row(1, Some(Handle(1)), &expanded),
-            "the child row selects"
-        );
-        assert_eq!(open.as_ref().expect("open").tree_sel, 1);
     }
 
     #[test]
@@ -4940,7 +4570,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -4978,112 +4607,38 @@ mod tests {
     }
 
     #[test]
-    fn alt_tab_cycles_app_entries_and_never_descends() {
-        // Level 1 steps between app entries — parents and leaves
-        // alike, wrapping — and never lands on a child by itself.
-        // A lone multi-window group beside a leaf still has two
-        // entries, so the step moves; the first grouped Tab's
-        // dead-key shape cannot return.
+    fn collapsed_tab_steps_entries_and_wraps() {
+        // Collapsed, the visible sequence is the entries — parents and
+        // leaves alike — and Tab steps it linearly, wrapping; a child
+        // is never visible, so never landed on, while collapsed.
         let snap = grouped_lone_parent();
-        let (mut open, mut expanded) = grouped_session(&snap);
+        let (mut open, expanded) = grouped_session(&snap);
         assert_eq!(
             open.as_ref().expect("open").selected_handle(),
             Some(Handle(3)),
             "opening press: a's entry → c's leaf"
         );
-        assert!(step_scope(
+        step_visible(
             open.as_mut().expect("open"),
             &snap,
-            &mut expanded,
-            Direction::Next
-        ));
+            &expanded,
+            Direction::Next,
+        );
         assert_eq!(
             open.as_ref().expect("open").selected_handle(),
             Some(Handle(1)),
             "wraps back to a's entry"
         );
-        assert!(step_scope(
+        step_visible(
             open.as_mut().expect("open"),
             &snap,
-            &mut expanded,
-            Direction::Previous
-        ));
+            &expanded,
+            Direction::Previous,
+        );
         assert_eq!(
             open.as_ref().expect("open").selected_handle(),
             Some(Handle(3)),
             "Previous returns to c's leaf"
-        );
-    }
-
-    #[test]
-    fn a_lone_group_is_entered_and_cycled_inside() {
-        // The workspace holds one app with two windows and nothing
-        // else: level 1 has a single entry, so Alt+Tab enters the
-        // group — skipping the still-active window, like the opening
-        // step of the flat switcher — and further presses cycle the
-        // group's windows. The step is never a dead key.
-        let snap = snapshot(
-            vec![
-                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 40),
-                app_toplevel(2, "app.a", &[1], State::default(), 30),
-            ],
-            Some(1),
-        );
-        let (mut open, mut expanded) = grouped_session(&snap);
-        assert_eq!(
-            open.as_ref().expect("opened").selected_handle(),
-            Some(Handle(2)),
-            "the opening press enters past the active window to a2"
-        );
-        assert_eq!(
-            open.as_ref().expect("open").tree_sel,
-            2,
-            "the selection sits on the second child row"
-        );
-        assert!(step_scope(
-            open.as_mut().expect("open"),
-            &snap,
-            &mut expanded,
-            Direction::Next
-        ));
-        assert_eq!(
-            open.as_ref().expect("open").selected_handle(),
-            Some(Handle(1)),
-            "the cycle wraps to the front child"
-        );
-    }
-
-    #[test]
-    fn level_two_tab_cycles_within_its_group_only() {
-        // Scoped within its parent: from inside a's children, Alt+Tab
-        // reaches a's other windows and wraps — b's rows are not peers.
-        let snap = grouped_two_apps();
-        let (mut open, mut expanded) = grouped_session(&snap);
-        // A selected child implies its group stands expanded — only
-        // entering ever selects a child.
-        expanded.insert("app.a".to_string());
-        open.as_mut().expect("open").tree_sel = 1; // a's front child
-        assert!(step_scope(
-            open.as_mut().expect("open"),
-            &snap,
-            &mut expanded,
-            Direction::Next
-        ));
-        assert_eq!(
-            open.as_ref().expect("open").tree_sel,
-            2,
-            "steps to a's second child"
-        );
-        assert!(step_scope(
-            open.as_mut().expect("open"),
-            &snap,
-            &mut expanded,
-            Direction::Next
-        ));
-        assert_eq!(
-            open.as_ref().expect("open").tree_sel,
-            1,
-            "wraps within the group, never reaching b"
         );
     }
 
@@ -5200,33 +4755,6 @@ mod tests {
     }
 
     #[test]
-    fn alt_w_flips_one_level_without_collapsing() {
-        // W enters at level 1 (the → twin) and exits at level 2
-        // (←'s twin, but the group stays expanded — the flip moves
-        // the selection only).
-        let snap = grouped_two_apps();
-        let (mut open, mut expanded) = grouped_session(&snap);
-        // b's entry (the opening press): W enters its children.
-        assert!(toggle_level(
-            open.as_mut().expect("open"),
-            &snap,
-            &mut expanded
-        ));
-        assert_eq!(open.as_ref().expect("open").tree_sel, 4);
-        // W again: back out to the entry, group still expanded.
-        assert!(toggle_level(
-            open.as_mut().expect("open"),
-            &snap,
-            &mut expanded
-        ));
-        assert_eq!(open.as_ref().expect("open").tree_sel, 3);
-        assert!(
-            expanded.contains("app.b"),
-            "the toggle never collapses — only ← does"
-        );
-    }
-
-    #[test]
     fn left_arrow_exits_a_child_and_collapses_a_parent() {
         // ← on a child returns to its parent row; on an expanded
         // parent it collapses the group (the state persists); on a
@@ -5286,7 +4814,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            true,
             true,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -5393,7 +4920,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            true,
             true,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
@@ -5504,7 +5030,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::System {
                 family: "Open Sans".to_owned(),
             },
@@ -5532,7 +5057,6 @@ mod tests {
             StyleProfile::default(),
             DEFAULT_ROWS,
             false,
-            false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,
             crate::ui::ColumnsSetting::Auto,
@@ -5559,7 +5083,6 @@ mod tests {
             Palette::dark(),
             StyleProfile::default(),
             DEFAULT_ROWS,
-            false,
             false,
             crate::text::TextDecision::Bitmap,
             crate::ui::LayoutSetting::Vertical,

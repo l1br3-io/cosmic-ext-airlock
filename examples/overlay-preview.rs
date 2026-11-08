@@ -772,8 +772,8 @@ fn scenarios(
         tree_card(
             vec![
                 parent_row("firefox", 3, icons[0].clone(), false, true, Some(1)),
-                child_row("twitter.com/home", icons[0].clone(), true, 1),
-                child_row("github.com — PR 42", icons[0].clone(), false, 2),
+                child_row("twitter.com/home", icons[0].clone(), true),
+                child_row("github.com — PR 42", icons[0].clone(), false),
                 parent_row(
                     "org.gnome.TextEditor",
                     2,
@@ -795,8 +795,8 @@ fn scenarios(
         tree_card(
             vec![
                 parent_row("firefox", 3, icons[0].clone(), false, true, None),
-                child_row("twitter.com/home", icons[0].clone(), false, 1),
-                child_row("github.com — PR 42", icons[0].clone(), true, 2),
+                child_row("twitter.com/home", icons[0].clone(), false),
+                child_row("github.com — PR 42", icons[0].clone(), true),
                 parent_row(
                     "org.gnome.TextEditor",
                     2,
@@ -818,14 +818,14 @@ fn scenarios(
                 // outermost slots at each truncated edge.
                 let long = vec![
                     parent_row("firefox", 5, icons[0].clone(), false, true, Some(1)),
-                    child_row("window one", icons[0].clone(), false, 1),
-                    child_row("window two", icons[0].clone(), false, 2),
-                    child_row("window three", icons[0].clone(), false, 3),
-                    child_row("window four", icons[0].clone(), false, 4),
+                    child_row("window one", icons[0].clone(), false),
+                    child_row("window two", icons[0].clone(), false),
+                    child_row("window three", icons[0].clone(), false),
+                    child_row("window four", icons[0].clone(), false),
                     parent_row("org.gnome.Files", 4, icons[1].clone(), true, true, Some(2)),
-                    child_row("home dir", icons[1].clone(), false, 1),
-                    child_row("downloads", icons[1].clone(), false, 2),
-                    child_row("media", icons[1].clone(), false, 3),
+                    child_row("home dir", icons[1].clone(), false),
+                    child_row("downloads", icons[1].clone(), false),
+                    child_row("media", icons[1].clone(), false),
                     entry_row("kitty — solo window", icons[4].clone(), false, 3),
                     entry_row("code — airlock", icons[5].clone(), false, 4),
                     entry_row("un-attributable", None, false, 5),
@@ -942,12 +942,12 @@ fn parent_row(
     }
 }
 
-/// A child row: a window title nested under its parent, Alt-numbered
-/// within its group.
-fn child_row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool, n: usize) -> RowModel {
+/// A child row: a window title nested under its parent — unhinted
+/// (rev 5: the Alt+N chords are gone).
+fn child_row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
     RowModel {
         kind: cosmic_ext_airlock::switcher::RowKind::Child,
-        hint: Some(ui::RowHint::Alt(n)),
+        hint: None,
         ..row(title, icon, selected)
     }
 }

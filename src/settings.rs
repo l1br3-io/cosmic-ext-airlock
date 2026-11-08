@@ -61,14 +61,10 @@ pub struct Settings {
     /// [`ui::DEFAULT_ROWS`], accepted `ui::ROWS_MIN..=ui::ROWS_MAX`.
     pub rows: usize,
     /// Whether the switcher groups its list by app — the tree view with
-    /// parents, children, and Tab stepping apps; missing key = `false`,
-    /// the flat list, so the no-config card is unchanged.
+    /// parents, children, and linear stepping over the visible rows;
+    /// missing key = `false`, the flat list, so the no-config card is
+    /// unchanged.
     pub grouping: bool,
-    /// Whether grouped Alt+Tab cycles *within* the entered group
-    /// (`true`) or across every app (`false`, the default — an expanded
-    /// group's entry is a pure divider there). Meaningful only beside
-    /// `grouping = true`; frozen at open with it.
-    pub scoped_cycling: bool,
     /// Which way the card lays its list out; missing key =
     /// [`LayoutSetting::Vertical`], today's card, so the no-config
     /// card is unchanged.
@@ -101,7 +97,6 @@ impl Default for Settings {
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
-            scoped_cycling: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             pair: None,
@@ -226,12 +221,6 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             problem: "`grouping` must be a boolean",
         })?,
     };
-    let scoped_cycling = match root.get("scoped_cycling") {
-        None => false,
-        Some(value) => value.as_bool().ok_or(SettingsError::InvalidFile {
-            problem: "`scoped_cycling` must be a boolean",
-        })?,
-    };
     let layout = match root.get("layout") {
         None => LayoutSetting::Vertical,
         Some(value) => match value.as_str() {
@@ -330,7 +319,6 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             theme,
             rows,
             grouping,
-            scoped_cycling,
             layout,
             columns,
             pair,
@@ -353,7 +341,6 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         theme,
         rows,
         grouping,
-        scoped_cycling,
         layout,
         columns,
         pair,
@@ -677,7 +664,6 @@ isolated = false
                 theme: ThemeSetting::Auto,
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
-                scoped_cycling: false,
                 layout: LayoutSetting::Vertical,
                 columns: ColumnsSetting::Auto,
                 pair: None,
@@ -1101,54 +1087,30 @@ isolated = false
         assert_eq!(settings.workspaces.len(), 1);
     }
 
-    // --- Scoped cycling ---------------------------------------------------
+    // --- Scoped cycling (removed rev 5) -----------------------------------
 
     #[test]
-    fn parse_reads_the_scoped_cycling_key() {
-        for (config, scoped) in [
-            (&b"scoped_cycling = true\n"[..], true),
-            (b"scoped_cycling = false\n", false),
-        ] {
-            let settings = Settings::parse(config).expect("valid scoped_cycling value");
-            assert_eq!(settings.scoped_cycling, scoped);
-        }
-    }
-
-    #[test]
-    fn parse_without_a_scoped_cycling_key_defaults_to_false() {
-        // Open cycling is the default: Tab crosses group boundaries
-        // instead of cycling inside the entered one.
-        assert!(!Settings::parse(b"").expect("empty").scoped_cycling);
-        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
-        assert!(!rules_only.scoped_cycling);
-        assert!(!Settings::default().scoped_cycling);
-    }
-
-    #[test]
-    fn parse_rejects_a_non_boolean_scoped_cycling() {
-        // `scoped_cycling = 1` and `scoped_cycling = "yes"` both name the
-        // key in a diagnostic; the whole file fails, so last-good
-        // settings hold.
-        for config in [&b"scoped_cycling = 1\n"[..], b"scoped_cycling = \"yes\"\n"] {
-            let error = Settings::parse(config).expect_err("non-boolean scoped_cycling");
-            assert_eq!(
-                error,
-                SettingsError::InvalidFile {
-                    problem: "`scoped_cycling` must be a boolean"
-                },
-                "{}",
-                String::from_utf8_lossy(config)
-            );
-        }
-    }
-
-    #[test]
-    fn parse_coexists_scoped_cycling_with_the_other_keys() {
-        let config = b"theme = \"light\"\nrows = 6\ngrouping = true\nscoped_cycling = true\n\n[[workspace]]\nname = \"code\"\n";
+    fn scoped_cycling_is_an_ignored_unknown_key() {
+        // Rev 5 removed the setting: a config still carrying it parses
+        // to the defaults for every other key — unknown keys are
+        // ignored, so old configs never break.
+        assert_eq!(
+            Settings::parse(b"scoped_cycling = true\n").expect("parses"),
+            Settings::default()
+        );
+        // Beside live keys, too — the unknown rides along silently.
+        let config = b"theme = \"light\"\ngrouping = true\nscoped_cycling = true\n";
         let settings = Settings::parse(config).expect("valid config");
+        assert_eq!(settings.theme, ThemeSetting::Light);
         assert!(settings.grouping);
-        assert!(settings.scoped_cycling);
-        assert_eq!(settings.workspaces.len(), 1);
+        assert_eq!(
+            settings,
+            Settings {
+                theme: ThemeSetting::Light,
+                grouping: true,
+                ..Settings::default()
+            }
+        );
     }
 
     // --- Custom palette ---------------------------------------------------
@@ -1524,7 +1486,6 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
-            scoped_cycling: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             pair: None,
@@ -1548,7 +1509,6 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
-            scoped_cycling: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             pair: None,
@@ -1573,7 +1533,6 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
-            scoped_cycling: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             pair: None,
@@ -1600,7 +1559,6 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
-            scoped_cycling: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             pair: None,
@@ -1624,7 +1582,6 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
-            scoped_cycling: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             pair: None,
@@ -1648,7 +1605,6 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
-            scoped_cycling: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             pair: None,
@@ -1675,7 +1631,6 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
-            scoped_cycling: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             pair: None,
@@ -1852,7 +1807,6 @@ isolated = false
                 theme: ThemeSetting::Auto,
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
-                scoped_cycling: false,
                 layout: LayoutSetting::Vertical,
                 columns: ColumnsSetting::Auto,
                 pair: None,

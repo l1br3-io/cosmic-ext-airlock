@@ -546,9 +546,8 @@ impl KeyboardHandler for App {
             // address translation), and every address resolves to its
             // window here, at event receipt against the live model —
             // the keyboard twin of the pointer boundary's capture. A
-            // row (flat Ctrl+N), a level-1 entry (grouped Ctrl+N), a
-            // group child (grouped Alt+N); everything else queues
-            // unchanged.
+            // row (flat Ctrl+N) or a level-1 entry (grouped Ctrl+N);
+            // everything else queues unchanged.
             let input = match input {
                 GestureInput::Press {
                     key: GestureKey::Select(row),
@@ -562,13 +561,6 @@ impl KeyboardHandler for App {
                     shift,
                 } => GestureInput::Press {
                     key: GestureKey::SelectHandle(self.overlay_app_handle(n)),
-                    shift,
-                },
-                GestureInput::Press {
-                    key: GestureKey::SelectAlt(n),
-                    shift,
-                } => GestureInput::Press {
-                    key: GestureKey::SelectHandle(self.overlay_child_handle(n)),
                     shift,
                 },
                 other => other,
@@ -860,20 +852,14 @@ impl App {
     }
 
     /// The window the live model's `row` shows — the event-time
-    /// resolution a Ctrl+N digit press addresses — or `None` when no
-    /// overlay is mapped, `row` is past the model's end, the row is a
-    /// continuation affordance, or the row is a divider (open
-    /// cycling's expanded entry: it resolves no input, so a hover
-    /// crossing selects nothing and a click commits nothing — the
-    /// daemon-side twin of the rule guards the row path the same way).
+    /// resolution a Ctrl+N digit press or a pointer press addresses —
+    /// or `None` when no overlay is mapped, `row` is past the model's
+    /// end, or the row is a continuation affordance. Rev 5: headers
+    /// resolve like every row — the divider rule is gone.
     fn overlay_row_handle(&self, row: usize) -> Option<Handle> {
-        self.overlay.as_ref().and_then(|overlay| {
-            let row = overlay.model().rows.get(row)?;
-            if ui::divider(row.kind, row.expanded, overlay.scoped) {
-                return None;
-            }
-            row.handle
-        })
+        self.overlay
+            .as_ref()
+            .and_then(|overlay| overlay.model().rows.get(row)?.handle)
     }
 
     /// The window the live model's Nth *level-1* entry (0-based)
@@ -888,37 +874,6 @@ impl App {
             .rows
             .iter()
             .filter(|row| row.kind != RowKind::Child)
-            .nth(n)
-            .and_then(|row| row.handle)
-    }
-
-    /// The window the selected group's Nth child (0-based) resolves to
-    /// — the event-time resolution a grouped Alt+N digit press
-    /// addresses. The group is the one the selection is on (a parent
-    /// row, or the parent of the selected child), and its children
-    /// must be on the card: an unshown child is never hinted, so never
-    /// wired. `None` on a leaf, a collapsed group, past the ninth
-    /// child, or with no overlay mapped.
-    fn overlay_child_handle(&self, n: usize) -> Option<Handle> {
-        let rows = &self.overlay.as_ref()?.model().rows;
-        // The group the selection is on: the selected child's parent,
-        // or a selected parent itself.
-        let parent = rows.iter().position(|row| row.selected).and_then(|sel| {
-            if rows[sel].kind == RowKind::Child {
-                rows[..sel]
-                    .iter()
-                    .rposition(|row| row.kind == RowKind::Parent)
-            } else if rows[sel].kind == RowKind::Parent {
-                Some(sel)
-            } else {
-                None // a leaf: no group to address
-            }
-        })?;
-        // Children sit contiguously after their parent; a collapsed
-        // group shows none, and the lookup yields None by construction.
-        rows[parent + 1..]
-            .iter()
-            .take_while(|row| row.kind == RowKind::Child)
             .nth(n)
             .and_then(|row| row.handle)
     }
@@ -1004,10 +959,6 @@ pub struct Overlay {
     /// mode, swapped with the model so Tab/→/← always mean what the
     /// visible list shows.
     grouped: bool,
-    /// Whether that tree's cycling is scoped (levels) or open (the
-    /// dividerless walk) — swapped with the model so a divider row
-    /// resolves no input exactly while the card shows it as one.
-    scoped: bool,
     /// Device pixels per logical pixel this overlay renders at.
     scale: u32,
     /// Size granted by the compositor; `None` until the first configure.
@@ -1043,7 +994,6 @@ impl Overlay {
         palette: ui::Palette,
         text: crate::text::TextDecision,
         grouped: bool,
-        scoped: bool,
         env: OverlayEnv<'_>,
     ) -> Result<Self, OverlayError> {
         let OverlayEnv {
@@ -1087,7 +1037,6 @@ impl Overlay {
             palette,
             text,
             grouped,
-            scoped,
             scale,
             size: None,
             close_at: Instant::now() + ui::CLOSE_AFTER,
@@ -1104,7 +1053,6 @@ impl Overlay {
         palette: ui::Palette,
         text: crate::text::TextDecision,
         grouped: bool,
-        scoped: bool,
         system: &mut crate::text::TextSystem,
     ) {
         let unchanged = self.size == Some((model.width, model.height));
@@ -1114,7 +1062,6 @@ impl Overlay {
         self.palette = palette;
         self.text = text;
         self.grouped = grouped;
-        self.scoped = scoped;
         if unchanged {
             self.draw(system);
         } else {
@@ -1556,7 +1503,6 @@ impl Session {
         palette: ui::Palette,
         text: crate::text::TextDecision,
         grouped: bool,
-        scoped: bool,
     ) {
         // The overlay and its text system are sibling fields: borrow
         // them together so a refresh draws through the decision it
@@ -1567,7 +1513,7 @@ impl Session {
             ..
         } = &mut self.app;
         if let Some(overlay) = overlay.as_mut() {
-            overlay.update(model, palette, text, grouped, scoped, system);
+            overlay.update(model, palette, text, grouped, system);
             let rows = overlay.model().rows.len();
             eprintln!("airlock daemon: overlay updated ({rows} rows)");
             let _ = self.conn.flush();
@@ -1586,7 +1532,6 @@ impl Session {
             palette,
             text,
             grouped,
-            scoped,
             OverlayEnv {
                 compositor: &self.app.compositor,
                 layer_shell: &self.app.layer_shell,

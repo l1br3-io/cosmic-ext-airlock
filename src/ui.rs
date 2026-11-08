@@ -894,17 +894,15 @@ const CHEVRON_DOWN_GLYPH: [u8; 8] = [0x00, 0x7E, 0x7E, 0x3C, 0x3C, 0x18, 0x18, 0
 /// The number chord a row advertises in its hint band — the single
 /// source of "which N selects this row" for both the renderer (the
 /// painted label) and the input map (the wired key): Ctrl+N addresses
-/// level-1 entries, Alt+N a group's children, and a row with no hint
-/// (`None`, rows past nine, continuation rows) is not number-addressed.
+/// level-1 entries, and a row with no hint (`None`, rows past nine,
+/// continuation rows, and — since rev 5 — every group child) is not
+/// number-addressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowHint {
     /// `Ctrl+N` — the Nth level-1 entry (1-based), flat rows included
     /// (the flat card's every-row numbering is the same rule over a
     /// one-level tree).
     Ctrl(usize),
-    /// `Alt+N` — the Nth child (1-based) of the group this row's card
-    /// block shows.
-    Alt(usize),
 }
 
 impl RowHint {
@@ -915,18 +913,11 @@ impl RowHint {
         (index < MAX_HINTS).then_some(RowHint::Ctrl(index + 1))
     }
 
-    /// The Alt+N chord for the group's child at `index` (0-based):
-    /// `None` past the ninth.
-    fn alt(index: usize) -> Option<Self> {
-        (index < MAX_HINTS).then_some(RowHint::Alt(index + 1))
-    }
-
     /// The label the hint band paints, right-aligned in the reserved
     /// `HINT_COLS` territory.
     fn label(self) -> String {
         match self {
             RowHint::Ctrl(n) => format!("Ctrl+{n}"),
-            RowHint::Alt(n) => format!("Alt+{n}"),
         }
     }
 }
@@ -963,15 +954,6 @@ pub struct RowModel {
     /// right (collapsed) / down (expanded) direction. Meaningless on
     /// every other kind.
     pub expanded: bool,
-}
-
-/// Whether a row renders as a pure divider — an expanded group's
-/// parent while cycling is open (`scoped = false`, the
-/// `scoped_cycling` default): it holds no selection, hints no chord,
-/// and resolves no input. The model builder's hint pass and the
-/// wayland boundary's row→handle pass share this one rule.
-pub(crate) fn divider(kind: RowKind, expanded: bool, scoped: bool) -> bool {
-    !scoped && kind == RowKind::Parent && expanded
 }
 
 /// What the overlay should draw: the window's rows plus the logical
@@ -1346,12 +1328,11 @@ pub fn overlay_model_horizontal(
 /// `text` (the session's frozen backend; see [`TextBackend`]).
 ///
 /// Level-1 rows (app entries and leaves) hint their Ctrl+N chord by
-/// position among level 1; a child hints its Alt+N chord by position
-/// within its group. A parent's badge counts its app's frozen windows
-/// and its chevron states the expansion the caller passed — expanded
-/// iff its children follow it in `visible`. Under open cycling
-/// (`scoped = false`, the `scoped_cycling` default) an expanded entry
-/// is a pure divider — [`divider`]: it hints nothing. Width derives
+/// position among level 1; children hint nothing (rev 5 — the Alt+N
+/// chords are gone with the digits freed for the query). A parent's
+/// badge counts its app's frozen windows and its chevron states the
+/// expansion the caller passed — expanded iff its children follow it
+/// in `visible`. Width derives
 /// from the visible rows' widest title plus the child indent and
 /// parent badge, so the card is stable under stepping and breathes
 /// only when the user expands or collapses. Returns `None` when
@@ -1363,7 +1344,6 @@ pub fn overlay_model_grouped(
     tree: &switcher::Grouping,
     visible: &[usize],
     selected: usize,
-    scoped: bool,
     snapshot: &Snapshot,
     icons: &crate::icons::Cache,
     scale: u32,
@@ -1375,10 +1355,8 @@ pub fn overlay_model_grouped(
     let sel = visible.iter().position(|&index| index == selected)?;
     let mut rows = Vec::with_capacity(visible.len());
     let mut bands = Vec::with_capacity(visible.len());
-    // The hint ordinals: level-1 position (Ctrl) and position within
-    // the open group (Alt) — the parent row resets the child count.
+    // The hint ordinal: level-1 position (Ctrl). Children hint nothing.
     let mut level1 = 0;
-    let mut child = 0;
     for &index in visible {
         let grow = tree.rows().get(index)?;
         // Unreachable in practice: the caller filtered `visible` to
@@ -1403,16 +1381,14 @@ pub fn overlay_model_grouped(
                     handle: Some(grow.handle),
                     kind: RowKind::Child,
                     count: 0,
-                    hint: RowHint::alt(child),
+                    hint: None,
                     expanded: false,
                 });
                 bands.push(band);
-                child += 1;
             }
             kind => {
                 let ordinal = level1;
                 level1 += 1;
-                child = 0;
                 if kind == RowKind::Parent {
                     // Children sit contiguously after their parent:
                     // the next visible row's kind is the state.
@@ -1426,17 +1402,10 @@ pub fn overlay_model_grouped(
                     // desktop-entry display name is a cosmetic
                     // follow-up); the badge counts the app's frozen
                     // windows, expanded state included in the card
-                    // only through the chevron. Under open cycling an
-                    // expanded entry is a divider — [`divider`]: it
-                    // still counts toward the Ctrl+N ordinal (the
-                    // chord works), it just says nothing. The label
-                    // composes with no app_id fallback — the grouping
-                    // tree only parents non-empty app_ids.
-                    let hint = if divider(RowKind::Parent, expanded, scoped) {
-                        None
-                    } else {
-                        RowHint::ctrl(ordinal)
-                    };
+                    // only through the chevron. The label composes
+                    // with no app_id fallback — the grouping tree only
+                    // parents non-empty app_ids.
+                    let hint = RowHint::ctrl(ordinal);
                     let (title, band) =
                         compose_title(&grow.app_id, "", RowKind::Parent, &mut text, scale);
                     rows.push(RowModel {
@@ -2657,6 +2626,8 @@ const MAX_HINTS: usize = 9;
 /// Keys the switcher gesture reacts to, normalized from keysyms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GestureKey {
+    /// Tab / Shift+Tab: one visible row, linearly, in either mode —
+    /// ↓/↑'s twin since grouping rev 5 (the level-scoped step is gone).
     Tab,
     /// Explicit confirm: Return / KP_Enter / ISO_Enter while showing.
     /// Same outcome as releasing Alt.
@@ -2675,28 +2646,12 @@ pub enum GestureKey {
     /// window. The boundary resolves it against the event-time model
     /// exactly as [`GestureKey::Select`] resolves a flat row.
     SelectApp(usize),
-    /// Grouped mode's Alt+1..9: address the Nth child (0-based) of the
-    /// group the selection is on — only while that group is expanded
-    /// (an unshown child is never hinted, so never wired). The boundary
-    /// resolves it against the event-time model.
-    SelectAlt(usize),
     /// The handle-carrying twin of the select family, produced only
     /// by the wayland boundary at event receipt: the window of the row
     /// the user addressed. `None` — a continuation row, or a row past
     /// the model's end — flows through and no-ops at the daemon,
     /// leaving the session intact.
     SelectHandle(Option<Handle>),
-    /// Grouped mode's Tab / Shift+Tab (Alt+Tab / Alt+Shift+Tab): the
-    /// scoped step — level 1 cycles app entries, level 2 cycles the
-    /// group's children. Never descends from level 1 by itself except
-    /// the single-group workspace, where Tab enters and cycles inside
-    /// the only group there is.
-    TabScope,
-    /// Grouped mode's Alt+W: the level toggle — enters the selected
-    /// group's children at level 1, exits to the app entry at level 2.
-    /// → is [`GestureKey::EnterChild`]'s enter-only twin; W works in
-    /// both directions.
-    ToggleLevel,
     /// → in grouped mode: expand the selected parent and enter its
     /// children (the W3C expand axis). The daemon resolves the target
     /// against the frozen tree.
@@ -2793,15 +2748,6 @@ pub enum GestureOutput {
     /// Move the selection one window in this direction and refresh the
     /// overlay.
     Step(Direction),
-    /// Grouped mode's Alt+Tab: step to the next/previous *peer* — the
-    /// next app entry at level 1, the next window of the same group at
-    /// level 2 — and refresh. The daemon resolves the walk against the
-    /// session's frozen tree; flat sessions never see this output.
-    StepScope(Direction),
-    /// Grouped mode's Alt+W: flip one level — enter the selected
-    /// group's children at level 1, exit to its app entry at level 2.
-    /// The daemon resolves against the frozen tree.
-    ToggleLevel,
     /// → in grouped mode: expand the selected parent and move the
     /// selection to its enter-target child. The daemon resolves against
     /// the frozen tree; a leaf's enter is the W3C no-op.
@@ -2863,16 +2809,10 @@ impl Gesture {
                     GestureOutput::Commit
                 }
                 GestureKey::Arrow(direction) => GestureOutput::Step(direction),
-                // Grouped mode's key vocabulary. The machine cannot
-                // resolve any of them — the targets live in the daemon's
-                // frozen tree and expansion state — so it forwards them
-                // as outputs exactly as it forwards arrows.
-                GestureKey::TabScope => GestureOutput::StepScope(if shift {
-                    Direction::Previous
-                } else {
-                    Direction::Next
-                }),
-                GestureKey::ToggleLevel => GestureOutput::ToggleLevel,
+                // Grouped mode's tree keys. The machine cannot resolve
+                // them — the targets live in the daemon's frozen tree
+                // and expansion state — so it forwards them as outputs
+                // exactly as it forwards arrows.
                 GestureKey::EnterChild => GestureOutput::EnterChild,
                 GestureKey::ExitParent => GestureOutput::ExitParent,
                 // Select-and-activate in one motion, addressing the
@@ -2885,9 +2825,7 @@ impl Gesture {
                 // the queue's: the boundary rewrites each to its
                 // [`GestureKey::SelectHandle`] twin before queueing, so
                 // the machine never activates off a row or level index.
-                GestureKey::Select(_) | GestureKey::SelectApp(_) | GestureKey::SelectAlt(_) => {
-                    GestureOutput::Nothing
-                }
+                GestureKey::Select(_) | GestureKey::SelectApp(_) => GestureOutput::Nothing,
                 GestureKey::Escape => {
                     self.showing = false;
                     GestureOutput::Dismiss
@@ -2945,19 +2883,14 @@ impl Gesture {
 /// Shift+Tab arrives as ISO_Left_Tab on most layouts and as Tab plus the
 /// shift modifier on others: both step backwards. `shift_held`,
 /// `ctrl_held`, and `alt_held` are the seat's last reported modifier
-/// states — Ctrl classifies digit presses, Alt classifies W and the
-/// grouped digit row, exactly as shift classifies Tab.
+/// states — Ctrl classifies digit presses, exactly as shift classifies
+/// Tab.
 ///
-/// Grouped mode (the owner's 2026-11-07 collapse re-decision) re-binds
-/// the axes per the W3C vertical treeview: Alt+Tab / Alt+Shift+Tab
-/// ([`GestureKey::TabScope`]) cycle the current level — app entries on
-/// level 1, one group's windows on level 2 — never crossing levels
-/// except the single-group workspace; → expands and enters
-/// ([`GestureKey::EnterChild`]), ← exits or collapses
-/// ([`GestureKey::ExitParent`]); Alt+W
-/// ([`GestureKey::ToggleLevel`]) flips one level either way; Ctrl+N
-/// addresses level-1 entries ([`GestureKey::SelectApp`]) and Alt+N the
-/// selected group's children ([`GestureKey::SelectAlt`]). Flat mode
+/// Grouped mode (the owner's 2026-11-08 rev-5 simplification): Tab
+/// steps one visible row like ↓/↑ — headers included, collapsed
+/// children never; → expands and enters ([`GestureKey::EnterChild`]), ←
+/// exits or collapses ([`GestureKey::ExitParent`]); Ctrl+N addresses
+/// level-1 entries ([`GestureKey::SelectApp`]). Flat mode
 /// (`grouped = false`) keeps the flat mapping byte for byte — Tab and
 /// ←/→ step rows — pinned by the flat regression tests. The boundary
 /// passes the live model's own mode flag, so the keysym the user
@@ -2966,26 +2899,14 @@ pub fn key_input(
     keysym: Keysym,
     shift_held: bool,
     ctrl_held: bool,
-    alt_held: bool,
+    // Rev 5 dropped Alt's last classification (W, the digit row); the
+    // close-window key re-uses it. Callers keep passing the seat state.
+    _alt_held: bool,
     grouped: bool,
 ) -> GestureInput {
     let (key, shift) = match keysym {
-        Keysym::ISO_Left_Tab => (
-            if grouped {
-                GestureKey::TabScope
-            } else {
-                GestureKey::Tab
-            },
-            true,
-        ),
-        Keysym::Tab => (
-            if grouped {
-                GestureKey::TabScope
-            } else {
-                GestureKey::Tab
-            },
-            shift_held,
-        ),
+        Keysym::ISO_Left_Tab => (GestureKey::Tab, true),
+        Keysym::Tab => (GestureKey::Tab, shift_held),
         Keysym::Return | Keysym::KP_Enter | Keysym::ISO_Enter => (GestureKey::Commit, shift_held),
         Keysym::Up => (GestureKey::Arrow(Direction::Previous), false),
         Keysym::Down => (GestureKey::Arrow(Direction::Next), false),
@@ -3003,10 +2924,6 @@ pub fn key_input(
                 (GestureKey::Arrow(Direction::Next), false)
             }
         }
-        // Alt+W flips one level — down into the children at level 1,
-        // back out at level 2 — for hands that never leave the Alt row.
-        // Both cases ride one arm: Shift+Alt+W reports the W keysym.
-        Keysym::w | Keysym::W if alt_held && grouped => (GestureKey::ToggleLevel, shift_held),
         Keysym::Escape => (GestureKey::Escape, shift_held),
         // Ctrl+digits map with or without shift held; without Ctrl the
         // number row stays Other — it must never surprise-activate. In
@@ -3019,14 +2936,6 @@ pub fn key_input(
             },
             shift_held,
         ),
-        // Alt+digits address the selected group's children — grouped
-        // only; the flat card never re-binds the number row.
-        _ if alt_held
-            && grouped
-            && let Some(row) = digit_row(keysym) =>
-        {
-            (GestureKey::SelectAlt(row), shift_held)
-        }
         _ => (GestureKey::Other, shift_held),
     };
     GestureInput::Press { key, shift }
@@ -3844,17 +3753,15 @@ mod tests {
 
     #[test]
     fn row_hints_address_exactly_one_through_nine() {
-        // Rows 1..9 are addressable and hinted; row 10 onward paints
-        // nothing — no dead keys on the card (cosmic's own row-10 hint
-        // is an unwired upstream gap Airlock does not copy). Both
-        // chords ride the same nine cap: Ctrl at level 1, Alt within
-        // a group.
+        // Entries 1..9 are addressable and hinted; entry 10 onward
+        // paints nothing — no dead keys on the card (cosmic's own
+        // row-10 hint is an unwired upstream gap Airlock does not
+        // copy). Rev 5: one chord — Ctrl+N at level 1; the Alt+N
+        // children chords left with the scoped vocabulary.
         for (index, n) in (1..=9).enumerate() {
             assert_eq!(RowHint::ctrl(index), Some(RowHint::Ctrl(n)));
-            assert_eq!(RowHint::alt(index), Some(RowHint::Alt(n)));
         }
         assert_eq!(RowHint::ctrl(9), None, "the tenth entry is not addressable");
-        assert_eq!(RowHint::alt(9), None, "the tenth child is not addressable");
     }
 
     #[test]
@@ -4827,13 +4734,8 @@ mod tests {
     /// Like [`build`], grouped: the app tree over the same snapshot,
     /// collapsed by default — `expanded` names the apps standing open,
     /// `selected` the selected *tree row* (the daemon selects rows, not
-    /// handles, in this mode), `scoped` the session's cycle scope.
-    fn build_grouped(
-        snap: &Snapshot,
-        selected: usize,
-        expanded: &[&str],
-        scoped: bool,
-    ) -> Option<OverlayModel> {
+    /// handles, in this mode).
+    fn build_grouped(snap: &Snapshot, selected: usize, expanded: &[&str]) -> Option<OverlayModel> {
         let tree = crate::switcher::Grouping::new(
             &snap.toplevels,
             snap.active.expect("fixture has an active workspace"),
@@ -4846,7 +4748,6 @@ mod tests {
             &tree,
             &visible,
             selected,
-            scoped,
             snap,
             &no_icons(),
             2,
@@ -4881,9 +4782,10 @@ mod tests {
         // Collapsed (the default): only level-1 rows — the parent entry
         // carrying its badge, and the leaves under their window titles.
         // Expanded: the parent's whole window set follows as children,
-        // front window first, each Alt-numbered within the group.
+        // front window first, unhinted (rev 5: children carry no
+        // chord).
         let snap = grouped_snap();
-        let collapsed = build_grouped(&snap, 0, &[], true).expect("eligible windows exist");
+        let collapsed = build_grouped(&snap, 0, &[]).expect("eligible windows exist");
         let rows: Vec<(&str, crate::switcher::RowKind, usize, Option<RowHint>, bool)> = collapsed
             .rows
             .iter()
@@ -4923,7 +4825,7 @@ mod tests {
                 ),
             ]
         );
-        let expanded = build_grouped(&snap, 0, &["app.a"], true).expect("eligible windows exist");
+        let expanded = build_grouped(&snap, 0, &["app.a"]).expect("eligible windows exist");
         let rows: Vec<(&str, crate::switcher::RowKind, Option<RowHint>, bool)> = expanded
             .rows
             .iter()
@@ -4938,18 +4840,8 @@ mod tests {
                     Some(RowHint::Ctrl(1)),
                     true
                 ),
-                (
-                    "a-front",
-                    crate::switcher::RowKind::Child,
-                    Some(RowHint::Alt(1)),
-                    false
-                ),
-                (
-                    "a-back",
-                    crate::switcher::RowKind::Child,
-                    Some(RowHint::Alt(2)),
-                    false
-                ),
+                ("a-front", crate::switcher::RowKind::Child, None, false),
+                ("a-back", crate::switcher::RowKind::Child, None, false),
                 (
                     "b-only",
                     crate::switcher::RowKind::Leaf,
@@ -4974,13 +4866,13 @@ mod tests {
         // highlights the entry, selecting the front child highlights
         // the child.
         let snap = grouped_snap();
-        let model = build_grouped(&snap, 0, &["app.a"], true).expect("eligible windows exist");
+        let model = build_grouped(&snap, 0, &["app.a"]).expect("eligible windows exist");
         assert_eq!(model.rows[0].handle, Some(Handle(1)));
         assert_eq!(model.rows[1].handle, Some(Handle(1)));
         assert!(model.rows[0].selected, "the parent row is the selection");
         assert!(!model.rows[1].selected);
 
-        let model = build_grouped(&snap, 1, &["app.a"], true).expect("eligible windows exist");
+        let model = build_grouped(&snap, 1, &["app.a"]).expect("eligible windows exist");
         assert!(!model.rows[0].selected);
         assert!(
             model.rows[1].selected,
@@ -4989,48 +4881,24 @@ mod tests {
     }
 
     #[test]
-    fn grouped_model_open_cycling_hints_nothing_on_a_divider() {
-        // Open cycling (the `scoped_cycling = false` default): an
-        // expanded group's entry is a pure divider — no highlight ever
-        // rests on it, so no chord is advertised on it. Everything else
-        // keeps its hint: collapsed entries their Ctrl+N, children
-        // their Alt+N, under either scope.
+    fn grouped_model_hints_every_header_and_no_child() {
+        // Rev 5: headers are normal rows — an expanded entry hints its
+        // Ctrl+N chord like any entry — and children hint nothing (the
+        // Alt+N chords are gone).
         let snap = grouped_snap();
-        let model = build_grouped(&snap, 1, &["app.a"], false).expect("eligible windows exist");
+        let model = build_grouped(&snap, 1, &["app.a"]).expect("eligible windows exist");
         let rows: Vec<(crate::switcher::RowKind, Option<RowHint>)> =
             model.rows.iter().map(|row| (row.kind, row.hint)).collect();
         assert_eq!(
             rows,
             vec![
-                (crate::switcher::RowKind::Parent, None), // the divider
-                (crate::switcher::RowKind::Child, Some(RowHint::Alt(1))),
-                (crate::switcher::RowKind::Child, Some(RowHint::Alt(2))),
+                (crate::switcher::RowKind::Parent, Some(RowHint::Ctrl(1))),
+                (crate::switcher::RowKind::Child, None),
+                (crate::switcher::RowKind::Child, None),
                 (crate::switcher::RowKind::Leaf, Some(RowHint::Ctrl(2))),
                 (crate::switcher::RowKind::Leaf, Some(RowHint::Ctrl(3))),
             ]
         );
-        // The same card under scoped cycling: the entry is a real Tab
-        // target and says so.
-        let model = build_grouped(&snap, 0, &["app.a"], true).expect("eligible windows exist");
-        assert_eq!(model.rows[0].hint, Some(RowHint::Ctrl(1)));
-        // Collapsed entries hint under either scope — they are how an
-        // open-cycling Tab reaches a collapsed app.
-        let model = build_grouped(&snap, 0, &[], false).expect("eligible windows exist");
-        assert_eq!(model.rows[0].hint, Some(RowHint::Ctrl(1)));
-    }
-
-    #[test]
-    fn divider_rule_marks_expanded_parents_only_under_open_cycling() {
-        // The one rule the model builder's hint pass and the wayland
-        // boundary's row→handle pass share: an expanded parent while
-        // cycling is open. Scoped cycling has no dividers; neither does
-        // a collapsed entry, a child, or a leaf.
-        use crate::switcher::RowKind;
-        assert!(divider(RowKind::Parent, true, false));
-        assert!(!divider(RowKind::Parent, true, true));
-        assert!(!divider(RowKind::Parent, false, false));
-        assert!(!divider(RowKind::Child, true, false));
-        assert!(!divider(RowKind::Leaf, true, false));
     }
 
     #[test]
@@ -5041,7 +4909,7 @@ mod tests {
         let snap = grouped_snap();
         let flat =
             build(&snap, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
-        let grouped = build_grouped(&snap, 0, &["app.a"], true).expect("eligible windows exist");
+        let grouped = build_grouped(&snap, 0, &["app.a"]).expect("eligible windows exist");
         // Longest flat title is 7 cols; the tree budget is the parent's
         // 5 title cols + BADGE_COLS, the child's 7 + TREE_INDENT cols.
         let tree_cols = (5 + BADGE_COLS).max(7 + TREE_INDENT / TEXT_W).max(7);
@@ -5089,7 +4957,6 @@ mod tests {
             &tree,
             &visible,
             4,
-            true,
             &snap,
             &no_icons(),
             2,
@@ -5123,8 +4990,7 @@ mod tests {
         // TREE_INDENT right of the top-level column, so the pixel where
         // a parent's glyph starts is pure card on the child's row, and
         // the child's ink appears one indent over.
-        let model =
-            build_grouped(&grouped_snap(), 0, &["app.a"], true).expect("eligible windows exist");
+        let model = build_grouped(&grouped_snap(), 0, &["app.a"]).expect("eligible windows exist");
         let (canvas, stride) = rendered(&model, 2);
         let side = GLYPH_W * GLYPH_SCALE;
         let glyph_x = PAD_X + (ICON - side) / 2;
@@ -5152,8 +5018,7 @@ mod tests {
         // row's midline in the hint-gap column it already owned.
         // Collapsed points right, expanded points down; a leaf paints
         // nothing there.
-        let collapsed =
-            build_grouped(&grouped_snap(), 3, &[], true).expect("eligible windows exist");
+        let collapsed = build_grouped(&grouped_snap(), 3, &[]).expect("eligible windows exist");
         let (canvas, stride) = rendered(&collapsed, 2);
         let side = GLYPH_W * CHEVRON_SCALE;
         let chev_x = collapsed.width - PAD_X - HINT_GAP - HINT_COLS * TEXT_W;
@@ -5198,7 +5063,7 @@ mod tests {
         // and along the full top edge, card where the right-pointing
         // shape had its own ink and vice versa.
         let expanded =
-            build_grouped(&grouped_snap(), 3, &["app.a"], true).expect("eligible windows exist");
+            build_grouped(&grouped_snap(), 3, &["app.a"]).expect("eligible windows exist");
         let (canvas, stride) = rendered(&expanded, 2);
         let (x, y) = mark(3, 6);
         assert_eq!(
@@ -5228,7 +5093,7 @@ mod tests {
         // BADGE_GAP clear of the title, inside the BADGE_COLS budget
         // the model reserves. No `x` prefix: the shape carries
         // "count" (the accessory this re-pin removes).
-        let model = build_grouped(&grouped_snap(), 3, &[], true).expect("eligible windows exist");
+        let model = build_grouped(&grouped_snap(), 3, &[]).expect("eligible windows exist");
         let (canvas, stride) = rendered(&model, 2);
         let title_end = PAD_X + ICON + ICON_GAP + "app.a".chars().count() as u32 * TEXT_W;
         let chip_x = title_end + BADGE_GAP;
@@ -7388,22 +7253,20 @@ mod tests {
     }
 
     #[test]
-    fn grouped_key_input_binds_tab_to_the_scoped_step() {
-        // The owner's 2026-11-08 collapse re-decision: Alt+Tab cycles
-        // the current level — app entries on level 1, the group's
-        // windows on level 2 — never crossing levels by itself. Flat
-        // mode keeps Tab stepping rows, byte for byte.
+    fn grouped_key_input_binds_tab_to_the_linear_step() {
+        // Rev 5: Tab is ↓'s twin in grouped mode too — one visible row,
+        // wrapping, headers included. The level-scoped step is gone.
         assert_eq!(
             key_input(Keysym::Tab, false, false, false, true),
             GestureInput::Press {
-                key: GestureKey::TabScope,
+                key: GestureKey::Tab,
                 shift: false
             }
         );
         assert_eq!(
             key_input(Keysym::Tab, true, false, false, true),
             GestureInput::Press {
-                key: GestureKey::TabScope,
+                key: GestureKey::Tab,
                 shift: true
             }
         );
@@ -7411,45 +7274,45 @@ mod tests {
         assert_eq!(
             key_input(Keysym::ISO_Left_Tab, false, false, false, true),
             GestureInput::Press {
-                key: GestureKey::TabScope,
+                key: GestureKey::Tab,
                 shift: true
             }
         );
     }
 
     #[test]
-    fn grouped_alt_w_flips_the_level() {
-        // Alt+W is the level toggle — down into the children at level
-        // 1, back out at level 2 — for hands that never leave the Alt
-        // row. → enters only; W works both ways. Shift may ride along
-        // (W); without Alt the letter means nothing, and flat mode
-        // never re-binds it.
-        for keysym in [Keysym::w, Keysym::W] {
+    fn the_level_toggle_key_is_gone() {
+        // Rev 5: Alt+W means nothing in either mode — the level toggle
+        // left with the scope vocabulary.
+        for grouped in [true, false] {
+            for keysym in [Keysym::w, Keysym::W] {
+                assert_eq!(
+                    key_input(keysym, false, false, true, grouped),
+                    GestureInput::Press {
+                        key: GestureKey::Other,
+                        shift: false
+                    },
+                    "Alt+{keysym:?} grouped={grouped} is no gesture key"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn grouped_digits_with_alt_are_not_child_chords() {
+        // Rev 5: Alt+N is gone — the number row is never a chord in
+        // grouped mode. (Ctrl+N keeps its arm; flat mode never re-bound
+        // the digits.)
+        for keysym in [Keysym::KP_1, Keysym::KP_9] {
             assert_eq!(
                 key_input(keysym, false, false, true, true),
                 GestureInput::Press {
-                    key: GestureKey::ToggleLevel,
+                    key: GestureKey::Other,
                     shift: false
                 },
-                "Alt+{keysym:?} flips the level"
+                "Alt+{keysym:?} is no chord"
             );
         }
-        assert_eq!(
-            key_input(Keysym::w, false, false, false, true),
-            GestureInput::Press {
-                key: GestureKey::Other,
-                shift: false
-            },
-            "W without Alt is no gesture key"
-        );
-        assert_eq!(
-            key_input(Keysym::w, false, false, true, false),
-            GestureInput::Press {
-                key: GestureKey::Other,
-                shift: false
-            },
-            "flat mode never re-binds the letter"
-        );
     }
 
     #[test]
@@ -7517,11 +7380,11 @@ mod tests {
     }
 
     #[test]
-    fn grouped_key_input_rebinds_both_number_chords() {
-        // Ctrl+N addresses the Nth level-1 entry; Alt+N the selected
-        // group's Nth child (the boundary resolves both against the
-        // event-time model). The Enter family still commits and Escape
-        // still dismisses, whatever the mode.
+    fn grouped_key_input_keeps_the_ctrl_chord() {
+        // Rev 5: Ctrl+N addresses the Nth level-1 entry — the one
+        // chord left; Alt+N is gone with the scoped vocabulary. The
+        // Enter family still commits and Escape still dismisses,
+        // whatever the mode.
         assert_eq!(
             key_input(Keysym::_3, false, true, false, true),
             GestureInput::Press {
@@ -7529,23 +7392,8 @@ mod tests {
                 shift: false
             }
         );
-        assert_eq!(
-            key_input(Keysym::_3, false, false, true, true),
-            GestureInput::Press {
-                key: GestureKey::SelectAlt(2),
-                shift: false
-            },
-            "Alt+3 addresses the group's third child"
-        );
-        assert_eq!(
-            key_input(Keysym::KP_5, false, false, true, true),
-            GestureInput::Press {
-                key: GestureKey::SelectAlt(4),
-                shift: false
-            },
-            "the keypad rides the same chord"
-        );
-        // Without Alt the number row never surprise-activates.
+        // Without Ctrl the number row never surprise-activates — and
+        // Alt alone no longer binds it either (the digits are free).
         assert_eq!(
             key_input(Keysym::_3, false, false, false, true),
             GestureInput::Press {
@@ -7574,29 +7422,10 @@ mod tests {
         // The machine cannot resolve grouped walks — the daemon holds
         // the frozen tree and the expansion state — so it forwards
         // them while showing, exactly as it forwards arrow steps.
+        // Rev 5: Tab forwards as ↓'s twin, the level vocabulary is
+        // gone, and only →/← remain as tree keys.
         let mut gesture = Gesture::default();
         gesture.feed(GestureInput::Invoke(Direction::Next));
-        assert_eq!(
-            gesture.feed(GestureInput::Press {
-                key: GestureKey::TabScope,
-                shift: false
-            }),
-            GestureOutput::StepScope(Direction::Next)
-        );
-        assert_eq!(
-            gesture.feed(GestureInput::Press {
-                key: GestureKey::TabScope,
-                shift: true
-            }),
-            GestureOutput::StepScope(Direction::Previous)
-        );
-        assert_eq!(
-            gesture.feed(GestureInput::Press {
-                key: GestureKey::ToggleLevel,
-                shift: false
-            }),
-            GestureOutput::ToggleLevel
-        );
         assert_eq!(
             gesture.feed(GestureInput::Press {
                 key: GestureKey::EnterChild,
@@ -7611,14 +7440,36 @@ mod tests {
             }),
             GestureOutput::ExitParent
         );
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: false
+            }),
+            GestureOutput::Step(Direction::Next)
+        );
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Tab,
+                shift: true
+            }),
+            GestureOutput::Step(Direction::Previous)
+        );
+        // Between sessions nothing forwards — the overlay is unmapped.
+        let mut gesture = Gesture::default();
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::EnterChild,
+                shift: false
+            }),
+            GestureOutput::Nothing
+        );
     }
 
     #[test]
     fn the_grouped_keys_mean_nothing_between_sessions() {
         let mut gesture = Gesture::default();
         for key in [
-            GestureKey::TabScope,
-            GestureKey::ToggleLevel,
+            GestureKey::Tab,
             GestureKey::EnterChild,
             GestureKey::ExitParent,
         ] {
