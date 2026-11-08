@@ -14,6 +14,7 @@ use cosmic_client_toolkit as cctk;
 
 use crate::ipc::Direction;
 use crate::switcher::{self, Handle, Scope, Snapshot};
+use crate::theme::{Density, Style};
 
 pub use crate::switcher::RowKind;
 
@@ -73,12 +74,18 @@ pub const ICON_GAP: u32 = 12;
 /// breathing above and below (cosmic-launcher's row `padding([8, 24])`
 /// rhythm; research record §2.6). The selection band fills this whole
 /// row rect, so the fill holds icon and text as one object.
+/// Derived default (Round + Standard) since 2026-11-07: [`rhythm`]
+/// re-derives it per open — 40/48/56 across the densities.
 pub const ROW_H: u32 = ICON + 2 * ROW_PAD_Y;
 
-/// Vertical padding inside one row.
+/// Vertical padding inside one row. Derived default (Standard) since
+/// 2026-11-07: [`rhythm`] re-derives it per open — 4/8/12 across the
+/// densities.
 pub const ROW_PAD_Y: u32 = 8;
 
-/// Gap between rows; selection bands never merge across it.
+/// Gap between rows; selection bands never merge across it. Derived
+/// default (Standard) since 2026-11-07: [`rhythm`] re-derives it per
+/// open — 4/8/12 across the densities.
 pub const ROW_GAP: u32 = 8;
 
 /// Horizontal inset of the selection band from the card edges, so the
@@ -91,7 +98,9 @@ pub const SELECT_INSET: u32 = 4;
 /// instead of ending as clipped stripes against the 12-px card radius —
 /// drawn by the same coverage sampler, still one flat fill (no accent,
 /// no glow). `PAD_Y ≥ RADIUS` holds the band clear of the card's corner
-/// arcs. 2026-11-07 layout pass, preview-frozen beside [`PAD_Y`].
+/// arcs. 2026-11-07 layout pass, preview-frozen beside [`PAD_Y`];
+/// since the style follow same day it is the cap of [`band_radius`],
+/// following the card's radius at 8 and below.
 pub const BAND_RADIUS: u32 = 8;
 
 /// Horizontal padding inside the card.
@@ -103,13 +112,18 @@ pub const PAD_X: u32 = 20;
 /// rather than parked beside its neighbor. Also keeps `PAD_Y ≥ RADIUS`
 /// with real slack — 12 sat at exact equality, one padding trim away
 /// from clipping a corner arc. 2026-11-07 layout pass (16 = 2 × the
-/// 8-px row gap).
+/// 8-px row gap). Derived default (Standard) since 2026-11-07:
+/// [`rhythm`] re-derives it per open — 8/16/24 across the densities;
+/// the corner clearance is pinned per profile now (`pad_y +
+/// SELECT_INSET ≥ radius` — Compact's 8 spends the inset, with the
+/// sampled proof in the tests).
 pub const PAD_Y: u32 = 16;
 
 /// Card corner radius in logical pixels. COSMIC's house radius for cards
 /// is `radius_s + 4` ≈ 12 (research record §2.6). Corners are coverage
 /// anti-aliased by area sampling — see [`shape_cov`] — not aliased steps;
-/// nothing is blurred.
+/// nothing is blurred. Derived default (Round) since 2026-11-07:
+/// [`style_radius`] re-derives it per open — 12/8/2 across the styles.
 pub const RADIUS: u32 = 12;
 
 /// Hairline card border thickness in logical pixels.
@@ -216,9 +230,124 @@ pub const ROWS_SLACK: usize = 2;
 /// Card height in logical px for `slots` rows: the padding top and
 /// bottom, every row, and a gap between rows only. The one place the
 /// formula lives — the compile-time pins and [`overlay_model`] agree by
-/// construction.
+/// construction. Takes the profile's rhythm since the density follow
+/// (GE3); the constants above stay as the Standard row.
 pub const fn card_height(slots: u32) -> u32 {
-    2 * PAD_Y + slots * ROW_H + (slots - 1) * ROW_GAP
+    card_height_rhythm(rhythm(Density::Standard), slots)
+}
+
+/// Card height for `slots` rows under one density's rhythm — the
+/// formula itself, shared by the const pins and the model builders.
+pub const fn card_height_rhythm(rhythm: Rhythm, slots: u32) -> u32 {
+    2 * rhythm.pad_y + slots * rhythm.row_h + (slots - 1) * rhythm.row_gap
+}
+
+// --- The geometry ladders ---------------------------------------------------
+//
+// The card's shape follows the desktop (owner-ratified 2026-11-07):
+// COSMIC's style choice derives the corner radius, its interface
+// density the row rhythm. Both are Airlock design decisions on the
+// store's evidence, never passthroughs — the store's raw radii feed the
+// judgment, the 8-grid values stay ours. The constants block above is
+// the Round + Standard row these ladders re-derive per open; the
+// profile freezes onto the session like the palette (GE3).
+
+/// Row rhythm per desktop density — COSMIC's own spacing ratios
+/// (compact ≈ ×2/3, spacious ≈ ×4/3, store record §6) on Airlock's
+/// 8-grid anchors. [`Rhythm::row_h`] stays icon-driven (ICON + 2 ×
+/// `row_pad_y`); `PAD_X` and the band inset have no density analogue
+/// and stay pinned. Compact's 4-px steps are the one deliberate
+/// half-grid exception (OQ 2, ratified): `row_pad_y`/`row_gap` only —
+/// COSMIC's own `space_xxs` compact step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rhythm {
+    /// Vertical padding inside one row.
+    pub row_pad_y: u32,
+    /// Gap between rows; selection bands never merge across it.
+    pub row_gap: u32,
+    /// Vertical padding inside the card.
+    pub pad_y: u32,
+    /// Row height: the icon cell plus its breathing.
+    pub row_h: u32,
+}
+
+/// The rhythm ladder. Standard is today's rhythm, byte-identical.
+pub const fn rhythm(density: Density) -> Rhythm {
+    match density {
+        Density::Compact => Rhythm {
+            row_pad_y: 4,
+            row_gap: 4,
+            pad_y: 8,
+            row_h: 40,
+        },
+        Density::Standard => Rhythm {
+            row_pad_y: 8,
+            row_gap: 8,
+            pad_y: 16,
+            row_h: 48,
+        },
+        Density::Spacious => Rhythm {
+            row_pad_y: 12,
+            row_gap: 12,
+            pad_y: 24,
+            row_h: 56,
+        },
+    }
+}
+
+/// The card's corner radius, derived from the desktop's style choice.
+/// Judged on the sheet 2026-11-07, not transcribed from the store:
+/// Square's 2 keeps a hair of rounding on a hairline-border card where
+/// 0 would read as a bug; SlightlyRound takes the band's own 8 so card
+/// and band round together; Round is today's pin, unchanged.
+pub const fn style_radius(style: Style) -> u32 {
+    match style {
+        Style::Round => 12,
+        Style::SlightlyRound => 8,
+        Style::Square => 2,
+    }
+}
+
+/// The band rounds with the card, never past its own pin.
+pub const fn band_radius(radius: u32) -> u32 {
+    if radius > 8 { 8 } else { radius }
+}
+
+/// The card's resolved shape: the style's radius and the density's
+/// rhythm, frozen onto a session at open (beside the palette) so a
+/// desktop flip mid-gesture never re-shapes the open card — GE3's
+/// freeze. Default is Round + Standard, the constants block verbatim
+/// (pinned by test): COSMIC's factory default and the store-miss
+/// default render byte-identically to every card shipped before the
+/// follow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StyleProfile {
+    /// Card corner radius ([`RADIUS`] on the default profile).
+    pub radius: u32,
+    /// Selection-band end radius ([`BAND_RADIUS`] on the default).
+    pub band_radius: u32,
+    /// Row rhythm (Standard's values on the default).
+    pub rhythm: Rhythm,
+}
+
+impl StyleProfile {
+    /// The profile one open resolves from the followed style and
+    /// density.
+    pub const fn resolve(style: Style, density: Density) -> Self {
+        let radius = style_radius(style);
+        StyleProfile {
+            radius,
+            band_radius: band_radius(radius),
+            rhythm: rhythm(density),
+        }
+    }
+}
+
+impl Default for StyleProfile {
+    /// Round + Standard — the derived-today row.
+    fn default() -> Self {
+        Self::resolve(Style::Round, Density::Standard)
+    }
 }
 
 /// How long the overlay stays up before closing itself when idle.
@@ -481,11 +610,15 @@ pub enum SelectionSetting {
 
 // Geometry pins. The 8-grid holds for every stepped metric; the row is
 // exactly the icon cell plus its breathing; rows stay clear of the
-// corner arcs (PAD_Y ≥ RADIUS), so a selection band can never clip a
-// corner, and the band's own ends round within its height; and the
-// border is a hairline, not a frame.
+// corner arcs, so a selection band can never clip a corner, and the
+// band's own ends round within its height; and the border is a
+// hairline, not a frame. Since the geometry follow (GE2) the
+// rhythm/radius pins run parametrized over every style × density
+// profile the desktop can resolve — the values are derived ([`rhythm`],
+// [`style_radius`]), so every combination must hold, not just today's
+// row; the constants themselves stay pinned to the default profile by
+// the const-equality test.
 const _: () = {
-    assert!(ROW_H == ICON + 2 * ROW_PAD_Y);
     assert!(TEXT_H == GLYPH_H * FONT_SCALE_NUM / FONT_SCALE_DEN);
     assert!(TEXT_W == TEXT_H);
     // The glyph block is whole device pixels at the render-scale floor.
@@ -493,28 +626,58 @@ const _: () = {
     // The title band stays under the ~600-px switcher-width consensus
     // (research record §2.6, §2.10); the hint band rides on top of it.
     assert!(MAX_COLS * TEXT_W <= 600);
-    assert!(ROW_H >= TEXT_H);
-    assert!(PAD_Y >= RADIUS);
-    assert!(RADIUS.is_multiple_of(4));
     assert!(ICON.is_multiple_of(8));
     assert!(ICON_GAP.is_multiple_of(4));
     assert!(HINT_GAP.is_multiple_of(4));
-    assert!(ROW_PAD_Y.is_multiple_of(4));
-    assert!(ROW_GAP.is_multiple_of(4));
     assert!(PAD_X.is_multiple_of(4));
-    assert!(PAD_Y.is_multiple_of(4));
     assert!(BORDER == 1);
     assert!(SELECT_INSET.is_multiple_of(4));
     assert!(SELECT_INSET > BORDER);
     assert!(SELECT_INSET < PAD_X);
-    assert!(BAND_RADIUS.is_multiple_of(4));
-    assert!(2 * BAND_RADIUS <= ROW_H);
+    assert!(ROWS_MIN >= 3);
+    assert!(ROWS_MIN <= DEFAULT_ROWS && DEFAULT_ROWS <= ROWS_MAX);
+
+    // Every profile the desktop can resolve: three styles × three
+    // densities. `while` loops — const evaluation has no `for`.
+    let styles = [Style::Round, Style::SlightlyRound, Style::Square];
+    let densities = [Density::Compact, Density::Standard, Density::Spacious];
+    let mut si = 0;
+    while si < styles.len() {
+        let mut di = 0;
+        while di < densities.len() {
+            let profile = StyleProfile::resolve(styles[si], densities[di]);
+            let rhythm = profile.rhythm;
+            // The row is the icon cell plus its breathing at every
+            // density (the icon-driven rule survives).
+            assert!(rhythm.row_h == ICON + 2 * rhythm.row_pad_y);
+            assert!(rhythm.row_h >= TEXT_H);
+            // The band clears the card's corner arcs. The pinned era's
+            // `PAD_Y ≥ RADIUS` was a sufficient condition while pad_y
+            // was a pinned 16; Compact's derived 8 spends the band's
+            // inset instead — the exact sufficient condition is
+            // `pad_y + SELECT_INSET ≥ radius` (the sampled proof, over
+            // the band's own corner arc, runs in the tests).
+            assert!(rhythm.pad_y + SELECT_INSET >= profile.radius);
+            // The 8-grid per profile — 4-multiples, with the two
+            // ratified exceptions: Square's 2 (OQ 1 — a hair of
+            // rounding where 0 would read as a bug) and Compact's
+            // row steps (OQ 2, the half-grid).
+            assert!(profile.radius == 2 || profile.radius.is_multiple_of(4));
+            assert!(profile.band_radius == 2 || profile.band_radius.is_multiple_of(4));
+            assert!(rhythm.row_pad_y.is_multiple_of(4));
+            assert!(rhythm.row_gap.is_multiple_of(4));
+            assert!(rhythm.pad_y.is_multiple_of(4));
+            // The band's own ends round within its height.
+            assert!(2 * profile.band_radius <= rhythm.row_h);
+            di += 1;
+        }
+        si += 1;
+    }
     // The card at the `rows` setting's worst case — `rows + ROWS_SLACK`
     // slots — fits a 720-logical screen (1440p@2x, any 1× panel): 584 at
     // the default, 696 at the ceiling. The 11-04 540 pin moved with the
-    // 11-07 re-pin (spec `overlay-density`, OQ 2).
-    assert!(ROWS_MIN >= 3);
-    assert!(ROWS_MIN <= DEFAULT_ROWS && DEFAULT_ROWS <= ROWS_MAX);
+    // 11-07 re-pin (spec `overlay-density`, OQ 2); Standard's row here —
+    // GE3 moves this to the clamped worst case per density.
     assert!(card_height((DEFAULT_ROWS + ROWS_SLACK) as u32) <= 720);
     assert!(card_height((ROWS_MAX + ROWS_SLACK) as u32) <= 720);
 };
@@ -2255,6 +2418,136 @@ mod tests {
         let x0 = (width - PAD_X - HINT_COLS * TEXT_W) * 2;
         let x1 = (width - PAD_X) * 2;
         (x0..x1).flat_map(move |x| (top..top + ROW_H * 2).map(move |y| (x, y)))
+    }
+
+    // --- the geometry ladders ----------------------------------------------
+
+    #[test]
+    fn the_style_ladder_rounds_at_12_8_2_and_the_band_caps_at_8() {
+        // Judged 2026-11-07, not transcribed: Square keeps a hair of
+        // rounding on a hairline-border card where 0 would read as a
+        // bug; SlightlyRound takes the band's own 8 so card and band
+        // round together.
+        assert_eq!(style_radius(Style::Round), 12);
+        assert_eq!(style_radius(Style::SlightlyRound), 8);
+        assert_eq!(style_radius(Style::Square), 2);
+        // The band rounds with the card, never past its own pin.
+        assert_eq!(band_radius(12), 8);
+        assert_eq!(band_radius(8), 8);
+        assert_eq!(band_radius(2), 2);
+    }
+
+    #[test]
+    fn the_rhythm_table_is_the_ratified_ladder() {
+        // COSMIC's own spacing ratios (compact ≈ ×2/3, spacious ≈ ×4/3)
+        // on Airlock's 8-grid anchors; Compact's 4-px steps are the one
+        // deliberate half-grid exception (OQ 2), row_pad_y/row_gap only.
+        assert_eq!(
+            rhythm(Density::Compact),
+            Rhythm {
+                row_pad_y: 4,
+                row_gap: 4,
+                pad_y: 8,
+                row_h: 40
+            }
+        );
+        assert_eq!(
+            rhythm(Density::Standard),
+            Rhythm {
+                row_pad_y: 8,
+                row_gap: 8,
+                pad_y: 16,
+                row_h: 48
+            }
+        );
+        assert_eq!(
+            rhythm(Density::Spacious),
+            Rhythm {
+                row_pad_y: 12,
+                row_gap: 12,
+                pad_y: 24,
+                row_h: 56
+            }
+        );
+    }
+
+    #[test]
+    fn row_h_stays_icon_driven_at_every_density() {
+        for density in [Density::Compact, Density::Standard, Density::Spacious] {
+            assert_eq!(
+                rhythm(density).row_h,
+                ICON + 2 * rhythm(density).row_pad_y,
+                "{density:?}: the icon cell plus its breathing, nothing else"
+            );
+        }
+    }
+
+    #[test]
+    fn the_default_profile_is_exactly_todays_constants() {
+        // The Round + Standard row — COSMIC's factory default and the
+        // miss default — equals the constants block verbatim, so the
+        // default desktop renders byte-identically.
+        assert_eq!(
+            StyleProfile::default(),
+            StyleProfile {
+                radius: RADIUS,
+                band_radius: BAND_RADIUS,
+                rhythm: Rhythm {
+                    row_pad_y: ROW_PAD_Y,
+                    row_gap: ROW_GAP,
+                    pad_y: PAD_Y,
+                    row_h: ROW_H,
+                },
+            }
+        );
+    }
+
+    /// The same pin at compile time: the default profile's every value
+    /// is the constants block, by construction.
+    const _: () = {
+        let profile = StyleProfile::resolve(Style::Round, Density::Standard);
+        assert!(profile.radius == RADIUS);
+        assert!(profile.band_radius == BAND_RADIUS);
+        assert!(profile.rhythm.row_pad_y == ROW_PAD_Y);
+        assert!(profile.rhythm.row_gap == ROW_GAP);
+        assert!(profile.rhythm.pad_y == PAD_Y);
+        assert!(profile.rhythm.row_h == ROW_H);
+    };
+
+    #[test]
+    fn every_profile_keeps_the_band_clear_of_the_card_corner() {
+        // The true invariant behind the pinned era's `PAD_Y ≥ RADIUS`:
+        // no part of the selection band falls in the card corner's
+        // exclusion zone — inside the corner square yet outside the
+        // corner circle. That assert was sufficient while pad_y was a
+        // pinned 16; as a derived value Compact's pad_y is 8 and the
+        // band's SELECT_INSET buys the clearance instead (the compile
+        // time pin is `pad_y + SELECT_INSET ≥ radius`; this test samples
+        // the geometry itself). Sampled over the band's own rounded
+        // corner arc, the closest the band ever comes to the card edge.
+        for style in [Style::Round, Style::SlightlyRound, Style::Square] {
+            for density in [Density::Compact, Density::Standard, Density::Spacious] {
+                let profile = StyleProfile::resolve(style, density);
+                let (r, b) = (profile.radius as f32, profile.band_radius as f32);
+                let (s, p) = (SELECT_INSET as f32, profile.rhythm.pad_y as f32);
+                let mut excluded = 0;
+                for step in 0..=90 {
+                    let theta = std::f32::consts::FRAC_PI_2 * (step as f32) / 90.0;
+                    // The band's top-left corner arc: center (s + b, p + b),
+                    // from the left edge's top end to the top edge's left end.
+                    let (x, y) = (s + b - b * theta.cos(), p + b - b * theta.sin());
+                    let in_corner_square = x < r && y < r;
+                    let outside_corner_circle = (x - r).powi(2) + (y - r).powi(2) > r * r;
+                    if in_corner_square && outside_corner_circle {
+                        excluded += 1;
+                    }
+                }
+                assert_eq!(
+                    excluded, 0,
+                    "{style:?} + {density:?}: the band's corner stays inside the card"
+                );
+            }
+        }
     }
 
     #[test]
