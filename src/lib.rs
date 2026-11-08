@@ -6,5 +6,6 @@
 pub mod icons;
 pub mod ipc;
 pub mod switcher;
+pub mod text;
 pub mod theme;
 pub mod ui;

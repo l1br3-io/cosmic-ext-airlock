@@ -842,6 +842,13 @@ pub fn run() -> Result<(), RunError> {
     // Desktop-entry enumeration once per daemon (tens of ms, off the
     // press path); rasterization happens per first-seen app.
     let mut icons = crate::icons::Cache::new();
+    // The card's text backend (`typography`): the one font scan paid
+    // here at daemon start — OQ 1 puts its tens-of-ms cost at login,
+    // never on the first gesture. Fonts installed after startup stay
+    // unseen until the daemon restarts (documented limitation). The
+    // System render path consumes it from TY3; until then the scan and
+    // this ownership are the whole change (hence the underscore).
+    let _text = crate::text::TextSystem::scan_system();
     let mut pending: Vec<UnixStream> = Vec::new();
     let mut last_activity = Instant::now();
 

@@ -31,6 +31,15 @@ path = "src/main.rs"
 
 [dependencies]
 cosmic-client-toolkit = "0.2.0"
+# The card's typeface, per docs/research/cosmic-appearance-stores.md and
+# the typography spec: fontdb discovery, harfrust/skrifa shaping, swash
+# rasterization — the platform text stack, pure Rust. Features pinned to
+# `std` + `swash`: the default set would link the C fontconfig through
+# fontdb; without it fontdb scans the standard font directories itself
+# (stated limitation: fontconfig-customized paths are unseen). No C in
+# the tree — the PPA vendored-crate constraint (pinned per commit via
+# `cargo tree -i cosmic-text`).
+cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
 # App icons, per docs/research/switcher-ux-and-icons.md §3.4: pop-launcher's
 # pipeline. Entries: app_id → icon name (gettext off — no C binding, icon()
 # is locale-independent). Icons: name → themed file (SVG or PNG path).
