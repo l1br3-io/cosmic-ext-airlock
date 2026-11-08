@@ -1033,6 +1033,51 @@ pub fn visible_window(len: usize, sel: usize, rows: usize, prev: Option<Viewport
     }
 }
 
+/// The horizontal band's window over a `len`-long eligible list with
+/// `sel` selected, under a `tiles`-tile budget, continuing from `prev`
+/// — `None` is a fresh session, left-aligned on the MRU head. The
+/// one-axis mirror of [`visible_window`] (CL2): same clamp-of-carried-
+/// start shape, different slot accounting.
+///
+/// The band is `min(len, tiles)` tiles wide, never wider — the spec's
+/// "card width = N × tile pitch": the `…` affordance lives *inside*
+/// the budget, replacing the trailing tile when the window's end hides
+/// windows (unlike the vertical card, whose `…` rows ride on top of
+/// its `rows`). A truncated band shows `tiles − 1` windows; the tail
+/// window, whose end hides nothing, shows all `tiles`. There is no
+/// leading affordance — the list reads left to right, so only a
+/// truncated *trailing* edge gets one.
+///
+/// The window moves the minimum needed to keep the selection on a
+/// *content* tile, never the affordance slot: nothing while the
+/// selection stays interior (the sticky rule), one tile per step past
+/// the trailing edge. A start carried from a longer list re-clamps
+/// after a mid-gesture shrink.
+// Unconsumed until the horizontal card renders through it (CL3) — the
+// GE1 pattern; the property suite reads it from day one.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn band_window(len: usize, sel: usize, tiles: usize, prev: Option<Viewport>) -> Viewport {
+    debug_assert!(sel < len, "the caller's selection indexes the list");
+    debug_assert!(
+        tiles >= 2,
+        "a band needs a content tile beside the affordance"
+    );
+    // The last start whose window's end hides nothing: the tail window.
+    let max_start = len.saturating_sub(tiles);
+    // The smallest and largest starts keeping `sel` on a content tile:
+    // no leading slot, so the window may sit flush on the selection.
+    let lo = sel.saturating_add(2).saturating_sub(tiles).min(max_start);
+    let hi = sel.min(max_start);
+    let start = prev.map_or(0, |vp| vp.start).min(max_start).clamp(lo, hi);
+    let bottom = start + tiles < len;
+    Viewport {
+        start,
+        content: if bottom { tiles - 1 } else { len.min(tiles) },
+        top: false,
+        bottom,
+    }
+}
+
 /// Builds the flat overlay contents for `snapshot` with `selected`
 /// highlighted, listing windows under `scope`, with app icons from
 /// `icons` prepared at `scale` for the card `palette` paints, windowed
@@ -3729,6 +3774,275 @@ mod tests {
                 assert_eq!(
                     carried.start, 0,
                     "rows {rows} len {len}: the return sweep re-tops"
+                );
+            }
+        }
+    }
+
+    // --- card-layout: the horizontal windowing rule (CL2) ---------------
+
+    /// Every tile budget the `columns` setting can produce, plus one
+    /// past the ceiling: the property suite runs over all of them —
+    /// the enumerations stay small.
+    fn every_tiles() -> std::ops::RangeInclusive<usize> {
+        COLUMNS_MIN..=COLUMNS_MAX + 1
+    }
+
+    /// The tile count the band reserves for a `len`-long list under a
+    /// `tiles` budget — the contract, not the implementation: the whole
+    /// list up to the budget, the budget above it. The trailing `…`
+    /// lives inside these tiles, never beyond them.
+    fn expected_tiles(len: usize, tiles: usize) -> usize {
+        len.min(tiles)
+    }
+
+    /// Every window `band_window` can produce for a `len`-long list
+    /// under `tiles`, deduplicated: one per selection position.
+    fn reachable_bands(len: usize, tiles: usize) -> Vec<Viewport> {
+        let mut out = Vec::new();
+        for sel in 0..len {
+            let vp = band_window(len, sel, tiles, None);
+            if !out.contains(&vp) {
+                out.push(vp);
+            }
+        }
+        out
+    }
+
+    /// Prior windows a horizontal session could carry into a `len`-long
+    /// rebuild: every band reachable at `len` plus every band reachable
+    /// at a longer length — the mid-gesture shrink case.
+    fn prior_bands(len: usize, tiles: usize) -> Vec<Viewport> {
+        let mut priors = reachable_bands(len, tiles);
+        for longer in len + 1..=3 * tiles + 2 {
+            priors.extend(reachable_bands(longer, tiles));
+        }
+        priors
+    }
+
+    #[test]
+    fn band_window_keeps_every_selection_on_a_content_tile() {
+        // The fixed point, exhaustive over every (tiles, len, sel, prev)
+        // the rule can meet: the band is exactly the reserved tiles
+        // wide, the affordance replaces the trailing slot and only
+        // there, the window never runs past the list, and the selection
+        // always lands on a content tile.
+        for tiles in every_tiles() {
+            for len in 0..=3 * tiles + 2 {
+                for sel in 0..len {
+                    for prev in
+                        std::iter::once(None).chain(prior_bands(len, tiles).into_iter().map(Some))
+                    {
+                        let vp = band_window(len, sel, tiles, prev);
+                        let slots = expected_tiles(len, tiles);
+                        assert_eq!(
+                            vp.content + vp.bottom as usize,
+                            slots,
+                            "tiles {tiles} len {len} sel {sel} prev {prev:?}: slots must equal the \
+                             reserved count"
+                        );
+                        assert!(
+                            !vp.top,
+                            "tiles {tiles} len {len} sel {sel}: a band never leads with an \
+                             affordance"
+                        );
+                        assert_eq!(
+                            vp.bottom,
+                            vp.start + tiles < len,
+                            "tiles {tiles} len {len} sel {sel}: bottom flag"
+                        );
+                        assert!(
+                            vp.start + vp.content <= len,
+                            "tiles {tiles} len {len} sel {sel}: window runs past the list"
+                        );
+                        assert!(
+                            vp.start <= sel && sel < vp.start + vp.content,
+                            "tiles {tiles} len {len} sel {sel} prev {prev:?}: selection {sel} not \
+                             on a content tile of {vp:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_band_spends_one_tile_on_the_affordance() {
+        // The budget contract, one axis over: a list longer than the
+        // budget keeps at least `tiles − 1` windows in view — the
+        // affordance spends the last tile mid-list, the tail window
+        // hides nothing and shows all `tiles`.
+        for tiles in every_tiles() {
+            for len in tiles + 1..=3 * tiles + 2 {
+                for sel in 0..len {
+                    let vp = band_window(len, sel, tiles, None);
+                    assert!(
+                        vp.content >= tiles - 1,
+                        "tiles {tiles} len {len} sel {sel}: fewer windows in view than the \
+                         budget minus the affordance"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_list_within_the_tile_budget_shows_whole() {
+        // Up to `tiles` windows fit the band with nothing hidden: no
+        // affordance, every tile content, left-aligned.
+        for tiles in every_tiles() {
+            for len in 1..=tiles {
+                for sel in 0..len {
+                    assert_eq!(
+                        band_window(len, sel, tiles, None),
+                        Viewport {
+                            start: 0,
+                            content: len,
+                            top: false,
+                            bottom: false
+                        },
+                        "tiles {tiles} len {len} sel {sel}: a list within budget shows whole"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn band_window_is_sticky_while_the_selection_stays_visible() {
+        // A selection already on a content tile of the carried window
+        // must not move it: interior steps change nothing.
+        for tiles in every_tiles() {
+            for len in tiles..=3 * tiles + 2 {
+                for prev in reachable_bands(len, tiles) {
+                    for sel in prev.start..prev.start + prev.content {
+                        assert_eq!(
+                            band_window(len, sel, tiles, Some(prev)),
+                            prev,
+                            "tiles {tiles} len {len} sel {sel}: the band moved under a visible \
+                             selection"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn band_window_moves_one_tile_at_most_and_only_when_it_must() {
+        // One step of the selection moves the window by at most one
+        // tile, by zero while the new selection stays content-visible,
+        // and by exactly one when it stepped past the trailing edge.
+        for tiles in every_tiles() {
+            for len in tiles + 1..=3 * tiles + 2 {
+                for prev_sel in 0..len {
+                    let prev = band_window(len, prev_sel, tiles, None);
+                    for next_sel in [prev_sel + 1, prev_sel.saturating_sub(1)] {
+                        if next_sel >= len {
+                            continue;
+                        }
+                        let next = band_window(len, next_sel, tiles, Some(prev));
+                        let delta = next.start.abs_diff(prev.start);
+                        let still_visible =
+                            (prev.start..prev.start + prev.content).contains(&next_sel);
+                        let expected = if still_visible { 0 } else { 1 };
+                        assert_eq!(
+                            delta, expected,
+                            "tiles {tiles} len {len} {prev_sel}→{next_sel}: window moved {delta} \
+                             tiles, expected {expected}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_fresh_session_opens_left_aligned() {
+        // The selection at open is the MRU front (tile 0), so a fresh
+        // band shows the head of the list — and the rule stays total:
+        // any fresh selection the head window can still show as
+        // content keeps it.
+        for tiles in every_tiles() {
+            assert_eq!(band_window(tiles + 5, 0, tiles, None).start, 0);
+            let head = band_window(tiles + 5, tiles - 2, tiles, None);
+            assert_eq!(head.start, 0, "tiles {tiles}");
+            assert!(
+                head.bottom,
+                "tiles {tiles}: a longer list truncates at the trailing edge only"
+            );
+        }
+    }
+
+    #[test]
+    fn the_affordance_appears_at_the_trailing_edge_only() {
+        // Past the budget the windows truncate at one edge only: the
+        // head window hides windows to its right and spends its last
+        // tile on the affordance; the tail window hides nothing and
+        // shows the whole budget; nothing ever hides to the left.
+        for tiles in every_tiles() {
+            let past = tiles + 1;
+            let head = band_window(past, 0, tiles, None);
+            assert!(
+                !head.top && head.bottom,
+                "tiles {tiles}: head hides at the trailing edge only"
+            );
+            assert_eq!(
+                head.content,
+                tiles - 1,
+                "tiles {tiles}: the affordance spends exactly one tile"
+            );
+            let tail = band_window(past, past - 1, tiles, None);
+            assert_eq!(tail.start, 1, "tiles {tiles}");
+            assert!(
+                !tail.top && !tail.bottom,
+                "tiles {tiles}: the tail window hides nothing"
+            );
+            assert_eq!(tail.content, tiles, "tiles {tiles}: the whole budget");
+        }
+    }
+
+    #[test]
+    fn a_full_sweep_shifts_the_band_in_single_tile_steps() {
+        // Carrying the band through a whole Tab sweep (and back) moves
+        // it from the head window to the tail window one tile at a
+        // time, never jumping — the shift reads as one clean frame per
+        // step.
+        for tiles in every_tiles() {
+            for len in [tiles + 1, 2 * tiles + 2, 3 * tiles + 2] {
+                let mut carried = band_window(len, 0, tiles, None);
+                assert_eq!(
+                    carried.start, 0,
+                    "tiles {tiles} len {len}: the sweep opens left-aligned"
+                );
+                let mut starts = vec![carried.start];
+                for sel in 1..len {
+                    carried = band_window(len, sel, tiles, Some(carried));
+                    starts.push(carried.start);
+                }
+                assert_eq!(
+                    carried.start,
+                    len - tiles,
+                    "tiles {tiles} len {len}: the sweep must reach the tail window"
+                );
+                for pair in starts.windows(2) {
+                    assert!(
+                        pair[1] - pair[0] <= 1,
+                        "tiles {tiles} len {len}: the band jumped: {starts:?}"
+                    );
+                }
+                // Shift+Tab back: the same vocabulary in reverse.
+                for sel in (0..len - 1).rev() {
+                    let now = band_window(len, sel, tiles, Some(carried));
+                    assert!(
+                        carried.start - now.start <= 1,
+                        "tiles {tiles} len {len} sel {sel}: the band jumped back"
+                    );
+                    carried = now;
+                }
+                assert_eq!(
+                    carried.start, 0,
+                    "tiles {tiles} len {len}: the return sweep re-lefts"
                 );
             }
         }
