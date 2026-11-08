@@ -7,6 +7,19 @@ observe, not internal mechanics.
 
 ### Added
 
+- **Desktop-followed geometry** — the card's shape follows the COSMIC
+  desktop, no keys. The corner radius follows Appearance → Style
+  (Round / Slightly-Round / Square → 12 / 8 / 2 px, the selection
+  band rounding with the card, capped at 8), and the row rhythm
+  follows the interface density (Compact / Comfortable / Spacious →
+  40 / 48 / 56-px icon-driven rows; the card's width never moves).
+  Both apply at the next Alt+Tab after the desktop setting flips; a
+  factory-default desktop (Round + Comfortable) renders exactly the
+  card every prior version painted. At Spacious density the `rows`
+  budget auto-clamps to the 720-px fit — `rows = 9` or `10` open with
+  eight windows in view and one daemon-log diagnostic naming the
+  clamp; the setting keeps its value.
+
 - **App grouping** — the `grouping = true` setting re-partitions the
   switcher into a two-level tree. Level 1 is the app layer, collapsed
   by default: the card opens on app entries alone, each committing its

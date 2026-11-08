@@ -70,7 +70,17 @@ same-application cycling gesture the platform default does not offer.
   found the same value tiny on a 100 % output (8 physical) and moved to
   the middle step. The card keeps `rows` windows in view on a long
   list (default 8, configurable 3–10), the `…` rows riding on top of
-  that budget.
+  that budget. Re-decided 2026-11-08 (`geometry`): **the 12-px corner
+  radius and the 8-grid rhythm are derived values now** — the radius
+  follows the COSMIC style choice (Round / Slightly-Round / Square →
+  12 / 8 / 2 px, band capped at 8), the rhythm the interface density
+  (Compact / Comfortable / Spacious → 40 / 48 / 56-px icon-driven
+  rows; Compact's 4-px steps are COSMIC's own `space_xxs`, the one
+  deliberate half-grid exception). The card's height varies with the
+  desktop's density by design; its width never moves. At Spacious the
+  `rows` budget auto-clamps to the 720-px fit with one diagnostic —
+  the fit is guaranteed by construction. Follow-only by decision: no
+  keys exist, the desktop is the config.
 - Constraints, durable: RSS < 30 MB and warm press < 50 ms are product
   budgets, not targets; no libcosmic/iced dependency; never write
   outside the user's config and data dirs (`/usr/share` untouched);

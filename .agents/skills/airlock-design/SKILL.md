@@ -56,7 +56,12 @@ the room.
   fills carry alpha ≥ 0xFA, asserted at compile time, so the card reads
   the same on light and dark wallpapers. A new color states what it does
   on both polarities or it doesn't ship.
-- **The 8-pixel grid is the layout system.** One 8×8 bitmap font drawn
+- **The 8-pixel grid is the layout system — and, since 2026-11-08
+  (`geometry`), the grid follows the desktop's density.** Compact
+  steps at 4 px (COSMIC's own `space_xxs`, the one deliberate
+  half-grid exception, row pad/gap only), Comfortable holds today's
+  8-grid, Spacious breathes at 12; rows stay icon-driven (40/48/56)
+  and the card's width never moves with density. One 8×8 bitmap font drawn
   at a 3/2 font scale, so 12-px text — re-pinned 2026-11-07 by the owner.
   The history matters: on 2026-11-02 the owner re-pinned 8 px twice in
   one day (16 px read oversized next to the 32-px icons, and so did
@@ -93,10 +98,14 @@ some briefs; here most are wrong:
 4. Metadata dressing: app ids under titles, middle-dot joins, tracked
    ALL-CAPS eyebrows, a header saying "Switch windows".
 5. Drop shadows and blur — impossible without soft edges on this
-   renderer. Rounded corners are the deliberate exception: radius 12 with
-   exactly area-sampled coverage anti-aliasing, plus the 1-px border that
+   renderer. Rounded corners are the deliberate exception: exactly
+   area-sampled coverage anti-aliasing, plus the 1-px border that
    keeps the card edge readable on dark wallpapers (two preview-review
-   rounds set its 18% strength).
+   rounds set its 18% strength). The radius is derived since
+   2026-11-08 (`geometry`): the followed style ladder's rungs — 12
+   (Round, the twice-judged pin), 8 (Slightly-Round, the band's own),
+   2 (Square; a hair of rounding where 0 would read as a bug, judged
+   over 0) — with the band following at its 8-px cap.
 6. A louder selection — scaled-up row, accent bar, glow. Selection is one
    flat fill moving at Tab speed; that is enough hierarchy for a glance.
 

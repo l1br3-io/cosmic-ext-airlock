@@ -151,6 +151,31 @@ binary.
 - [ ] Same-app cycling (Alt+grave) on one app with more than `rows`
       windows open windows the same way
 
+### Geometry (style and density follows)
+
+- [ ] Flip COSMIC's Appearance style Round → Slightly-Round → Square;
+      each next Alt+Tab follows — corners at 12 / 8 / 2 px, the
+      selection band rounding with the card (capped at 8), Square's 2
+      reading as a deliberate hair of rounding, not a bug
+- [ ] Flip COSMIC's interface density Compact → Comfortable → Spacious;
+      each next Alt+Tab follows — rows 40 / 48 / 56 px, icon-driven at
+      every step, the card's width never moving
+- [ ] Both follows at 1× and 2×, both themes, over a light and a dark
+      wallpaper (screenshot each cell — the 3×3 sheet renders headless:
+      `cargo run --example overlay-preview -- /tmp/geometry.png
+      --geometry`)
+- [ ] A style or density flip mid-gesture changes nothing until the
+      next press — the open card keeps its shape under held Alt
+- [ ] Round + Comfortable (COSMIC's factory default) renders the card
+      exactly as before the follow — no visible change for the default
+      desktop
+- [ ] Spacious + `rows = 10`: the daemon log names the clamp (density,
+      setting, clamped value — eight), the card fits the panel, and the
+      setting keeps its value after the density drops back
+- [ ] Move the COSMIC stores aside (rename `~/.config/cosmic`); the
+      next Alt+Tab paints the factory-default geometry with one
+      aggregated diagnostic per follow, and switching is unaffected
+
 ### Theme (card color)
 
 - [ ] `theme = "light"` on a dark-mode desktop: the next Alt+Tab paints

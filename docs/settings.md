@@ -127,7 +127,35 @@ Like every setting, `rows` is read when a gesture starts. An edit
 mid-gesture changes nothing until the next press; a session keeps the
 budget it opened with until Alt is released. A value outside 3–10 (or
 a non-integer) is named in a diagnostic and the last-good settings
-apply.
+apply. At Spacious density the effective budget clamps to what fits —
+see [Follows](#follows).
+
+## Follows
+
+Two of the card's values follow the COSMIC desktop itself. There are
+no keys for them because the desktop already owns the choice — flip
+the setting in COSMIC Settings and the next Alt+Tab already matches.
+
+- **Corner radius follows Appearance → Style.** Round, Slightly-Round,
+  and Square round the card's corners at 12, 8, and 2 logical pixels.
+  The selection band rounds with the card, never past 8.
+- **Row rhythm follows Appearance → Interface density.** Compact,
+  Comfortable, and Spacious set the rows' height, gap, and the card's
+  vertical padding — rows stay icon-driven, 40/48/56 px tall by
+  density. The card's width never changes with density.
+
+Both are read when a gesture starts, like every setting: a flip
+mid-gesture changes nothing until the next press. An unreadable or
+missing COSMIC store keeps the factory-default geometry (round
+corners, comfortable rhythm — the card Airlock has always painted)
+with one diagnostic in the daemon log; switching is never affected.
+
+**The rows clamp.** Every card must fit a 720-logical-pixel panel. At
+Spacious the tallest card the `rows` ceiling could build — ten windows
+plus the two `…` rows — would not, so the budget clamps to what fits:
+`rows = 9` or `10` at Spacious opens with eight windows in view and
+one diagnostic naming the density, the setting, and the clamp. The
+setting keeps its value — back at Comfortable the full budget returns.
 
 ## Grouping
 
@@ -255,6 +283,14 @@ A bad config never breaks switching:
   already matches
 - Set `rows = 10`, then `rows = 3`; the next Alt+Tab keeps that many
   windows in view, `…` rows riding on top — no restart
+- Flip COSMIC's Appearance style (Round / Slightly-Round / Square); the
+  next Alt+Tab's corners already match — 12 / 8 / 2 px
+- Flip COSMIC's interface density (Compact / Comfortable / Spacious);
+  the next Alt+Tab's rows tighten or breathe — 40 / 48 / 56 px — and
+  the card's width stays put
+- At Spacious density, set `rows = 10`; the card opens clamped to eight
+  windows and the daemon log names the clamp — the setting keeps its
+  value
 - With `grouping = true`: expand a group (→), release Alt, press
   Alt+Tab again — under the default `scoped_cycling = false` the step
   leaves the group for the next app and the expanded entry shows no

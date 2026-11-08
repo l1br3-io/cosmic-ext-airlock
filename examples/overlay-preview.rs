@@ -10,8 +10,18 @@
 //! selection band (palette) over both polarities and a custom card — the
 //! plain scenarios are the `selection = "neutral"` side of the comparison.
 //!
+//! `--geometry` renders the geometry sheet instead (the `geometry`
+//! module's judged artifact): a 3 × 3 grid of style (Round,
+//! SlightlyRound, Square, left to right) × density (Compact, Standard,
+//! Spacious, top to bottom); each cell stacks the dark card's and the
+//! light card's long list (a windowed 15-row gesture, dots at both
+//! edges) over their short list (two rows, one selected — the band and
+//! the corners at their tightest), every card over both backdrops.
+//! Square's 2-px rung, Compact's 4-px half-grid, and the band's 8-px
+//! cap are judged on this image at native resolution.
+//!
 //! ```sh
-//! cargo run --example overlay-preview -- preview.png [--scale 2] [--light]
+//! cargo run --example overlay-preview -- preview.png [--scale 2] [--light] [--geometry]
 //! ```
 //!
 //! Icons come from the real pipeline (`src/icons.rs`) against the host's
@@ -57,6 +67,7 @@ fn main() {
     };
     let mut scale = 2;
     let mut light = false;
+    let mut geometry = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--scale" => {
@@ -67,8 +78,9 @@ fn main() {
                     .unwrap_or(scale);
             }
             "--light" => light = true,
+            "--geometry" => geometry = true,
             other => {
-                eprintln!("unknown argument {other}; expected --scale N or --light");
+                eprintln!("unknown argument {other}; expected --scale N, --light, or --geometry");
                 std::process::exit(2);
             }
         }
@@ -85,6 +97,11 @@ fn main() {
     };
     let dark_icons = ui_icons(scale, &ui::Palette::dark());
     let light_icons = ui_icons(scale, &ui::Palette::light());
+    if geometry {
+        let cells = geometry_cells(&dark_icons, &light_icons);
+        write_grid(&path, &cells, scale);
+        return;
+    }
     let scenarios = scenarios(base, &dark_icons, &light_icons);
 
     // Sheet: every scenario twice (dark backdrop, light backdrop), stacked
@@ -130,6 +147,132 @@ fn main() {
 
     write_png(&path, width, height, &sheet).expect("write preview png");
     println!("wrote {} ({width}x{height}, scale {scale})", path.display());
+}
+
+/// The geometry sheet's nine cells: density rows (Compact, Standard,
+/// Spacious top to bottom) × style columns (Round, SlightlyRound,
+/// Square left to right). Each cell stacks four cards — each palette's
+/// long list (a windowed 15-row gesture) over its short list — so
+/// radius, rhythm, the band's cap, and the density's height story all
+/// judge per combination, both palettes.
+fn geometry_cells(
+    dark: &[Option<Rc<IconBitmap>>],
+    light: &[Option<Rc<IconBitmap>>],
+) -> Vec<Vec<Scenario>> {
+    let styles = [
+        cosmic_ext_airlock::theme::Style::Round,
+        cosmic_ext_airlock::theme::Style::SlightlyRound,
+        cosmic_ext_airlock::theme::Style::Square,
+    ];
+    let densities = [
+        cosmic_ext_airlock::theme::Density::Compact,
+        cosmic_ext_airlock::theme::Density::Standard,
+        cosmic_ext_airlock::theme::Density::Spacious,
+    ];
+    let mut cells = Vec::new();
+    for density in densities {
+        let mut cell = Vec::new();
+        for style in styles {
+            let profile = ui::StyleProfile::resolve(style, density);
+            // Long: a windowed interior selection — dots at both edges,
+            // the full rhythm repeating, the density's height at the
+            // default budget. Short: two rows with the first selected —
+            // the band's own rounding and the card corner at their
+            // tightest interaction (Compact + Round).
+            for (palette, icons) in [(ui::Palette::dark(), dark), (ui::Palette::light(), light)] {
+                cell.push(Scenario {
+                    model: windowed(15, 7, ui::DEFAULT_ROWS, None, icons, profile),
+                    palette,
+                });
+                cell.push(Scenario {
+                    model: sized_profile(
+                        OverlayModel {
+                            rows: vec![
+                                row("Selected on top", icons[1].clone(), true),
+                                row("Unselected", icons[2].clone(), false),
+                            ],
+                            ..OverlayModel::default()
+                        },
+                        profile,
+                    ),
+                    palette,
+                });
+            }
+        }
+        cells.push(cell);
+    }
+    cells
+}
+
+/// The geometry sheet's grid composition: one backdrop pair per cell,
+/// cells in a 3 × 3 grid with gutters. Cards paint centered on their
+/// backdrop columns so the corners judge away from the seams.
+fn write_grid(path: &std::path::Path, cells: &[Vec<Scenario>], scale: u32) {
+    let gutter = 32 * scale;
+    let backdrop_w = cells
+        .iter()
+        .flatten()
+        .map(|scenario| scenario.model.width * scale)
+        .max()
+        .unwrap_or(0)
+        + 2 * gutter;
+    // Each density row holds three style cells of four cards; the row's
+    // height is one cell's stack (every style's is the same — height is
+    // the density's, width the titles').
+    let row_heights: Vec<u32> = cells
+        .iter()
+        .map(|row| {
+            row.chunks(4)
+                .next()
+                .map(|cell| {
+                    cell.iter()
+                        .map(|scenario| scenario.model.height * scale + gutter)
+                        .sum::<u32>()
+                        + gutter
+                })
+                .unwrap_or(gutter)
+        })
+        .collect();
+    let width = backdrop_w * 2 * 3 + gutter * 2;
+    let height: u32 = row_heights.iter().sum::<u32>() + gutter;
+    let mut sheet = vec![0u8; (width * height * 4) as usize];
+    for pixel in sheet.as_chunks_mut::<4>().0 {
+        pixel.copy_from_slice(&[26, 26, 28, 255]);
+    }
+    let mut y = gutter;
+    for (row, row_h) in cells.iter().zip(&row_heights) {
+        for (column, cell) in row.chunks(4).enumerate() {
+            let mut card_y = y;
+            for scenario in cell {
+                let model = &scenario.model;
+                let mut card = vec![0u8; (model.width * model.height * 4 * scale * scale) as usize];
+                let (cw, ch) = (model.width * scale, model.height * scale);
+                ui::render(model, &mut card, cw, ch, cw * 4, scale, &scenario.palette);
+                let cell_x = column as u64 * (backdrop_w as u64 * 2);
+                for (dx, backdrop) in [(0, [46u8, 46, 50]), (backdrop_w as i64, [235, 235, 235])] {
+                    let x = gutter as i64
+                        + cell_x as i64
+                        + dx
+                        + ((backdrop_w - 2 * gutter - cw) / 2) as i64; // centered on its backdrop
+                    composite(
+                        &mut sheet,
+                        width,
+                        &card,
+                        (cw, ch),
+                        (x, card_y as i64),
+                        backdrop,
+                    );
+                }
+                card_y += model.height * scale + gutter;
+            }
+        }
+        y += row_h;
+    }
+    write_png(path, width, height, &sheet).expect("write preview png");
+    println!(
+        "wrote {} ({width}x{height}, scale {scale}, 3x3 geometry sheet)",
+        path.display()
+    );
 }
 
 /// One synthetic icon tile: a filled rounded-ish square in a per-app
@@ -215,6 +358,7 @@ fn windowed(
     rows: usize,
     prev: Option<ui::Viewport>,
     icons: &[Option<Rc<IconBitmap>>],
+    profile: ui::StyleProfile,
 ) -> OverlayModel {
     let titles: Vec<String> = (0..count)
         .map(|index| format!("Window {index} - the long-list case"))
@@ -250,10 +394,31 @@ fn windowed(
             + cols * ui::TEXT_W
             + ui::HINT_GAP
             + ui::HINT_COLS * ui::TEXT_W,
-        height: ui::card_height(shown),
+        height: ui::card_height_rhythm(profile.rhythm, shown),
         viewport,
-        profile: ui::StyleProfile::default(),
+        profile,
     }
+}
+
+/// [`sized`], under an explicit profile — the geometry sheet sizes its
+/// cards at every style × density combination.
+fn sized_profile(mut model: OverlayModel, profile: ui::StyleProfile) -> OverlayModel {
+    let cols = model
+        .rows
+        .iter()
+        .map(|row| row.title.chars().count() as u32)
+        .max()
+        .unwrap_or(1);
+    let count = model.rows.len() as u32;
+    model.width = 2 * ui::PAD_X
+        + ui::ICON
+        + ui::ICON_GAP
+        + cols * ui::TEXT_W
+        + ui::HINT_GAP
+        + ui::HINT_COLS * ui::TEXT_W;
+    model.height = ui::card_height_rhythm(profile.rhythm, count);
+    model.profile = profile;
+    model
 }
 
 fn scenarios(
@@ -327,16 +492,44 @@ fn scenarios(
     // default `rows` budget; then the same 30-row list at the setting's
     // floor and ceiling (overlay-density).
     let rows = ui::DEFAULT_ROWS;
-    let head = windowed(15, 0, rows, None, icons);
-    let interior = windowed(15, 7, rows, Some(head.viewport), icons);
-    let bottom = windowed(15, 14, rows, Some(interior.viewport), icons);
+    let head = windowed(15, 0, rows, None, icons, ui::StyleProfile::default());
+    let interior = windowed(
+        15,
+        7,
+        rows,
+        Some(head.viewport),
+        icons,
+        ui::StyleProfile::default(),
+    );
+    let bottom = windowed(
+        15,
+        14,
+        rows,
+        Some(interior.viewport),
+        icons,
+        ui::StyleProfile::default(),
+    );
     for model in [
         head,
         interior,
         bottom,
-        windowed(30, 15, rows, None, icons),
-        windowed(30, 15, ui::ROWS_MIN, None, icons),
-        windowed(30, 15, ui::ROWS_MAX, None, icons),
+        windowed(30, 15, rows, None, icons, ui::StyleProfile::default()),
+        windowed(
+            30,
+            15,
+            ui::ROWS_MIN,
+            None,
+            icons,
+            ui::StyleProfile::default(),
+        ),
+        windowed(
+            30,
+            15,
+            ui::ROWS_MAX,
+            None,
+            icons,
+            ui::StyleProfile::default(),
+        ),
     ] {
         sheet.push(Scenario {
             model,
