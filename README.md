@@ -171,6 +171,8 @@ the GitHub org. A Launchpad PPA and Flathub are on the roadmap without dates
 
 ## Documentation
 
+- [Project website](https://l1br3-io.github.io/cosmic-ext-airlock/) — the
+  front door: landing page plus the three user docs, mirrored
 - [How the switcher behaves](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/how-it-works.md)
 - [Per-workspace settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md)
 - [Troubleshooting](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/troubleshooting.md)

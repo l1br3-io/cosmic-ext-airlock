@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings — Airlock</title>
+<meta name="description" content="Airlock's per-workspace configuration: opt workspaces out of isolation, pick the switcher's card theme, and set how many windows the card keeps in view.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <p class="brand">Airlock</p>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="settings.html" aria-current="page">Settings</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="https://github.com/l1br3-io/cosmic-ext-airlock">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <h1>Settings</h1>
+    <p>By default, Airlock seals Alt+Tab to the current workspace. A config
+    file can opt individual workspaces out: there the switcher lists every
+    non-minimized window across <strong>all</strong> workspaces,
+    most-recently-used first, while workspaces without an entry stay isolated
+    exactly as before. The same file also picks the switcher's card color —
+    light, dark, or following the desktop — and how many windows the card
+    keeps in view.</p>
+    <p>Airlock reads the file; you write it. Airlock never creates, renames,
+    or rearranges workspaces — names and positions come from COSMIC itself.</p>
+
+    <section id="the-file">
+      <h2>The file</h2>
+      <pre><code>~/.config/airlock/config.toml</code></pre>
+      <p>More precisely: <code>airlock/config.toml</code> under an absolute
+      <code>$XDG_CONFIG_HOME</code> when one is set, else under
+      <code>$HOME/.config</code> — the same rule the installer uses. No file
+      (or an empty one) means every workspace isolated: the default behavior,
+      nothing to configure.</p>
+    </section>
+
+    <section id="example">
+      <h2>Example</h2>
+      <pre><code># ~/.config/airlock/config.toml — Airlock reads, you write.
+# Workspaces without an entry keep the default: isolated.
+
+theme = "auto"         # match the desktop's dark/light mode (the default)
+rows = 8               # windows the card keeps in view (the default)
+
+[[workspace]]
+name = "code"          # matches a workspace COSMIC reports as named "code"
+isolated = true        # the default — shown for completeness
+
+[[workspace]]
+index = 2              # the 2nd workspace in COSMIC's order, named or not
+isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
+    </section>
+
+    <section id="keys">
+      <h2>Keys</h2>
+      <p>Each <code>[[workspace]]</code> entry takes exactly one reference
+      plus an optional flag:</p>
+      <table>
+        <thead>
+          <tr><th>Key</th><th>Type</th><th>Meaning</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>name</code></td><td>string</td><td>Matches a workspace COSMIC reports with exactly this name</td></tr>
+          <tr><td><code>index</code></td><td>whole number ≥ 1</td><td>Matches the workspace at this 1-based position</td></tr>
+          <tr><td><code>isolated</code></td><td>boolean</td><td><code>true</code> (default): only this workspace's windows; <code>false</code>: all windows, MRU</td></tr>
+        </tbody>
+      </table>
+      <p>An entry needs <code>name</code> or <code>index</code> — never
+      both.</p>
+      <p>The two top-level keys: <code>theme</code> picks the card (see
+      <a href="#theme">Theme</a>); <code>rows</code> picks how many windows it
+      keeps in view (see <a href="#rows">Rows</a>).</p>
+    </section>
+
+    <section id="referencing-workspaces">
+      <h2>Referencing workspaces</h2>
+      <ul>
+        <li><strong>Name-first.</strong> A named workspace matches
+        <code>name</code> rules before <code>index</code> rules.
+        <code>index</code> is the fallback (and covers unnamed workspaces,
+        which have nothing to match by name).</li>
+        <li><strong>A <code>name</code> rule follows the name, not the
+        workspace.</strong> Names are read live on every press: rename
+        <code>code</code> to <code>dev</code> in COSMIC and the rule stops
+        matching that workspace on the next invocation — and matches
+        whichever workspace later takes the name <code>code</code>.</li>
+        <li><strong>Positions shift with the grid.</strong>
+        <code>index</code> is the workspace's 1-based place in COSMIC's order
+        (sorted by grid coordinates). Creating, removing, or moving
+        workspaces re-points an <code>index</code> rule at whatever now sits
+        there. Prefer <code>name</code> for workspaces you have named.</li>
+        <li><strong>Out-of-range <code>index</code> matches nothing</strong> —
+        that workspace falls back to the isolated default.</li>
+        <li><strong>Duplicates are allowed; the last entry wins.</strong> If
+        several entries reference the same workspace, the one latest in file
+        order applies. No error.</li>
+        <li><strong>No match at all</strong> → the workspace stays isolated.
+        An entry can only opt out, never opt others in.</li>
+      </ul>
+    </section>
+
+    <section id="theme">
+      <h2>Theme</h2>
+      <p><code>theme</code> picks the card the switcher paints — the
+      near-opaque panel the window list sits on. Three values:</p>
+      <ul>
+        <li><strong><code>"auto"</code> (default)</strong> — follow the
+        COSMIC system dark/light preference: a dark-mode desktop paints the
+        dark card, a light-mode desktop the light one. The preference is
+        checked each time a gesture starts, so flipping dark mode — in COSMIC
+        Settings or on a schedule — shows up on the next
+        <kbd>Alt</kbd>+<kbd>Tab</kbd>. No daemon restart.</li>
+        <li><strong><code>"dark"</code></strong> — always the dark card,
+        whatever the desktop prefers. The escape hatch for the previous
+        always-dark behavior.</li>
+        <li><strong><code>"light"</code></strong> — always the light card.</li>
+      </ul>
+      <p>Theme can never break switching. An unreadable system preference
+      paints the dark card (today's look) with one diagnostic in the daemon
+      log; a malformed <code>theme</code> value rides the same last-good
+      fallback as every other config error.</p>
+      <p>And like every setting, <code>theme</code> is read when a gesture
+      starts. An edit mid-gesture changes nothing until the next press — a
+      session keeps the card it was opened with until <kbd>Alt</kbd> is
+      released.</p>
+    </section>
+
+    <section id="rows">
+      <h2>Rows</h2>
+      <p><code>rows</code> sets how many windows the card keeps in view on a
+      long list — a whole number from 3 to 10, default 8. The
+      <code>…</code> continuation rows at truncated edges ride on top of
+      that budget, never inside it: with the default, a long list shows
+      eight windows mid-list, nine at either end, and a list of ten or
+      fewer shows every window with no <code>…</code> at all.</p>
+      <p>The card grows by two rows once the list outgrows <code>rows</code>
+      (the <code>…</code> slots). At the default that is 576 logical pixels
+      tall — fine on any 100%-scaled display and on a 1440p screen at 200%;
+      a 1080p panel at 200% (a 540-logical screen) is the one configuration
+      that wants less — <code>rows = 7</code> keeps the card inside that
+      height.</p>
+      <p>Like every setting, <code>rows</code> is read when a gesture starts.
+      An edit mid-gesture changes nothing until the next press; a session
+      keeps the budget it opened with until <kbd>Alt</kbd> is released. A
+      value outside 3–10 (or a non-integer) is named in a diagnostic and the
+      last-good settings apply.</p>
+    </section>
+
+    <section id="what-isolated-false-changes">
+      <h2>What <code>isolated = false</code> changes</h2>
+      <p><kbd>Alt</kbd>+<kbd>Tab</kbd> /
+      <kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Tab</kbd> on that workspace lists
+      every non-minimized window across all workspaces in MRU order (sticky
+      windows are naturally included everywhere). Committing a selection
+      parked on another workspace switches to it and focuses it — the gesture
+      can take you across workspaces, like the stock switcher. Mid-gesture
+      the rules of the core still hold: the list is never swapped under a
+      held <kbd>Alt</kbd>, and a workspace switch voids the session.</p>
+    </section>
+
+    <section id="live-apply">
+      <h2>Live apply</h2>
+      <p>The daemon checks the file's modification time each time a gesture
+      starts. Edit the config while the daemon runs and the next
+      <kbd>Alt</kbd>+<kbd>Tab</kbd> uses it — no restart, no re-login. The
+      check happens only at gesture start: a session keeps the scope it
+      opened with until <kbd>Alt</kbd> is released.</p>
+    </section>
+
+    <section id="errors-and-limits">
+      <h2>Errors and limits</h2>
+      <p>A bad config never breaks switching:</p>
+      <ul>
+        <li><strong>Missing or empty file</strong> — every workspace
+        isolated, silently.</li>
+        <li><strong>Malformed file</strong> — the daemon logs a diagnostic
+        naming the offending line/column or the 1-based entry number, and
+        keeps using the last-good settings (defaults, if none ever parsed).
+        Editing the file again re-applies it once valid.</li>
+        <li><strong>Bad entries</strong> — both <code>name</code> and
+        <code>index</code>, neither, <code>index = 0</code> or negative, or a
+        wrong type (<code>name = 3</code>, <code>isolated = "yes"</code>)
+        each name their entry number.</li>
+        <li><strong><code>[workspace]</code> with single brackets</strong> is
+        rejected: entries must be <code>[[workspace]]</code> (an array of
+        tables). One <code>[workspace]</code> table cannot carry several
+        rules anyway.</li>
+        <li><strong>A bad <code>theme</code> value</strong> — a wrong type
+        (<code>theme = 3</code>) or an unknown string
+        (<code>theme = "blue"</code>) — is named in a diagnostic and the
+        last-good settings apply, like any malformed edit.</li>
+        <li><strong>A bad <code>rows</code> value</strong> — a wrong type
+        (<code>rows = 8.5</code>, <code>rows = "8"</code>) or a number
+        outside 3–10 — is named in a diagnostic ("must be a whole number" /
+        "must be between 3 and 10") and the last-good settings apply, like
+        any malformed edit.</li>
+        <li><strong>Unknown keys are ignored</strong> — extra keys inside an
+        entry cost nothing.</li>
+        <li><strong>Size cap</strong> — files over 1 MiB are ignored entirely
+        (defaults apply); the read runs on the gesture path and must stay
+        cheap.</li>
+      </ul>
+    </section>
+
+    <section id="verifying-it">
+      <h2>Verifying it</h2>
+      <ul>
+        <li>Edit the config while the daemon runs; the next
+        <kbd>Alt</kbd>+<kbd>Tab</kbd> reflects it</li>
+        <li>Rename a matched workspace in COSMIC; the entry follows the name
+        on the next press</li>
+        <li>On an <code>isolated = false</code> workspace,
+        <kbd>Alt</kbd>+<kbd>Tab</kbd> walks every non-minimized window in MRU
+        order, and committing one parked elsewhere switches to it</li>
+        <li>Set <code>theme = "light"</code> on a dark-mode desktop; the next
+        <kbd>Alt</kbd>+<kbd>Tab</kbd> paints the light card
+        (<code>"dark"</code> paints the dark card on a light-mode desktop)</li>
+        <li>With <code>theme = "auto"</code>, flip COSMIC's dark mode; the
+        next <kbd>Alt</kbd>+<kbd>Tab</kbd> already matches</li>
+        <li>Set <code>rows = 10</code>, then <code>rows = 3</code>; the next
+        <kbd>Alt</kbd>+<kbd>Tab</kbd> keeps that many windows in view,
+        <code>…</code> rows riding on top — no restart</li>
+      </ul>
+    </section>
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>Airlock is third-party software for the COSMIC™ desktop. It is not
+    official COSMIC software and is not affiliated with or endorsed by
+    System76.</p>
+    <p>GPL-3.0-only ·
+    <a href="https://github.com/l1br3-io/cosmic-ext-airlock">GitHub</a> ·
+    <a href="https://crates.io/crates/cosmic-ext-airlock">crates.io</a> ·
+    <a href="https://github.com/l1br3-io/cosmic-ext-airlock/releases">releases</a></p>
+  </div>
+</footer>
+</body>
+</html>

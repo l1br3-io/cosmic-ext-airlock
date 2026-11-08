@@ -1,0 +1,38 @@
+# The project website (site/) — GitHub Pages, deployed on every push to
+# main that touches the site, the app icon (the favicon's source), or this
+# workflow. No build step: site/ is hand-written HTML/CSS, uploaded
+# verbatim. First deploy needs Pages enabled once in repo settings
+# (Source: GitHub Actions) — the PR body flags that human step.
+name: site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'res/icons/**'
+      - '.github/workflows/site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

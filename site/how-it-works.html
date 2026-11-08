@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How the switcher behaves — Airlock</title>
+<meta name="description" content="The full-fidelity description of Airlock's overlay and its gestures — the keyboard gesture, the pointer gesture, the frozen list, the card, workspace scoping, the extra keys, and the daemon.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <p class="brand">Airlock</p>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="how-it-works.html" aria-current="page">How it works</a>
+      <a href="settings.html">Settings</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="https://github.com/l1br3-io/cosmic-ext-airlock">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <h1>How the switcher behaves</h1>
+    <p>The full-fidelity description of the overlay and its gestures — the
+    <a href="index.html">README</a> keeps the short version. Per-workspace
+    configuration lives in
+    <a href="settings.html">settings</a>;
+    the release-by-release verification of this behavior is the
+    <a href="https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/hardware-checklist.md">hardware
+    checklist</a>.</p>
+
+    <section id="the-keyboard-gesture">
+      <h2>The keyboard gesture</h2>
+      <p>Hold <kbd>Alt</kbd> and tap <kbd>Tab</kbd>: an overlay lists the
+      windows of the current workspace in most-recently-used order.
+      <kbd>Tab</kbd> walks forward, <kbd>Shift</kbd>+<kbd>Tab</kbd> walks
+      back, and the arrow keys step too — <kbd>Up</kbd> or <kbd>Left</kbd>
+      back, <kbd>Down</kbd> or <kbd>Right</kbd> forward. Releasing
+      <kbd>Alt</kbd> focuses the selection and dismisses the overlay;
+      <kbd>Enter</kbd> confirms the same outcome without letting go of
+      <kbd>Alt</kbd>. <kbd>Escape</kbd> dismisses without switching. A quick
+      tap — released before the overlay even appears — still switches.
+      <kbd>Ctrl</kbd>+<kbd>1</kbd> through <kbd>Ctrl</kbd>+<kbd>9</kbd> —
+      keypad digits included — switch to that row's window at once, the same
+      outcome as clicking it; the first nine rows show their key at the right
+      edge, and deeper rows show none. Without <kbd>Ctrl</kbd>, the number
+      row does nothing.</p>
+    </section>
+
+    <section id="the-pointer-gesture">
+      <h2>The pointer gesture</h2>
+      <p>The mouse drives the same gesture while the overlay is up. Crossing
+      between rows moves the selection with the cursor; wherever the pointer
+      first lands — including resting right where the card appears — claims
+      nothing. <strong>Clicking</strong> a row focuses that window and
+      dismisses the overlay — the same outcome as releasing <kbd>Alt</kbd>.
+      The <strong>scroll wheel</strong> steps the list one row per notch,
+      forward or back, wrapping like <kbd>Tab</kbd>, and a slow scan never
+      times the overlay out.</p>
+    </section>
+
+    <section id="the-frozen-list">
+      <h2>The frozen list</h2>
+      <p>The list is frozen for the gesture: a window that opened after the
+      overlay appeared is not on it, so neither the pointer, the wheel, nor a
+      number key can reach it mid-gesture.</p>
+    </section>
+
+    <section id="the-card">
+      <h2>The card</h2>
+      <p>Each row shows the window's application icon — resolved through the
+      same desktop-entry and icon-theme pipeline the COSMIC launcher uses —
+      next to its title; an application with no themed icon falls back to a
+      generic window glyph. The card is a rounded rectangle with a hairline
+      border, at most 748 px wide, with the selected row highlighted; text
+      renders at 12 px and stays sharp on HiDPI displays (the overlay renders
+      at the output's scale). The <code>theme</code> setting picks the card —
+      <code>auto</code> (the default) follows the desktop's dark/light
+      preference; see
+      <a href="settings.html#theme">settings</a>.</p>
+    </section>
+
+    <section id="workspace-scoping">
+      <h2>Workspace scoping</h2>
+      <p>Only windows whose workspace set includes the current workspace are
+      listed: sticky windows appear everywhere, minimized windows nowhere, and
+      a window parked on another workspace can never be focused through
+      Airlock. The isolation is per-workspace configurable: a workspace can
+      opt into the global switcher through a config file — see
+      <a href="settings.html">settings</a>.</p>
+    </section>
+
+    <section id="the-extra-keys">
+      <h2>The extra keys</h2>
+      <p><code>airlock install</code> also claims three more keys. Hold
+      <kbd>Alt</kbd> and tap <kbd>grave</kbd> (the key above <kbd>Tab</kbd>):
+      the overlay lists only the current application's windows, MRU order —
+      the same gesture, the same isolation rule (<code>isolated = false</code>
+      widens the list to that application's windows everywhere).
+      <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>grave</kbd> opens it stepping
+      backwards. An application with fewer than two windows in scope does
+      nothing — there is nothing to cycle. <kbd>Alt</kbd>+<kbd>Esc</kbd>
+      switches to the MRU-second window under the same scope — the window a
+      quick Alt+Tab tap would reach — with no overlay at all.</p>
+    </section>
+
+    <section id="the-daemon">
+      <h2>The daemon</h2>
+      <p>A small daemon keeps a live snapshot of the compositor state; the
+      keybind stubs are milliseconds-thin and auto-start the daemon on first
+      press. The overlay is software-rendered — no GPU required.</p>
+    </section>
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>Airlock is third-party software for the COSMIC™ desktop. It is not
+    official COSMIC software and is not affiliated with or endorsed by
+    System76.</p>
+    <p>GPL-3.0-only ·
+    <a href="https://github.com/l1br3-io/cosmic-ext-airlock">GitHub</a> ·
+    <a href="https://crates.io/crates/cosmic-ext-airlock">crates.io</a> ·
+    <a href="https://github.com/l1br3-io/cosmic-ext-airlock/releases">releases</a></p>
+  </div>
+</footer>
+</body>
+</html>

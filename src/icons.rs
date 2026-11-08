@@ -12,7 +12,9 @@
 //! SVG-only app icons), then SVG rasterization via `resvg` or PNG
 //! decode via `png`. Benchmarked locally at 60 µs–1.2 ms per icon,
 //! always at daemon start or when a window first appears — never on
-//! the press path.
+//! the press path. A themed miss gets one extra ladder over the two
+//! Flatpak export icon roots, which the theme scan only sees when the
+//! session's `XDG_DATA_DIRS` carries them (see [`theme_lookup`]).
 //!
 //! Degradation is honest and one-shot per app: an app_id that resolves
 //! to nothing is cached as `None` and the overlay draws the generic
@@ -193,12 +195,95 @@ impl Cache {
 /// (libcosmic's default; its `Inherits=` walks Pop → hicolor), hicolor
 /// fallback and `/usr/share/pixmaps` built in. `with_cache` keeps the
 /// theme scan to once per name.
+///
+/// A miss falls through to [`flatpak_export_lookup`]: flatpak-shipped
+/// icons land in the export roots below, which the crates.io theme scan
+/// sees only when the session's `XDG_DATA_DIRS` carries them — the same
+/// not-always guarantee [`Cache::new`] already compensates for on the
+/// desktop-entry side. The entry corpus is flatpak-aware, so an entry
+/// can name an icon the theme scan cannot see; without the fallback
+/// every such app degrades to the glyph (Obsidian's was the report).
 fn theme_lookup(name: &str, size: u16) -> Option<PathBuf> {
     freedesktop_icons::lookup(name)
         .with_theme("Cosmic")
         .with_size(size)
         .with_cache()
         .find()
+        .or_else(|| flatpak_export_lookup(&flatpak_icon_roots(), name, size))
+}
+
+/// The icon-theme halves of the two Flatpak export locations
+/// [`Cache::new`] already walks for desktop entries — user installs
+/// first, system installs second, mirroring `XDG_DATA_DIRS` precedence.
+fn flatpak_icon_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(Path::new(&home).join(".local/share/flatpak/exports/share/icons"));
+    }
+    roots.push(PathBuf::from("/var/lib/flatpak/exports/share/icons"));
+    roots
+}
+
+/// Resolves one icon name against Flatpak export icon roots, in
+/// standard theme layout: `<root>/<theme>/<size-dir>/apps/<name>.png`
+/// (or `.svg`, PNG first like the themed scan — the renderer note in
+/// `docs/research/switcher-ux-and-icons.md` §3.3). Size ladder: the
+/// exact `WxH`, then `scalable` SVG, then the nearest size — a Flatpak
+/// that exports only its 512×512 master still resamples honestly.
+/// App-icon names only, so only the `apps` context is walked.
+fn flatpak_export_lookup(roots: &[PathBuf], name: &str, size: u16) -> Option<PathBuf> {
+    let mut best: Option<((u32, u32), PathBuf)> = None;
+    for root in roots {
+        let Ok(themes) = fs::read_dir(root) else {
+            continue;
+        };
+        for theme in themes.flatten() {
+            let Ok(sizes) = fs::read_dir(theme.path()) else {
+                continue;
+            };
+            for size_dir in sizes.flatten() {
+                let dir = size_dir.path().join("apps");
+                let distance = match size_dir.file_name().to_str() {
+                    Some(s) => size_distance(s, size),
+                    None => continue,
+                };
+                for ext in ["png", "svg"] {
+                    let candidate = dir.join(format!("{name}.{ext}"));
+                    if !candidate.is_file() {
+                        continue;
+                    }
+                    // PNG first within one size dir: same rank class, the
+                    // svg pays +1 so the png sorts ahead at equal distance.
+                    let svg_penalty = u32::from(ext == "svg");
+                    let rank = (distance.0, distance.1 + svg_penalty);
+                    if best.as_ref().is_none_or(|(b, _)| rank < *b) {
+                        best = Some((rank, candidate));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+/// Rank of one size directory against the requested `size`: exact match
+/// is `(0, 0)`, a `scalable` directory is `(1, 0)` (any SVG rasterizes
+/// to any side), a fixed `WxH` is `(2, |side − size|)`.
+fn size_distance(dir_name: &str, size: u16) -> (u32, u32) {
+    if dir_name == "scalable" {
+        return (1, 0);
+    }
+    let Some((w, h)) = dir_name.split_once('x') else {
+        return (u32::MAX, 0); // not a size directory; ranked last
+    };
+    let (Ok(w), Ok(h)) = (w.parse::<u32>(), h.parse::<u32>()) else {
+        return (u32::MAX, 0); // ditto
+    };
+    if w == u32::from(size) && h == u32::from(size) {
+        (0, 0)
+    } else {
+        (2, w.abs_diff(u32::from(size)))
+    }
 }
 
 /// Renders an SVG icon into a `side × side` bitmap, fitted and centered
@@ -389,7 +474,12 @@ mod tests {
 
     fn png_fixture(name: &str, side: u8, color: [u8; 4]) -> PathBuf {
         let path = temp_path(name);
-        let file = fs::File::create(&path).expect("create png fixture");
+        write_png(&path, side, color);
+        path
+    }
+
+    fn write_png(path: &Path, side: u8, color: [u8; 4]) {
+        let file = fs::File::create(path).expect("create png fixture");
         let mut encoder = png::Encoder::new(file, side as u32, side as u32);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
@@ -399,7 +489,28 @@ mod tests {
             rgba.extend_from_slice(&color);
         }
         writer.write_image_data(&rgba).expect("png pixels");
-        path
+    }
+
+    /// A Flatpak export icon root in a temp dir: each `(theme, size-dir,
+    /// ext)` row becomes `<root>/<theme>/<size-dir>/apps/<name>.<ext>`
+    /// with a red-half SVG or a solid PNG body — the standard layout a
+    /// Flatpak export ships. An empty `rows` builds no directories at
+    /// all, so the root reads as absent.
+    fn flatpak_root(root_name: &str, icon_name: &str, rows: &[(&str, &str, &str)]) -> PathBuf {
+        let root = std::env::temp_dir()
+            .join("airlock-icons")
+            .join(std::process::id().to_string())
+            .join(root_name);
+        for (theme, size_dir, ext) in rows {
+            let dir = root.join(theme).join(size_dir).join("apps");
+            std::fs::create_dir_all(&dir).expect("flatpak fixture dir");
+            let path = dir.join(format!("{icon_name}.{ext}"));
+            match *ext {
+                "svg" => fs::write(&path, RED_HALF_SVG).expect("write svg fixture"),
+                _ => write_png(&path, 16, [0x10, 0x20, 0x30, 0xFF]),
+            }
+        }
+        root
     }
 
     /// A desktop-entry corpus built from inline file bodies in a temp
@@ -798,6 +909,94 @@ mod tests {
         );
     }
 
+    /// Flatpak-shipped icons (the Obsidian report) sit outside the theme
+    /// scan whenever the session's `XDG_DATA_DIRS` lacks the export
+    /// roots; the fallback must serve them with the same size ladder the
+    /// themed scan would have — exact size first, PNG over SVG at one
+    /// size, scalable next, nearest size last.
+    #[test]
+    fn flatpak_export_serves_the_exact_size_png() {
+        let root = flatpak_root(
+            "flatpak-exact",
+            "md.obsidian.Obsidian",
+            &[("hicolor", "32x32", "png"), ("hicolor", "512x512", "png")],
+        );
+        let path = flatpak_export_lookup(&[root], "md.obsidian.Obsidian", 32).expect("exact size");
+        assert!(path.ends_with("32x32/apps/md.obsidian.Obsidian.png"));
+    }
+
+    #[test]
+    fn flatpak_export_png_beats_svg_at_one_size() {
+        let root = flatpak_root(
+            "flatpak-png-first",
+            "md.obsidian.Obsidian",
+            &[("hicolor", "32x32", "svg"), ("hicolor", "32x32", "png")],
+        );
+        let path = flatpak_export_lookup(&[root], "md.obsidian.Obsidian", 32).expect("same size");
+        assert!(
+            path.ends_with("apps/md.obsidian.Obsidian.png"),
+            "png first within one size dir, got {path:?}"
+        );
+    }
+
+    #[test]
+    fn flatpak_export_scalable_serves_when_no_exact_size() {
+        let root = flatpak_root(
+            "flatpak-scalable",
+            "md.obsidian.Obsidian",
+            &[("hicolor", "scalable", "svg")],
+        );
+        let path = flatpak_export_lookup(&[root], "md.obsidian.Obsidian", 32).expect("scalable");
+        assert!(path.ends_with("scalable/apps/md.obsidian.Obsidian.svg"));
+    }
+
+    #[test]
+    fn flatpak_export_nearest_size_serves_a_single_large_png() {
+        let root = flatpak_root(
+            "flatpak-nearest",
+            "md.obsidian.Obsidian",
+            &[("hicolor", "512x512", "png")],
+        );
+        let path = flatpak_export_lookup(&[root], "md.obsidian.Obsidian", 32).expect("nearest");
+        assert!(path.ends_with("512x512/apps/md.obsidian.Obsidian.png"));
+    }
+
+    /// Two roots (user installs, system installs) with the same icon:
+    /// the earlier root wins, mirroring `XDG_DATA_DIRS` precedence.
+    #[test]
+    fn flatpak_export_user_root_precedes_the_system_root() {
+        let user = flatpak_root(
+            "flatpak-user",
+            "md.obsidian.Obsidian",
+            &[("hicolor", "32x32", "png")],
+        );
+        let system = flatpak_root(
+            "flatpak-system",
+            "md.obsidian.Obsidian",
+            &[("hicolor", "32x32", "png")],
+        );
+        let path =
+            flatpak_export_lookup(&[user, system], "md.obsidian.Obsidian", 32).expect("first root");
+        assert!(
+            path.starts_with(
+                std::env::temp_dir()
+                    .join("airlock-icons")
+                    .join(std::process::id().to_string())
+                    .join("flatpak-user")
+            ),
+            "user root must win, got {path:?}"
+        );
+    }
+
+    #[test]
+    fn flatpak_export_misses_are_none() {
+        let root = flatpak_root("flatpak-empty", "md.obsidian.Obsidian", &[]);
+        assert!(
+            flatpak_export_lookup(&[root], "md.obsidian.Obsidian", 32).is_none(),
+            "an absent or icon-less root is a plain miss"
+        );
+    }
+
     /// The brand hatch icon ships in-repo and must rasterize at every
     /// overlay-relevant size (it also proves the asset is valid SVG).
     #[test]
@@ -829,6 +1028,47 @@ mod tests {
         assert!(
             path.is_some(),
             "utilities-terminal should resolve through the Cosmic chain"
+        );
+    }
+
+    /// Integration against the host's real Flatpak exports — the Obsidian
+    /// shape: an icon that ships only through an export root, which the
+    /// theme scan sees only when `XDG_DATA_DIRS` carries them. On a host
+    /// without exported icons this is a silent no-op; run the suite with
+    /// the export roots stripped from `XDG_DATA_DIRS` to exercise the
+    /// fallback rather than the themed scan. The VM pass remains the gate
+    /// that matters.
+    #[test]
+    fn theme_lookup_serves_an_exported_flatpak_icon() {
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let hicolor = Path::new(&home).join(".local/share/flatpak/exports/share/icons/hicolor");
+        let found = fs::read_dir(&hicolor).ok().and_then(|sizes| {
+            sizes.flatten().find_map(|size_dir| {
+                let apps = fs::read_dir(size_dir.path().join("apps")).ok()?;
+                apps.flatten().find_map(|icon| {
+                    let file = icon.file_name();
+                    let name = file.to_str()?.strip_suffix(".png")?;
+                    Some((name.to_owned(), size_dir.file_name()))
+                })
+            })
+        });
+        let Some((name, size_dir)) = found else {
+            return;
+        };
+        // A fixed-size export pins its own size; scalable-only hosts skip
+        // (the fixture ladder above covers that branch).
+        let Some(size) = size_dir
+            .to_string_lossy()
+            .split_once('x')
+            .and_then(|(w, _)| w.parse::<u16>().ok())
+        else {
+            return;
+        };
+        assert!(
+            theme_lookup(&name, size).is_some(),
+            "exported icon {name:?} must resolve even when the theme scan cannot see it"
         );
     }
 }

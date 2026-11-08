@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting — Airlock</title>
+<meta name="description" content="Fixes for Airlock's switcher: shortcuts reset after installing 0.1.0, Alt+Tab doing nothing, another tool fighting over WindowSwitcher, dead extra keys, daemon restarts, and a stuck overlay.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <p class="brand">Airlock</p>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="settings.html">Settings</a>
+      <a href="troubleshooting.html" aria-current="page">Troubleshooting</a>
+      <a href="https://github.com/l1br3-io/cosmic-ext-airlock">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <h1>Troubleshooting</h1>
+    <ul>
+      <li><strong>Every shortcut reset to defaults right after installing
+      (0.1.0).</strong> Airlock 0.1.0 wrote its extra bindings with a keysym
+      form COSMIC rejects (<code>key: Some(..)</code> instead of
+      <code>key: "grave"</code>). cosmic-comp then discarded the whole
+      <code>custom</code> shortcuts file and ran factory defaults for the
+      live session — that file holds <em>all</em> your customizations, so
+      everything looked reset. <strong>Nothing was deleted</strong>: your
+      entries are still on disk, and either fix restores them immediately,
+      no re-login:
+        <ul>
+          <li><code>airlock install --uninstall</code> (any version) puts
+          your file back byte-exactly, or</li>
+          <li>upgrade to 0.1.1 and re-run <code>airlock install</code> — it
+          recognizes 0.1.0's malformed entries, replaces them with valid
+          ones, and leaves your entries untouched.</li>
+        </ul>
+      Only exception: if you saved a change in Settings → Shortcuts while
+      the session showed defaults, that one save overwrote the file with
+      what the screen showed.</li>
+      <li><strong><kbd>Alt</kbd>+<kbd>Tab</kbd> does nothing.</strong> First
+      press may be starting the daemon (~340 ms cold) — press again. If it
+      persists, <code>airlock list</code> names any missing protocol; check
+      <code>~/.cargo/bin</code> is on your session <code>PATH</code>.</li>
+      <li><strong>Another tool fights over WindowSwitcher.</strong> The
+      user-level override is one slot; last writer wins. Re-run
+      <code>airlock install</code> to take it back; <code>--uninstall</code>
+      then restores whatever Airlock itself backed up.</li>
+      <li><strong><kbd>Alt</kbd>+<kbd>grave</kbd> (the key above
+      <kbd>Tab</kbd>) or <kbd>Alt</kbd>+<kbd>Esc</kbd> dead after
+      install.</strong> The key was already bound; install skipped it and
+      said so in its output. Free it in Settings → Input → Keyboard →
+      Shortcuts → Custom, then re-run <code>airlock install</code>.</li>
+      <li><strong>After logout or a compositor crash.</strong> The daemon
+      exits by design; the next press spawns a fresh one, and a stale socket
+      self-heals.</li>
+      <li><strong>Overlay sticks.</strong> A 30 s hard deadline always
+      releases the grab, so this should not happen — if it does:
+      <code>pkill -x airlock</code>, then press
+      <kbd>Alt</kbd>+<kbd>Tab</kbd> to restart clean.</li>
+    </ul>
+    <p>Every release build goes through the
+    <a href="https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/hardware-checklist.md">hardware
+    verification checklist</a>; if something behaves differently on your
+    machine, that checklist tells you what to report.</p>
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>Airlock is third-party software for the COSMIC™ desktop. It is not
+    official COSMIC software and is not affiliated with or endorsed by
+    System76.</p>
+    <p>GPL-3.0-only ·
+    <a href="https://github.com/l1br3-io/cosmic-ext-airlock">GitHub</a> ·
+    <a href="https://crates.io/crates/cosmic-ext-airlock">crates.io</a> ·
+    <a href="https://github.com/l1br3-io/cosmic-ext-airlock/releases">releases</a></p>
+  </div>
+</footer>
+</body>
+</html>
