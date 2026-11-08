@@ -30,10 +30,11 @@
 //!
 //! ```sh
 //! `--horizontal` renders the horizontal band family instead
-//! (the `card-layout` module's CL4 sheet input): the flat band at its
-//! auto budget and both pinned extremes, the trailing `…` tile, and a
-//! selected mid-band tile — candidate tokens (pitch, icon, card
-//! height, badge placement) judged on this image.
+//! (the `card-layout` module's CL4 sheet input): the band at CL4's
+//! acceptance counts (one, three, the 1920-auto eight, the pinned
+//! twelve), a swept mid-band selection, the trailing `…` tile, and
+//! the 48-column title every tile clamps — tokens (pitch, icon, card
+//! height, badge placement) frozen on this sheet 2026-11-08.
 //!
 //! cargo run --example overlay-preview -- preview.png [--scale 2] [--light] [--geometry] [--horizontal] [--system-font res/test-fonts]
 //! ```
@@ -443,9 +444,11 @@ fn band_icons(scale: u32, palette: &ui::Palette) -> Vec<Option<Rc<IconBitmap>>> 
 
 /// The horizontal band family (card-layout): the flat band as
 /// `overlay_model_horizontal` composes it — `band_window` over the
-/// selection, the trailing `…` tile, the tile grid's width — at the
-/// auto budget and both pinned extremes. Candidate tokens judged on
-/// the sheet; CL4 freezes them.
+/// selection, the trailing `…` tile, the tile grid's width — at CL4's
+/// acceptance counts (one, three, the 1920-auto eight, the pinned
+/// twelve), a swept mid-band selection, and the 48-column title every
+/// tile clamps to its own budget. The tokens these render froze on
+/// this sheet, 2026-11-08, every value kept as built.
 fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Vec<Scenario> {
     let titles: Vec<String> = (0..16)
         .map(|index| format!("Window {index} — the band case"))
@@ -463,13 +466,14 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
                 ..RowModel::default()
             }
         };
-    let band = |count: usize, sel: usize, tiles: usize| -> OverlayModel {
+    let band = |list: &[String], sel: usize, tiles: usize| -> OverlayModel {
+        let count = list.len();
         let viewport = ui::band_window(count, sel, tiles, None);
         let mut rows = Vec::with_capacity(viewport.content + viewport.bottom as usize);
         for position in 0..viewport.content {
             let index = viewport.start + position;
             rows.push(band_row(
-                &titles[index],
+                &list[index],
                 icons[index % icons.len()].clone(),
                 index == sel,
                 position,
@@ -494,17 +498,26 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
             horizontal: true,
         }
     };
-    let auto = ui::resolved_tiles(ui::ColumnsSetting::Auto, 1920) as usize;
+    // The 48-column clamp input: the tile's own budget (eleven columns
+    // at the frozen pitch) ellipsizes every tile that carries it.
+    let long = "This title is exactly forty-eight columns long —";
+    let long_titles: Vec<String> = std::iter::repeat_n(long.to_string(), 5).collect();
     [
-        // A short list: whole, no dots, the selection mid-band.
-        band(3, 1, auto),
-        // The working band at auto: hints to nine, dots past it.
-        band(16, 1, auto),
+        // A lone window: one tile, selected, its badge the only hint.
+        band(&titles[..1], 0, 8),
+        // Three whole tiles, the middle selected — the hint badge over
+        // the selection fill at its tightest.
+        band(&titles[..3], 1, 3),
+        // The working band (the 1920 auto budget): hints to nine,
+        // dots past it.
+        band(&titles, 1, 8),
         // A mid-band selection after a sweep: the follow window.
-        band(16, 9, auto),
+        band(&titles, 9, 8),
         // The pinned extremes: three tiles and twelve.
-        band(16, 0, ui::COLUMNS_MIN),
-        band(16, 0, ui::COLUMNS_MAX),
+        band(&titles, 0, ui::COLUMNS_MIN),
+        band(&titles, 0, ui::COLUMNS_MAX),
+        // The 48-column title: every tile clamps it, selection mid-band.
+        band(&long_titles, 2, 5),
     ]
     .into_iter()
     .map(|model| Scenario {

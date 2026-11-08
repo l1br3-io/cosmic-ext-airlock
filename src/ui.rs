@@ -238,22 +238,24 @@ pub const COLUMNS_MIN: usize = 3;
 /// pitch (~140–160 px) already spans a 4-K output's logical width.
 pub const COLUMNS_MAX: usize = 12;
 
-// --- The horizontal band's candidate tokens (card-layout CL3) ----------
+// --- The horizontal band's tokens (card-layout; CL4-frozen) -----------
 //
-// Every value here is a preview-loop candidate, not a pin: CL4 judges
-// the sheet and freezes them (the spec's working ranges: tile
-// ~140–160 px wide, icon ~48 px, card ~200–260 px tall). Provenance
-// comments say "candidate"; the freeze rewrites them with its sheet
-// date, the overlay-density precedent.
+// Frozen 2026-11-08 on the CL4 sheet — both palettes over both
+// backdrops at native 1×, the acceptance scenarios (1/3/8/12 tiles,
+// the swept mid-band selection, the 48-column clamp, the hint badge
+// over the selection fill; the font8x8 floor judged on the same
+// scenarios) — every value kept as built, the overlay-density
+// precedent: the candidates read calm at glance scale and nothing
+// earned a move.
 
-/// One tile's width, logical px — a candidate inside the spec's
-/// 140–160 working range, on the 8-grid.
+/// One tile's width, logical px — the spec's 140–160 working range on
+/// the 8-grid, frozen on the CL4 sheet 2026-11-08.
 pub const TILE_W: u32 = 152;
 /// Gap between tiles: selection fills never merge across it.
 pub const TILE_GAP: u32 = 8;
-/// The tile's app icon side — the spec's ~48 working range (larger
-/// than the row's 32: the tile is the card's whole content, the row's
-/// icon one column of several).
+/// The tile's app icon side — the spec's ~48 working range, frozen on
+/// the CL4 sheet 2026-11-08 (larger than the row's 32: the tile is the
+/// card's whole content, the row's icon one column of several).
 pub const TILE_ICON: u32 = 48;
 /// The band card's horizontal and vertical padding, logical px.
 pub const TILE_PAD_X: u32 = 24;
@@ -265,7 +267,12 @@ pub const TILE_TITLE_GAP: u32 = 12;
 /// The tile's content cell: badge row, icon, one title line — the
 /// selection fill's extent.
 pub const TILE_CELL_H: u32 = TEXT_H + TILE_BADGE_GAP + TILE_ICON + TILE_TITLE_GAP + TEXT_H;
-/// The horizontal card's height: the tile cell plus the card padding.
+/// The horizontal card's height: the tile cell plus the card padding —
+/// 168 logical px, frozen on the CL4 sheet 2026-11-08. Below the
+/// spec's 200–260 working range by sheet judgment: the cell is
+/// content-driven (badge + 48-px icon + title = 88) and padding past
+/// 40 a side reads as dead air at glance scale — the strip hugs its
+/// content.
 pub const fn band_card_height() -> u32 {
     2 * TILE_PAD_Y + TILE_CELL_H
 }
@@ -278,7 +285,8 @@ pub const fn band_width(slots: u32) -> u32 {
 /// Inset of the badge and the clamped title from a tile's side.
 pub const TILE_TEXT_PAD: u32 = 8;
 /// `auto`'s share of the invoking output's logical width — the spec's
-/// ~66 % working range, two thirds exactly; a CL4 freeze candidate.
+/// ~66 % working range, two thirds exactly; frozen on the CL4 sheet
+/// 2026-11-08.
 pub const AUTO_FRACTION_NUM: u32 = 2;
 pub const AUTO_FRACTION_DEN: u32 = 3;
 /// The width `auto` resolves against when the invoking output's
@@ -2065,8 +2073,9 @@ fn border_ring(
 /// content tile carries the selection fill (its own rounded rect over
 /// the whole tile cell, the row band's own vocabulary), the app icon
 /// centered on the icon line, the clamped title beneath, and the Ctrl+N
-/// chord as a corner badge (a CL4-freeze candidate placement: top-left
-/// of the badge row, muted like every hint). The `…` tile paints its
+/// chord as a corner badge (top-left of the badge row, muted like every
+/// hint — placement frozen on the CL4 sheet, 2026-11-08). The `…` tile
+/// paints its
 /// muted glyph centered on the icon line and nothing else — no band,
 /// no icon, no title, no badge (a tile beyond addressability earns
 /// nothing but its dots).
@@ -2222,8 +2231,8 @@ fn render_band(
                 );
             }
         }
-        // The corner badge — a CL4-freeze candidate placement: the
-        // chord's own muted color, top-left of the tile's badge row.
+        // The corner badge — the chord's own muted color, top-left of
+        // the tile's badge row (CL4-frozen placement, 2026-11-08).
         if let Some(hint) = tile.hint {
             let label = hint.label();
             match &mut text {
