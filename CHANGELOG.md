@@ -73,6 +73,16 @@ observe, not internal mechanics.
   grouped (the tree flattens while a query stands), and the same-app
   view — because it narrows the frozen list, and it never re-derives
   that list mid-gesture. See docs/how-it-works.md — Type-to-filter.
+- **Close windows from the card** — Alt+minus (top-row or keypad) closes
+  the selected row's window; hovering a window row reveals an × at its
+  right edge that closes on click, the row's key hint yielding its
+  band. A group entry closes its app's front window — every row closes
+  what it activates. After each close the selection advances to the
+  next visible row and the card stays up for repeated closes; closing
+  the last eligible window dismisses the overlay. Alt+minus works in
+  every mode; the × is the column card's window-row affordance (never
+  group entries or `…` rows). See docs/how-it-works.md — Closing
+  windows.
 - **A starter config on install**: `airlock install` now drops a fully
   commented `~/.config/airlock/config.toml` — every setting documented,
   nothing enabled, so behavior is unchanged until you uncomment a line.

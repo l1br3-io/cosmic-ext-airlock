@@ -25,7 +25,10 @@ The mouse drives the same gesture while the overlay is up. Crossing
 between rows — or tiles, on the horizontal card — moves the selection
 with the cursor; wherever the pointer first lands — including resting
 right where the card appears — claims nothing. **Clicking** a row focuses that window and dismisses the overlay
-— the same outcome as releasing **Alt**. The **scroll wheel** steps the
+— the same outcome as releasing **Alt**. On the column card, resting
+the pointer on a window row reveals an **×** at its right edge —
+clicking that closes the window instead (see
+[Closing windows](#closing-windows)). The **scroll wheel** steps the
 list one row per notch, forward or back, wrapping like Tab, and a slow
 scan never times the overlay out.
 
@@ -81,6 +84,27 @@ card you had, keeping the window you had selected when it is still
 there. Nothing matches: the card keeps the query with a one-word
 verdict, and commits as a no-op. The query dies with the gesture —
 nothing persists, and the window list never re-derives mid-gesture.
+
+## Closing windows
+
+Windows close from the card without leaving the gesture. **Alt+minus**
+— the top-row minus or the keypad's — closes the selected row's window;
+on the pointer's side, resting on a window row reveals an **×** at its
+right edge (in the strip where that row's key hint sits), and clicking
+the × closes that row's window instead of activating it. Every row
+closes exactly what it activates: a group entry closes its app's most
+recently used window — the same window the entry commits — and a query
+row closes the window it shows.
+
+After each close the selection moves off the closing window — to the
+next visible row, wrapping, when it rested there — and the card stays
+up, so one held gesture can prune a stack of windows — Alt+minus, Alt+minus, then Tab to what
+survives. Closing the last eligible window dismisses the overlay. The
+× is the column card's affordance — window rows only, never group
+entries or the `…` rows — while Alt+minus works in every mode: the flat
+list, the grouped tree, a standing query, and the same-app view. A
+window closed by someone else mid-gesture drops off the card the same
+way; closing never adds one back — the frozen-list rule holds.
 
 ## The card
 

@@ -58,6 +58,10 @@ pipeline the COSMIC launcher uses) beside its title.
 - **Type to filter**: while the card is up, typing narrows it — title or
   app name, case-insensitive, first match selected; Backspace edits,
   Escape clears before it dismisses. Works in every mode
+- **Close windows from the card**: Alt+minus closes the selected row's
+  window and the card stays up for the next; hovering a window row
+  reveals an × at its right edge that closes on click. A group entry
+  closes its app's front window — every row closes what it activates
 - Titles render in the desktop's own interface font — real glyphs,
   real accents, fallback chains for CJK and emoji — at the card's
   pinned 12 px; a `font` key overrides the family (see

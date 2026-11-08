@@ -319,6 +319,35 @@ binary.
 - [ ] Regression: without typing, every card and key behaves exactly as
       before
 
+### Closing windows
+
+- [ ] Flat card: walk to a window you can spare, Alt+minus (top-row) —
+      it closes, the selection lands on the next visible row (wrapping),
+      the card stays up for another close
+- [ ] Keypad minus closes the same; Shift+minus (underscore) types into
+      the query (starting one if none stands) — never closes
+- [ ] Repeated closes walk the card down; closing the last eligible
+      window dismisses the overlay (nothing left to switch to)
+- [ ] `grouping = true`: Alt+minus on a collapsed entry closes that
+      app's front window — the window the entry commits; the card
+      recomposes (the count chip drops by one; the entry itself goes
+      when its last window closes)
+- [ ] Expanded group: the × reveals on child rows under the pointer —
+      never on the entry itself — and clicking a child's × closes that
+      window
+- [ ] The × reveals only while the pointer rests on a window row (the
+      row's key hint yields its band); headers, `…` rows, and the
+      pointerless card never show it
+- [ ] Click split: a click on the × closes; a click anywhere else on
+      the row activates as before; the horizontal band card has no ×
+      (its tiles keep click-to-activate) while Alt+minus still closes
+- [ ] With a standing query: closing a match narrows the card within
+      the matches; the query survives the close
+- [ ] A window someone else closes mid-gesture drops off the card the
+      same way (no × needed); closing never adds a window back
+- [ ] Regression: without closing anything, every card, key, and click
+      behaves exactly as before
+
 ## 4. Takeover and restore
 
 - [ ] `airlock install` redirects Alt+Tab / Shift+Alt+Tab to Airlock at user

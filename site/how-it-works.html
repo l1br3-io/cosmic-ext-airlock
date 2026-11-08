@@ -53,11 +53,16 @@
     <section id="the-pointer-gesture">
       <h2>The pointer gesture</h2>
       <p>The mouse drives the same gesture while the overlay is up. Crossing
-      between rows moves the selection with the cursor; wherever the pointer
+      between rows — or tiles, on the horizontal card — moves the
+      selection with the cursor; wherever the pointer
       first lands — including resting right where the card appears — claims
       nothing. <strong>Clicking</strong> a row focuses that window and
       dismisses the overlay — the same outcome as releasing <kbd>Alt</kbd>.
-      The <strong>scroll wheel</strong> steps the list one row per notch,
+      On the column card, resting the pointer on a window row reveals an
+      <strong>×</strong> at its right edge — clicking that closes the
+      window instead (see
+      <a href="#closing-windows">Closing windows</a>). The
+      <strong>scroll wheel</strong> steps the list one row per notch,
       forward or back, wrapping like <kbd>Tab</kbd>, and a slow scan never
       times the overlay out.</p>
     </section>
@@ -119,6 +124,29 @@
       Nothing matches: the card keeps the query with a one-word verdict,
       and commits as a no-op. The query dies with the gesture — nothing
       persists, and the window list never re-derives mid-gesture.</p>
+    </section>
+    <section id="closing-windows">
+      <h2>Closing windows</h2>
+      <p>Windows close from the card without leaving the gesture.
+      <strong>Alt+minus</strong> — the top-row minus or the keypad's —
+      closes the selected row's window; on the pointer's side, resting on
+      a window row reveals an <strong>×</strong> at its right edge (in the
+      strip where that row's key hint sits), and clicking the × closes
+      that row's window instead of activating it. Every row closes
+      exactly what it activates: a group entry closes its app's most
+      recently used window — the same window the entry commits — and a
+      query row closes the window it shows.</p>
+      <p>After each close the selection moves off the closing window — to
+      the next visible row, wrapping, when it rested there — and the card
+      stays up, so one held gesture can prune a stack of windows — Alt+minus,
+      Alt+minus, then <kbd>Tab</kbd> to what survives. Closing the last
+      eligible window dismisses the overlay. The × is the column card's
+      affordance — window rows only, never group entries or the
+      <code>…</code> rows — while Alt+minus works in every mode: the flat
+      list, the grouped tree, a standing query, and the same-app view. A
+      window closed by someone else mid-gesture drops off the card the
+      same way; closing never adds one back — the frozen-list rule
+      holds.</p>
     </section>
     <section id="the-card">
       <h2>The card</h2>
