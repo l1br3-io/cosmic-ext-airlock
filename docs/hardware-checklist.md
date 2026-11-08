@@ -151,6 +151,34 @@ binary.
 - [ ] Same-app cycling (Alt+grave) on one app with more than `rows`
       windows open windows the same way
 
+### Layout (the horizontal card)
+
+- [ ] `layout = "horizontal"` on a 20+-window list: a wide band of
+      tiles at 1× and 2×, both themes, over a light and a dark
+      wallpaper — each tile the app icon with its clamped title, the
+      trailing `…` tile marking the truncated edge (screenshot each)
+- [ ] Left/Right step the band; Tab/Shift+Tab and the wheel step the
+      same sequence; Up/Down still step (aliases); stepping past the
+      edge scrolls just enough — the selection never lands on the `…`
+      tile
+- [ ] Ctrl+N: the first nine tiles show their corner badges in reading
+      order and commit instantly; a tile past nine answers no chord and
+      shows none; hover moves the selection per tile, a click commits
+      it, and the `…` tile is inert to pointer and chords alike
+- [ ] `columns = "auto"` fits two-thirds of the invoking output's
+      logical width (never fewer than three tiles) — check on two
+      different output sizes; `columns = 3`, then `columns = 12`,
+      applies on the next press, no restart; `rows` changes nothing on
+      the band
+- [ ] `layout = "vertical"` restores the tall card unchanged; the
+      quick tap, Escape, and the 2-s idle close behave exactly as on
+      the vertical card
+- [ ] `grouping = true` with `layout = "horizontal"` renders the
+      grouped card — vertical — unchanged
+- [ ] `layout = "side"` and `columns = 2` each log a `settings:`
+      diagnostic naming their key; switching keeps working on the
+      last-good value
+
 ### Geometry (style and density follows)
 
 - [ ] Flip COSMIC's Appearance style Round → Slightly-Round → Square;

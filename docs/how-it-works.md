@@ -22,9 +22,9 @@ number row does nothing.
 ## The pointer gesture
 
 The mouse drives the same gesture while the overlay is up. Crossing
-between rows moves the selection with the cursor; wherever the pointer
-first lands — including resting right where the card appears — claims
-nothing. **Clicking** a row focuses that window and dismisses the overlay
+between rows — or tiles, on the horizontal card — moves the selection
+with the cursor; wherever the pointer first lands — including resting
+right where the card appears — claims nothing. **Clicking** a row focuses that window and dismisses the overlay
 — the same outcome as releasing **Alt**. The **scroll wheel** steps the
 list one row per notch, forward or back, wrapping like Tab, and a slow
 scan never times the overlay out.
@@ -73,6 +73,15 @@ most 748 px wide, with the selected row highlighted; text renders at
 output's scale). The `theme` setting picks the card — `auto` (the
 default) follows the desktop's dark/light preference; see
 [settings.md](settings.md#theme).
+
+The `layout = "horizontal"` setting trades the column for a wide,
+short **band**: the same windows as tiles — each the app icon with the
+title beneath, clamped to the tile — ended by a `…` tile when the list
+outgrows the band. Left and Right step the band, Ctrl+N and the
+pointer address its tiles exactly as they address rows, and the
+`columns` setting sizes it: two-thirds of the invoking output
+(`"auto"`, the default) or a pinned 3–12 tiles. See
+[settings.md](settings.md#layout).
 
 ## Workspace scoping
 

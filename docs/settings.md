@@ -35,6 +35,8 @@ configure.
 theme = "auto"         # match the desktop's dark/light mode (the default)
 # font = "Fira Sans"   # absent (the default): follow the COSMIC interface font
 rows = 8               # windows the card keeps in view (the default)
+layout = "vertical"    # the tall card; "horizontal" lays it out as a band of tiles
+# columns = "auto"     # the band's tile budget; or a whole number 3–12 (the default: "auto")
 grouping = false       # the flat list; true groups it by app (the default)
 scoped_cycling = false # grouping only: true keeps Tab inside one group (the default)
 
@@ -60,11 +62,13 @@ flag:
 
 An entry needs `name` or `index` — never both.
 
-The five top-level keys: `theme` picks the card (see
+The top-level keys: `theme` picks the card (see
 [Theme](#theme)); `font` picks its typeface (see [Font](#font));
 `rows` picks how many windows it keeps in view (see [Rows](#rows));
-`grouping` picks the list's shape and `scoped_cycling` how Alt+Tab
-moves inside it (see [Grouping](#grouping)).
+`layout` picks the card's axis and `columns` the horizontal band's
+width (see [Layout](#layout)); `grouping` picks the list's shape and
+`scoped_cycling` how Alt+Tab moves inside it (see
+[Grouping](#grouping)).
 
 ## Referencing workspaces
 
@@ -200,6 +204,49 @@ plus the two `…` rows — would not, so the budget clamps to what fits:
 one diagnostic naming the density, the setting, and the clamp. The
 setting keeps its value — back at Comfortable the full budget returns.
 
+## Layout
+
+`layout` picks the card's axis. Two values:
+
+- **`"vertical"` (default)** — today's card: the tall column of rows.
+- **`"horizontal"`** — the band: the same MRU window list laid out as
+  a single row of tiles in a wide, short card. A tile is the window's
+  application icon with its title beneath, clamped to the tile's
+  width; a list longer than the band ends in a `…` tile, and stepping
+  past the band scrolls it just enough to keep the selection on a
+  tile. **Left** and **Right** become the primary step keys — **Up**
+  and **Down** still step, as aliases — and **Ctrl+1..9** addresses
+  tiles in reading order, left to right, the chord shown as a corner
+  badge on each of the first nine tiles. The pointer drives the same
+  gesture per tile: hover moves the selection, a click commits, the
+  wheel steps.
+
+`rows` binds the vertical card only — the band's budget is
+[Columns](#columns). A grouped session (`grouping = true`) renders
+the grouped card, which is vertical; `layout` binds the flat list.
+
+Like every setting, `layout` is read when a gesture starts. An edit
+mid-gesture changes nothing until the next press — a session keeps
+the axis it opened with until Alt is released.
+
+## Columns
+
+`columns` sizes the horizontal band — `"auto"` (the default) or a
+whole number from 3 to 12. The vertical card ignores it.
+
+- **`"auto"`** — the band holds as many tiles as two-thirds of the
+  invoking output's logical width fits, never fewer than three: a
+  1920-logical output opens eight tiles, a 2560 one ten. The share is
+  read from the output the gesture starts on and frozen for the
+  session — auto is responsive per monitor, not mid-gesture.
+- **`columns = N`** — a pinned budget: exactly N tiles, whatever the
+  output. Three is the shortest band that still reads as a strip;
+  twelve spans 1960 logical pixels — past the full logical width of a
+  4-K panel at 200 %.
+
+`columns` is read with `layout` when a gesture starts and frozen for
+the session like it — a pinned value live-applies on the next press.
+
 ## Grouping
 
 `grouping = true` re-partitions the same MRU window list into a
@@ -308,6 +355,15 @@ A bad config never breaks switching:
   string)") and the last-good settings apply, like any malformed edit.
   A family name that simply is not installed is *not* a config error:
   the daemon logs that it fell back to the interface font.
+- **A bad `layout` value** — a wrong type (`layout = 1`) or an unknown
+  string (`layout = "side"`) — is named in a diagnostic ("`layout`
+  must be a string" / "`layout` must be \"vertical\" or
+  \"horizontal\"") and the last-good settings apply, like any
+  malformed edit.
+- **A bad `columns` value** — anything but `"auto"` or a whole number
+  3–12 (`columns = "many"`, `columns = 2`, `columns = 12.5`) — is
+  named in one diagnostic ("`columns` must be \"auto\" or a whole
+  number between 3 and 12") and the last-good settings apply.
 - **A bad `grouping` value** — `grouping = 1`, `grouping = "yes"` —
   is named in a diagnostic ("`grouping` must be a boolean") and the
   last-good settings apply, like any malformed edit. A bad
@@ -331,6 +387,15 @@ A bad config never breaks switching:
   already matches
 - Set `rows = 10`, then `rows = 3`; the next Alt+Tab keeps that many
   windows in view, `…` rows riding on top — no restart
+- Set `layout = "horizontal"`; the next Alt+Tab lays the same windows
+  out as a band of tiles — Left/Right step, the first nine tiles show
+  their Ctrl+N corner badges, a long list ends in a `…` tile
+- With the band open, set `columns = 3`, then `columns = 12` — each
+  applies on the next press; on `"auto"` the band refits when the
+  gesture starts on a different-sized output
+- Set `layout = "vertical"`; the next Alt+Tab is the tall card again,
+  unchanged — and `grouping = true` renders the grouped card, vertical
+  whatever `layout` says
 - Flip COSMIC's Appearance style (Round / Slightly-Round / Square); the
   next Alt+Tab's corners already match — 12 / 8 / 2 px
 - Flip COSMIC's interface density (Compact / Comfortable / Spacious);

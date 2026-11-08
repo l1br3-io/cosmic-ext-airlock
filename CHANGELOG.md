@@ -7,6 +7,18 @@ observe, not internal mechanics.
 
 ### Added
 
+- **The `layout` setting — a horizontal switcher card** —
+  `layout = "horizontal"` lays the same MRU list out as a wide band of
+  tiles in a short card: each tile the window's app icon with its
+  title beneath (clamped to the tile), a `…` tile at the truncated
+  edge, the band scrolling just enough as you step past it. Left and
+  Right become the primary step keys; Ctrl+1..9, hover, click, and the
+  wheel address tiles exactly as they address rows. `columns` sizes
+  the band — `"auto"` (the default) fits two-thirds of the invoking
+  output's logical width per monitor, or a whole number 3–12 pins the
+  tile count. Both live-apply at the next gesture; the default
+  vertical card is unchanged, and a grouped session still renders the
+  vertical grouped card.
 - **The `font` setting and real typography** — titles render in the
   desktop's own interface font by default (Open Sans on a default
   desktop; flip COSMIC Settings' font and the next Alt+Tab follows),
@@ -69,6 +81,9 @@ observe, not internal mechanics.
   2 px right), and the selection band's ends round to match the card's
   corners instead of ending as clipped stripes; the card edge now
   breathes twice the row gap.
+- The starter config's "full reference" comment links straight to the
+  settings doc instead of the repository root. Existing configs are
+  never rewritten; only fresh installs write the new line.
 
 ## [0.2.0] — 2026-11-07
 

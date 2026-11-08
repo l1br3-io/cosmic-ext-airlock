@@ -44,6 +44,12 @@ pipeline the COSMIC launcher uses) beside its title.
   default) with `…` rows marking the truncated edges, and stepping
   walks the whole list — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#rows)
+- **A horizontal card** (`layout = "horizontal"`) lays the same list out
+  as a wide band of tiles — app icon, title beneath — stepped with
+  Left/Right and addressed by Ctrl+N and the pointer per tile;
+  `columns` fits the band to two-thirds of the screen (`"auto"`, the
+  default) or pins 3–12 tiles — see
+  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#layout)
 - **App grouping** (`grouping = true`) turns the list into a per-app tree:
   collapsed app entries that commit their most recently used window, → to
   expand one (remembered across gestures), Alt+N to pick a window inside
