@@ -944,8 +944,12 @@ pub fn render(
         // earns nothing but its dots. The glyph paints `TEXT_W` wide, so
         // its box centers on `TEXT_W` exactly as `dots_y` centers on
         // `TEXT_H`; centering on the font cell biased the ink 2 px right
-        // of the card's center line. Card-centered is the candidate
-        // placement; the preview sheet freezes it (LV3).
+        // of the card's center line. Frozen 2026-11-08 on the LV3 sheet
+        // after a two-round preview loop (the TH4 pattern): every token
+        // kept as built — the muted reuse (55%, the hints' own color),
+        // card-centered placement, the font's own glyph at text scale —
+        // the native-resolution round passing both palettes over both
+        // backdrops at even perceived weight.
         if row.handle.is_none() {
             let dots_x = lw.saturating_sub(TEXT_W) / 2;
             let dots_y = top + (ROW_H - TEXT_H) / 2;
