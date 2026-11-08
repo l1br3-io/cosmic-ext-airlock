@@ -6825,6 +6825,93 @@ mod tests {
     // --- grouped-horizontal: the derived strip (`inplace-strip`) --------
 
     #[test]
+    fn combined_pointer_dots_and_past_the_window_address_nothing() {
+        // The one-sequence map behind a truncating viewport: content
+        // rows map, the `…` tile and rows past the window address
+        // nothing — the affordance never holds a selection.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        // a's run open, windowed to two content tiles plus the dots.
+        session.visible = vec![1, 2, 3];
+        session.viewport = Some(crate::ui::Viewport {
+            start: 0,
+            content: 2,
+            top: false,
+            bottom: true,
+        });
+        assert_eq!(session.tree_row_at(0), Some(1), "the first content tile");
+        assert_eq!(session.tree_row_at(1), Some(2), "the second content tile");
+        assert_eq!(session.tree_row_at(2), None, "the dots tile");
+        assert_eq!(session.tree_row_at(5), None, "past the window");
+    }
+
+    #[test]
+    fn combined_hover_follows_the_derived_shape() {
+        // Hovering selects the addressed tree row; the shape follows
+        // the selection by derivation — a window tile inside the run
+        // keeps the run open, an app tile closes it.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.visible = vec![1, 2, 3]; // a's run open at a's slot
+        session.viewport = Some(crate::ui::Viewport {
+            start: 0,
+            content: 3,
+            top: false,
+            bottom: false,
+        });
+        {
+            let session = open.as_mut().expect("open");
+            assert!(session.select_pointer_row(1, Some(Handle(3))));
+            assert_eq!(session.tree_sel, 2, "a's second window");
+        }
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![1, 2, 3],
+            "hovering a run window keeps the run open"
+        );
+        {
+            let session = open.as_mut().expect("open");
+            assert!(session.select_pointer_row(2, Some(Handle(3))));
+            assert_eq!(session.tree_sel, 3, "b's app tile");
+        }
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![0, 3],
+            "hovering an app tile closes the run"
+        );
+    }
+
+    #[test]
+    fn combined_click_commits_the_clicked_tile_not_the_selection() {
+        // The click seam the pointer Click arm composes: the boundary's
+        // captured handle selects through the one-sequence map and the
+        // commit resolves the clicked tile's own window — inside a run,
+        // a group's front window is its child tile alone, never its
+        // parent row.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        // The keyboard left the selection on b's tile; a's run is open.
+        session.tree_sel = 3;
+        session.visible = strip_sequence(session, &snap);
+        assert_eq!(session.visible, vec![0, 3], "the selection closed a's run");
+        // Reopen a's run the honest way — ↓ on a's tile — then click a
+        // window tile through the flow a click takes.
+        session.tree_sel = 0;
+        assert!(enter_band(session, &snap));
+        session.visible = strip_sequence(session, &snap);
+        assert_eq!(session.visible, vec![1, 2, 3], "a's run open");
+        assert_eq!(session.select_handle(Handle(1)), Some(Handle(1)));
+        assert_eq!(session.tree_sel, 1, "the child tile, not the parent row");
+        assert_eq!(commit_target(session, &snap), Some(Handle(1)));
+        assert_eq!(session.select_handle(Handle(3)), Some(Handle(3)));
+        assert_eq!(session.tree_sel, 3, "b's front window is b's tile here");
+        assert_eq!(commit_target(session, &snap), Some(Handle(3)));
+    }
+
+    #[test]
     fn strip_opens_the_selected_childs_parent_run_in_place() {
         // The derived shape: a child selection replaces its app's tile
         // with the app's window run at that very slot — the other apps'
