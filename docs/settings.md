@@ -37,7 +37,7 @@ theme = "auto"         # match the desktop's dark/light mode (the default)
 rows = 8               # windows the card keeps in view (the default)
 layout = "vertical"    # the tall card; "horizontal" lays it out as a band of tiles
 # columns = "auto"     # the band's tile budget; or a whole number 3–12 (the default: "auto")
-grouping = false       # the flat list; true groups it by app (the default)
+grouping = false       # the flat list (the default); true groups it by app
 
 [[workspace]]
 name = "code"          # matches a workspace COSMIC reports as named "code"
@@ -122,7 +122,7 @@ end, and a list of ten or fewer shows every window with no `…` at
 all.
 
 The card grows by two rows once the list outgrows `rows` (the `…`
-slots). At the default that is 576 logical pixels tall — fine on any
+slots). At the default that is 584 logical pixels tall — fine on any
 100%-scaled display and on a 1440p screen at 200%; a 1080p panel at
 200% (a 540-logical screen) is the one configuration that wants less —
 `rows = 7` keeps the card inside that height.

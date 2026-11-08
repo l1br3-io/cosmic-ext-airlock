@@ -3,20 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>How the switcher behaves — Airlock</title>
-<meta name="description" content="The full-fidelity description of Airlock's overlay and its gestures — the keyboard gesture, the pointer gesture, the frozen list, the card, workspace scoping, the extra keys, and the daemon.">
+<meta name="theme-color" content="#1E2126">
+<title>How the switcher behaves · Airlock</title>
+<meta name="description" content="The full-fidelity description of Airlock's overlay and its gestures: the keyboard gesture, the pointer gesture, the frozen list, the card, workspace scoping, the extra keys, and the daemon.">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 <header>
   <div class="wrap">
-    <p class="brand">Airlock</p>
+    <a class="brand" href="index.html"><img src="assets/favicon.svg" width="18" height="18" alt="">Airlock</a>
     <nav>
       <a href="index.html">Home</a>
       <a href="how-it-works.html" aria-current="page">How it works</a>
       <a href="settings.html">Settings</a>
       <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="index.html#install">Install</a>
       <a href="https://github.com/l1br3-io/cosmic-ext-airlock">GitHub</a>
     </nav>
   </div>
@@ -24,44 +26,41 @@
 <main>
   <div class="wrap">
     <h1>How the switcher behaves</h1>
-    <p>The full-fidelity description of the overlay and its gestures — the
-    <a href="index.html">README</a> keeps the short version. Per-workspace
+    <p>The full description of the overlay and its gestures. The
+    <a href="index.html">home page</a> has the short version. Per-workspace
     configuration lives in
-    <a href="settings.html">settings</a>;
-    the release-by-release verification of this behavior is the
+    <a href="settings.html">settings</a>, and the
     <a href="https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/hardware-checklist.md">hardware
-    checklist</a>.</p>
+    checklist</a> verifies this behavior release by release.</p>
 
     <section id="the-keyboard-gesture">
       <h2>The keyboard gesture</h2>
       <p>Hold <kbd>Alt</kbd> and tap <kbd>Tab</kbd>: an overlay lists the
       windows of the current workspace in most-recently-used order.
-      <kbd>Tab</kbd> walks forward, <kbd>Shift</kbd>+<kbd>Tab</kbd> walks
-      back, and the arrow keys step too — <kbd>Up</kbd> or <kbd>Left</kbd>
+      <kbd>Tab</kbd> walks forward, <kbd>Shift</kbd>+<kbd>Tab</kbd> back,
+      and the arrow keys step too: <kbd>Up</kbd> or <kbd>Left</kbd>
       back, <kbd>Down</kbd> or <kbd>Right</kbd> forward. Releasing
       <kbd>Alt</kbd> focuses the selection and dismisses the overlay;
       <kbd>Enter</kbd> confirms the same outcome without letting go of
       <kbd>Alt</kbd>. <kbd>Escape</kbd> dismisses without switching. A quick
-      tap — released before the overlay even appears — still switches.
-      <kbd>Ctrl</kbd>+<kbd>1</kbd> through <kbd>Ctrl</kbd>+<kbd>9</kbd> —
-      keypad digits included — switch to that row's window at once, the same
-      outcome as clicking it; the first nine rows show their key at the right
-      edge, and deeper rows show none. Without <kbd>Ctrl</kbd>, the number
-      row does nothing.</p>
+      tap, released before the overlay appears, still switches.
+      <kbd>Ctrl</kbd>+<kbd>1</kbd> through <kbd>Ctrl</kbd>+<kbd>9</kbd>,
+      keypad digits included, switch to that row's window at once, like a
+      click; the first nine rows show their key at the right edge, deeper
+      rows show none, and the number row does nothing without
+      <kbd>Ctrl</kbd>.</p>
     </section>
 
     <section id="the-pointer-gesture">
       <h2>The pointer gesture</h2>
       <p>The mouse drives the same gesture while the overlay is up. Crossing
-      between rows — or tiles, on the horizontal card — moves the
-      selection with the cursor; wherever the pointer
-      first lands — including resting right where the card appears — claims
-      nothing. <strong>Clicking</strong> a row focuses that window and
-      dismisses the overlay — the same outcome as releasing <kbd>Alt</kbd>.
+      between rows, or between tiles on the horizontal card, moves the
+      selection; wherever the pointer first lands, including right where the
+      card appears, claims nothing. <strong>Clicking</strong> a row focuses
+      that window and dismisses the overlay, like releasing <kbd>Alt</kbd>.
       On the column card, resting the pointer on a window row reveals an
-      <strong>×</strong> at its right edge — clicking that closes the
-      window instead (see
-      <a href="#closing-windows">Closing windows</a>). The
+      <strong>×</strong> at its right edge; clicking it closes the window
+      instead (see <a href="#closing-windows">Closing windows</a>). The
       <strong>scroll wheel</strong> steps the list one row per notch,
       forward or back, wrapping like <kbd>Tab</kbd>, and a slow scan never
       times the overlay out.</p>
@@ -74,101 +73,95 @@
       number key can reach it mid-gesture.</p>
     </section>
 
-
     <section id="grouped-mode">
       <h2>Grouped mode</h2>
       <p>The <code>grouping = true</code> setting re-partitions the same
-      list into a two-level tree: one entry per application — ordered by
-      each app's most recently used window — with that app's whole window
-      set nested beneath it, and a top-level row for each window COSMIC
+      list into a two-level tree: one entry per application, ordered by
+      each app's most recently used window, with that app's whole window
+      set nested beneath it, plus a top-level row for each window COSMIC
       cannot attribute to any app and for each single-window app. Groups
       start collapsed; expanding one (<kbd>→</kbd>) is remembered for as
       long as the daemon runs. Committing an entry activates that app's
-      most recently used window — the same window its first child
+      most recently used window, the same window its first child
       shows.</p>
       <p>The keys re-bind to the tree, one walk: <strong>Tab</strong>,
-      <strong>↑/↓</strong>, and the <strong>wheel</strong> are the same
-      linear step — one visible row at a time, wrapping — through entries,
-      leaves, and the windows of expanded groups alike; a collapsed group
-      contributes only its entry, and nothing ever descends into a
-      collapsed group. <strong><kbd>→</kbd></strong> expands and enters —
-      landing one past the window you just left when it is your own app —
-      <strong><kbd>←</kbd></strong> on a child returns to its entry (the
-      group stays expanded), and on an expanded entry collapses it.
+      <strong>↑/↓</strong>, and the <strong>wheel</strong> step one visible
+      row at a time, wrapping, through entries, leaves, and the windows of
+      expanded groups. A collapsed group contributes only its entry, and
+      nothing descends into one. <strong><kbd>→</kbd></strong> expands and
+      enters, landing one past the window you just left when it is your own
+      app; <strong><kbd>←</kbd></strong> on a child returns to its entry
+      (the group stays expanded), and on an expanded entry collapses it.
       <strong>Ctrl+N</strong> activates the Nth app entry's window. The
       pointer picks rows like the keyboard does, expanded entries
-      included. The frozen-list rule holds for the tree: the window set
-      never changes mid-gesture, only which of it stands expanded. The
-      full table, including how a quick tap lands, lives in
+      included. The frozen-list rule holds: the window set never changes
+      mid-gesture, only which of it stands expanded. The full table,
+      including how a quick tap lands, is in
       <a href="settings.html#grouping">settings</a>.</p>
     </section>
     <section id="type-to-filter">
       <h2>Type-to-filter</h2>
       <p>While the card is up, typing filters it. Printable keys type
-      straight through the held <kbd>Alt</kbd> — the query collects in a
-      strip above the rows, each keystroke narrowing the card to the
-      windows whose title or application name contains what you typed
-      (case-insensitive), the selection landing on the first match.
+      straight through the held <kbd>Alt</kbd>: the query collects in a
+      strip above the rows, and each keystroke narrows the card to the
+      windows whose title or application name contains it
+      (case-insensitive), with the selection on the first match.
       <strong>Tab</strong>, the arrows, and the wheel step the matches;
       <strong>Enter</strong> or releasing <kbd>Alt</kbd> switches to the
-      selected one. It works in every mode — the flat list, the grouped
+      selected one. It works in every mode: the flat list, the grouped
       tree (which flattens to its matching windows while a query
-      stands), and the same-app view — because it narrows the list the
-      gesture froze, whatever its shape. <strong>Ctrl+N</strong> keeps
-      its chord; every other printable key, digits included, types.</p>
-      <p>Editing and escaping: <strong>Backspace</strong> erases the
-      last character (on an empty query it does nothing);
-      <strong>Escape</strong> clears a standing query first and only an
-      empty query dismisses. Clearing the query restores the card you
-      had, keeping the window you had selected when it is still there.
-      Nothing matches: the card keeps the query with a one-word verdict,
-      and commits as a no-op. The query dies with the gesture — nothing
-      persists, and the window list never re-derives mid-gesture.</p>
+      stands), and the same-app view, each narrowing the list the
+      gesture froze. <strong>Ctrl+N</strong> keeps its chord; every other
+      printable key, digits included, types.</p>
+      <p><strong>Backspace</strong> erases the last character and does
+      nothing on an empty query. <strong>Escape</strong> clears a standing
+      query first; only an empty query dismisses. Clearing restores the
+      card you had, keeping the window you had selected when it is still
+      there. When nothing matches, the card keeps the query with a one-word
+      verdict and commits as a no-op. The query dies with the gesture:
+      nothing persists, and the window list never re-derives mid-gesture.</p>
     </section>
     <section id="closing-windows">
       <h2>Closing windows</h2>
       <p>Windows close from the card without leaving the gesture.
-      <strong>Alt+minus</strong> — the top-row minus or the keypad's —
-      closes the selected row's window; on the pointer's side, resting on
-      a window row reveals an <strong>×</strong> at its right edge (in the
-      strip where that row's key hint sits), and clicking the × closes
-      that row's window instead of activating it. Every row closes
-      exactly what it activates: a group entry closes its app's most
-      recently used window — the same window the entry commits — and a
-      query row closes the window it shows.</p>
-      <p>After each close the selection moves off the closing window — to
-      the next visible row, wrapping, when it rested there — and the card
-      stays up, so one held gesture can prune a stack of windows — Alt+minus,
-      Alt+minus, then <kbd>Tab</kbd> to what survives. Closing the last
-      eligible window dismisses the overlay. The × is the column card's
-      affordance — window rows only, never group entries or the
-      <code>…</code> rows — while Alt+minus works in every mode: the flat
-      list, the grouped tree, a standing query, and the same-app view. A
-      window closed by someone else mid-gesture drops off the card the
-      same way; closing never adds one back — the frozen-list rule
-      holds.</p>
+      <strong>Alt+minus</strong> (top-row or keypad) closes the selected
+      row's window; on the pointer's side, resting on a window row reveals
+      an <strong>×</strong> at its right edge, in the strip where that row's
+      key hint sits, and clicking it closes that row's window instead of
+      activating it. Every row closes exactly what it activates: a group
+      entry closes its app's most recently used window, the same window the
+      entry commits, and a query row closes the window it shows.</p>
+      <p>After each close the selection moves to the next visible row,
+      wrapping when it rested there, and the card stays up, so one held
+      gesture can prune a stack of windows: Alt+minus, Alt+minus, then
+      <kbd>Tab</kbd> to what survives. Closing the last eligible window
+      dismisses the overlay. The × is the column card's affordance, on
+      window rows only, never on group entries or the
+      <code>…</code> rows; Alt+minus works in every mode: the flat list, the
+      grouped tree, a standing query, and the same-app view. A window
+      closed by someone else mid-gesture drops off the same way; closing
+      never adds one back.</p>
     </section>
     <section id="the-card">
       <h2>The card</h2>
-      <p>Each row shows the window's application icon — resolved through the
-      same desktop-entry and icon-theme pipeline the COSMIC launcher uses —
+      <p>Each row shows the window's application icon, resolved through the
+      same desktop-entry and icon-theme pipeline the COSMIC launcher uses,
       next to its title; an application with no themed icon falls back to a
       generic window glyph. The card is a rounded rectangle with a hairline
       border, at most 748 px wide, with the selected row highlighted; text
       renders at 12 px and stays sharp on HiDPI displays (the overlay renders
-      at the output's scale). The <code>theme</code> setting picks the card —
+      at the output's scale). <code>theme</code> picks the card;
       <code>auto</code> (the default) follows the desktop's dark/light
       preference; see
       <a href="settings.html#theme">settings</a>.</p>
-      <p>The <code>layout = "horizontal"</code> setting trades the column
-      for a wide, short <strong>band</strong>: the same windows as tiles —
-      each the app icon with the title beneath, clamped to the tile —
-      ended by a <code>…</code> tile when the list outgrows the band. Left
-      and Right step the band, Ctrl+N and the pointer address its tiles
-      exactly as they address rows, and the <code>columns</code> setting
-      sizes it: two-thirds of the invoking output (<code>"auto"</code>, the
-      default) or a pinned 3–12 tiles. See
-      <a href="settings.html#layout">settings</a>.</p>
+      <p><code>layout = "horizontal"</code> trades the column for a wide,
+      short <strong>band</strong>: the same windows as tiles, each the app
+      icon with the title beneath and clamped to the tile, ended by a
+      <code>…</code> tile when the list outgrows the band. Left and Right
+      step the band, Ctrl+N and the pointer address its tiles as they
+      address rows, and <code>columns</code> sizes it: two-thirds of the
+      invoking output (<code>"auto"</code>, the default) or a pinned 3–12
+      tiles. See <a href="settings.html#layout">settings</a>.</p>
     </section>
 
     <section id="workspace-scoping">
@@ -176,30 +169,30 @@
       <p>Only windows whose workspace set includes the current workspace are
       listed: sticky windows appear everywhere, minimized windows nowhere, and
       a window parked on another workspace can never be focused through
-      Airlock. The isolation is per-workspace configurable: a workspace can
-      opt into the global switcher through a config file — see
-      <a href="settings.html">settings</a>.</p>
+      Airlock. A workspace can opt into the global list through the config
+      file; see <a href="settings.html">settings</a>.</p>
     </section>
 
     <section id="the-extra-keys">
       <h2>The extra keys</h2>
       <p><code>airlock install</code> also claims three more keys. Hold
-      <kbd>Alt</kbd> and tap <kbd>grave</kbd> (the key above <kbd>Tab</kbd>):
-      the overlay lists only the current application's windows, MRU order —
-      the same gesture, the same isolation rule (<code>isolated = false</code>
-      widens the list to that application's windows everywhere).
-      <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>grave</kbd> opens it stepping
+      <kbd>Alt</kbd> and tap <kbd>`</kbd> (the key above <kbd>Tab</kbd>):
+      the overlay lists only the current application's windows, most recently
+      used first. The gesture and the isolation rule match <kbd>Alt</kbd>+<kbd>Tab</kbd>
+      (<code>isolated = false</code> widens the list to that application's
+      windows everywhere).
+      <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>`</kbd> opens it stepping
       backwards. An application with fewer than two windows in scope does
-      nothing — there is nothing to cycle. <kbd>Alt</kbd>+<kbd>Esc</kbd>
-      switches to the MRU-second window under the same scope — the window a
-      quick Alt+Tab tap would reach — with no overlay at all.</p>
+      nothing. <kbd>Alt</kbd>+<kbd>Esc</kbd> switches to the second-most-recent
+      window under the same scope, the window a quick Alt+Tab tap would
+      reach, with no overlay.</p>
     </section>
 
     <section id="the-daemon">
       <h2>The daemon</h2>
       <p>A small daemon keeps a live snapshot of the compositor state; the
-      keybind stubs are milliseconds-thin and auto-start the daemon on first
-      press. The overlay is software-rendered — no GPU required.</p>
+      keybind stubs are milliseconds-thin and auto-start it on first press.
+      The overlay is software-rendered; no GPU required.</p>
     </section>
   </div>
 </main>

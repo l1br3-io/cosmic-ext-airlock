@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Settings — Airlock</title>
+<meta name="theme-color" content="#1E2126">
+<title>Settings · Airlock</title>
 <meta name="description" content="Airlock's per-workspace configuration: opt workspaces out of isolation, pick the switcher's card theme, and set how many windows the card keeps in view.">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="assets/style.css">
@@ -11,12 +12,13 @@
 <body>
 <header>
   <div class="wrap">
-    <p class="brand">Airlock</p>
+    <a class="brand" href="index.html"><img src="assets/favicon.svg" width="18" height="18" alt="">Airlock</a>
     <nav>
       <a href="index.html">Home</a>
       <a href="how-it-works.html">How it works</a>
       <a href="settings.html" aria-current="page">Settings</a>
       <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="index.html#install">Install</a>
       <a href="https://github.com/l1br3-io/cosmic-ext-airlock">GitHub</a>
     </nav>
   </div>
@@ -24,41 +26,39 @@
 <main>
   <div class="wrap">
     <h1>Settings</h1>
-    <p>By default, Airlock seals Alt+Tab to the current workspace. A config
+    <p>By default, Airlock limits Alt+Tab to the current workspace. A config
     file can opt individual workspaces out: there the switcher lists every
     non-minimized window across <strong>all</strong> workspaces,
-    most-recently-used first, while workspaces without an entry stay isolated
-    exactly as before. The same file also picks the switcher's card color —
-    light, dark, or following the desktop — and how many windows the card
-    keeps in view.</p>
+    most-recently-used first, while workspaces without an entry stay isolated.
+    The same file picks the card color (light, dark, or following the
+    desktop) and how many windows the card keeps in view.</p>
     <p>Airlock reads the file; you write it. Airlock never creates, renames,
-    or rearranges workspaces — names and positions come from COSMIC itself.</p>
+    or rearranges workspaces; names and positions come from COSMIC itself.</p>
 
     <section id="the-file">
-      <h2>The file</h2>
+      <h2>The config file</h2>
       <pre><code>~/.config/airlock/config.toml</code></pre>
       <p>More precisely: <code>airlock/config.toml</code> under an absolute
       <code>$XDG_CONFIG_HOME</code> when one is set, else under
-      <code>$HOME/.config</code> — the same rule the installer uses. No file
-      (or an empty one) means every workspace isolated: the default behavior,
-      nothing to configure.</p>
+      <code>$HOME/.config</code>, the same rule the installer uses. No file,
+      or an empty one, means every workspace isolated.</p>
     </section>
 
     <section id="example">
-      <h2>Example</h2>
-      <pre><code># ~/.config/airlock/config.toml — Airlock reads, you edit.
+      <h2>A full config file</h2>
+      <pre><code class="language-toml"># ~/.config/airlock/config.toml: Airlock reads, you edit.
 # Workspaces without an entry keep the default: isolated.
 
 theme = "auto"         # match the desktop's dark/light mode (the default)
-# font = "Fira Sans"   # absent (the default): follow the COSMIC interface font
+# font = "Fira Sans"   # absent (the default): the COSMIC interface font
 rows = 8               # windows the card keeps in view (the default)
-layout = "vertical"    # the tall card; "horizontal" lays it out as a band of tiles
-# columns = "auto"     # the band's tile budget; or a whole number 3–12 (the default: "auto")
-grouping = false       # the flat list; true groups it by app (the default)
+layout = "vertical"    # the tall card; "horizontal" lays it out as tiles
+# columns = "auto"     # the band's tile budget; or a whole number 3–12
+grouping = false       # the flat list (the default); true groups it by app
 
 [[workspace]]
 name = "code"          # matches a workspace COSMIC reports as named "code"
-isolated = true        # the default — shown for completeness
+isolated = true        # the default; shown for completeness
 
 [[workspace]]
 index = 2              # the 2nd workspace in COSMIC's order, named or not
@@ -66,10 +66,10 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
     </section>
 
     <section id="keys">
-      <h2>Keys</h2>
+      <h2>Workspace keys</h2>
       <p>Each <code>[[workspace]]</code> entry takes exactly one reference
       plus an optional flag:</p>
-      <table>
+      <table class="keys">
         <thead>
           <tr><th>Key</th><th>Type</th><th>Meaning</th></tr>
         </thead>
@@ -79,11 +79,11 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
           <tr><td><code>isolated</code></td><td>boolean</td><td><code>true</code> (default): only this workspace's windows; <code>false</code>: all windows, MRU</td></tr>
         </tbody>
       </table>
-      <p>An entry needs <code>name</code> or <code>index</code> — never
+      <p>An entry needs <code>name</code> or <code>index</code>, never
       both.</p>
       <p>The top-level keys: <code>theme</code> picks the card (see
-      <a href="#theme">Theme</a>); <code>rows</code> picks how many windows
-      it keeps in view (see <a href="#rows">Rows</a>);
+      <a href="#theme">Theme</a>); <code>rows</code> how many windows it
+      keeps in view (see <a href="#rows">Rows</a>);
       <code>font</code> the typeface (see <a href="#font">Font</a>);
       <code>layout</code> the card's axis and <code>columns</code> the
       band's tile budget (see <a href="#layout">Layout</a> and
@@ -96,143 +96,120 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       <ul>
         <li><strong>Name-first.</strong> A named workspace matches
         <code>name</code> rules before <code>index</code> rules.
-        <code>index</code> is the fallback (and covers unnamed workspaces,
-        which have nothing to match by name).</li>
+        <code>index</code> is the fallback, and covers unnamed workspaces.</li>
         <li><strong>A <code>name</code> rule follows the name, not the
         workspace.</strong> Names are read live on every press: rename
         <code>code</code> to <code>dev</code> in COSMIC and the rule stops
-        matching that workspace on the next invocation — and matches
+        matching that workspace on the next invocation, and matches
         whichever workspace later takes the name <code>code</code>.</li>
         <li><strong>Positions shift with the grid.</strong>
         <code>index</code> is the workspace's 1-based place in COSMIC's order
         (sorted by grid coordinates). Creating, removing, or moving
         workspaces re-points an <code>index</code> rule at whatever now sits
         there. Prefer <code>name</code> for workspaces you have named.</li>
-        <li><strong>Out-of-range <code>index</code> matches nothing</strong> —
+        <li><strong>Out-of-range <code>index</code> matches nothing</strong>:
         that workspace falls back to the isolated default.</li>
-        <li><strong>Duplicates are allowed; the last entry wins.</strong> If
-        several entries reference the same workspace, the one latest in file
-        order applies. No error.</li>
-        <li><strong>No match at all</strong> → the workspace stays isolated.
+        <li><strong>Duplicates are allowed; the last entry in file order
+        wins.</strong> No error.</li>
+        <li><strong>No match at all</strong>: the workspace stays isolated.
         An entry can only opt out, never opt others in.</li>
       </ul>
     </section>
 
     <section id="theme">
       <h2>Theme</h2>
-      <p><code>theme</code> picks the card the switcher paints — the
+      <p><code>theme</code> picks the card the switcher paints: the
       near-opaque panel the window list sits on. Three values:</p>
       <ul>
-        <li><strong><code>"auto"</code> (default)</strong> — follow the
-        COSMIC system dark/light preference: a dark-mode desktop paints the
-        dark card, a light-mode desktop the light one. The preference is
-        checked each time a gesture starts, so flipping dark mode — in COSMIC
-        Settings or on a schedule — shows up on the next
+        <li><strong><code>"auto"</code> (default)</strong>: follow the
+        COSMIC system dark/light preference. A dark-mode desktop paints the
+        dark card, a light-mode desktop the light one. The preference is read
+        when a gesture starts, so flipping dark mode, in COSMIC Settings or
+        on a schedule, shows up on the next
         <kbd>Alt</kbd>+<kbd>Tab</kbd>. No daemon restart.</li>
-        <li><strong><code>"dark"</code></strong> — always the dark card,
-        whatever the desktop prefers. The escape hatch for the previous
-        always-dark behavior.</li>
-        <li><strong><code>"light"</code></strong> — always the light card.</li>
+        <li><strong><code>"dark"</code></strong>: always the dark card,
+        whatever the desktop prefers.</li>
+        <li><strong><code>"light"</code></strong>: always the light card.</li>
       </ul>
       <p>Theme can never break switching. An unreadable system preference
-      paints the dark card (today's look) with one diagnostic in the daemon
-      log; a malformed <code>theme</code> value rides the same last-good
-      fallback as every other config error.</p>
-      <p>And like every setting, <code>theme</code> is read when a gesture
-      starts. An edit mid-gesture changes nothing until the next press — a
-      session keeps the card it was opened with until <kbd>Alt</kbd> is
-      released.</p>
+      paints the dark card and logs one diagnostic; a malformed
+      <code>theme</code> value falls back to the last-good settings like any
+      other config error.</p>
     </section>
 
     <section id="rows">
       <h2>Rows</h2>
       <p><code>rows</code> sets how many windows the card keeps in view on a
-      long list — a whole number from 3 to 10, default 8. The
+      long list (a whole number from 3 to 10, default 8). The
       <code>…</code> continuation rows at truncated edges ride on top of
       that budget, never inside it: with the default, a long list shows
       eight windows mid-list, nine at either end, and a list of ten or
       fewer shows every window with no <code>…</code> at all.</p>
       <p>The card grows by two rows once the list outgrows <code>rows</code>
-      (the <code>…</code> slots). At the default that is 576 logical pixels
-      tall — fine on any 100%-scaled display and on a 1440p screen at 200%;
-      a 1080p panel at 200% (a 540-logical screen) is the one configuration
-      that wants less — <code>rows = 7</code> keeps the card inside that
-      height.</p>
-      <p>Like every setting, <code>rows</code> is read when a gesture starts.
-      An edit mid-gesture changes nothing until the next press; a session
-      keeps the budget it opened with until <kbd>Alt</kbd> is released. A
-      value outside 3–10 (or a non-integer) is named in a diagnostic and the
-      last-good settings apply.</p>
+      (the <code>…</code> slots). At the default that is 584 logical pixels
+      tall, which fits any 100%-scaled display and a 1440p screen at 200%.
+      A 1080p panel at 200% (a 540-logical screen) is the exception:
+      <code>rows = 7</code> keeps the card inside that height.</p>
+      <p>A value outside 3–10, or a non-integer, is named in a diagnostic
+      and the last-good settings apply.</p>
     </section>
 
 
     <section id="font">
       <h2>Font</h2>
-      <p><code>font</code> picks the typeface the card's titles paint in —
-      a font family name, exactly as your font picker shows it. Family
-      only: size stays the card's own 12 px and weight stays Regular,
-      whatever is set.</p>
+      <p><code>font</code> picks the typeface the card's titles paint in:
+      a font family name, exactly as your font picker shows it. The card
+      fixes size at 12 px and weight at Regular; you choose the family.</p>
       <ul>
-        <li><strong>Absent key (the default)</strong> — follow the COSMIC
-        interface font: the family your desktop already paints its UI in.
+        <li><strong>Absent key (the default)</strong>: follow the COSMIC
+        interface font, the family your desktop already paints its UI in.
         Open Sans on a default desktop, your own COSMIC Settings pick when
-        you have made one. Every card upgrades to real typography without
-        configuring anything.</li>
-        <li><strong><code>font = "Fira Sans"</code></strong> — any installed
+        you have made one.</li>
+        <li><strong><code>font = "Fira Sans"</code></strong>: any installed
         family; the next <kbd>Alt</kbd>+<kbd>Tab</kbd> paints it.</li>
       </ul>
-      <p>Any string is valid as far as the config is concerned — a family
-      nothing installs is not a config error. Resolution happens when a
-      gesture starts: a name the system does not know logs one diagnostic
-      naming the <code>font</code> key and paints the interface font
-      instead. A system with no loadable fonts at all paints the built-in
-      bitmap face — the deterministic floor — and switching never breaks
-      on font I/O either way.</p>
-      <p>Real text is the point: Unicode titles render their actual glyphs
-      through the font's fallback chains, with grayscale anti-aliasing and
-      proportional widths. Fonts are scanned once at daemon startup: a
-      font installed while the daemon runs is picked up at the next daemon
-      restart, not before.</p>
-      <p>Like every setting, <code>font</code> is read when a gesture
-      starts. An edit mid-gesture changes nothing until the next press —
-      a session keeps the face it was opened with until
-      <kbd>Alt</kbd> is released.</p>
+      <p>Any string is valid; a family nothing installs is not a config
+      error. Resolution happens when a gesture starts: an unknown name logs
+      one diagnostic naming the <code>font</code> key and paints the
+      interface font instead. A system with no loadable fonts at all paints
+      the built-in bitmap face; switching never breaks on font I/O.</p>
+      <p>Unicode titles render their actual glyphs through the font's
+      fallback chains, with grayscale anti-aliasing and proportional widths.
+      Fonts are scanned once at daemon startup, so a font installed while
+      the daemon runs is picked up at the next daemon restart.</p>
     </section>
 
     <section id="follows">
-      <h2>Follows</h2>
-      <p>Three of the card's values follow the COSMIC desktop itself. Two
-      have no keys because the desktop already owns the choice — flip the
-      setting in COSMIC Settings and the next <kbd>Alt</kbd>+<kbd>Tab</kbd>
-      already matches — and the third is the <em>default</em> of its key
-      (<code>font</code>), so it follows until you override it.</p>
+      <h2>What follows the desktop</h2>
+      <p>Three card values follow the COSMIC desktop. Corner radius and row
+      rhythm have no keys because the desktop owns the choice. The typeface
+      is the <em>default</em> of <code>font</code>, so it follows until you
+      override it.</p>
       <ul>
         <li><strong>Corner radius follows Appearance → Style.</strong>
         Round, Slightly-Round, and Square round the card's corners at 12,
-        8, and 2 logical pixels. The selection band rounds with the card,
+        8, and 2 logical pixels; the selection band rounds with the card,
         never past 8.</li>
         <li><strong>Row rhythm follows Appearance → Interface
         density.</strong> Compact, Comfortable, and Spacious set the rows'
-        height, gap, and the card's vertical padding — rows stay
+        height, gap, and the card's vertical padding. Rows stay
         icon-driven, 40/48/56 px tall by density. The card's width never
         changes with density.</li>
         <li><strong>The typeface follows the desktop's interface font</strong>
-        (the <code>font</code> key's default — see
+        (the <code>font</code> key's default; see
         <a href="#font">Font</a>): the family COSMIC Settings' own font
         picker writes, family-only, at the card's pinned 12 px. An
-        unreadable store keeps Open Sans with one diagnostic in the daemon
-        log.</li>
+        unreadable store keeps Open Sans and logs one diagnostic.</li>
       </ul>
-      <p>Both are read when a gesture starts, like every setting: a flip
-      mid-gesture changes nothing until the next press. An unreadable or
-      missing COSMIC store keeps the factory-default geometry with one
-      diagnostic in the daemon log; switching is never affected.</p>
-      <p><strong>The rows clamp.</strong> Every card must fit a
+      <p>The two geometry values are read when a gesture starts, like every
+      setting. An unreadable or missing COSMIC store keeps the
+      factory-default geometry and logs one diagnostic.</p>
+      <p><strong>The rows clamp</strong>: every card must fit a
       720-logical-pixel panel. At Spacious the tallest card the
       <code>rows</code> ceiling could build would not, so the budget clamps
       to what fits: <code>rows = 9</code> or <code>10</code> at Spacious
       opens with eight windows in view and one diagnostic naming the
-      density, the setting, and the clamp. The setting keeps its value —
+      density, the setting, and the clamp. The setting keeps its value:
       back at Comfortable the full budget returns.</p>
     </section>
 
@@ -240,63 +217,58 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       <h2>Layout</h2>
       <p><code>layout</code> picks the card's axis. Two values:</p>
       <ul>
-        <li><strong><code>"vertical"</code> (default)</strong> — today's
-        card: the tall column of rows.</li>
-        <li><strong><code>"horizontal"</code></strong> — the band: the same
-        MRU window list laid out as a single row of tiles in a wide, short
-        card. A tile is the window's application icon with its title
-        beneath, clamped to the tile's width; a list longer than the band
-        ends in a <code>…</code> tile, and stepping past the band scrolls
-        it just enough to keep the selection on a tile.
-        <strong>Left</strong> and <strong>Right</strong> become the
-        primary step keys — <strong>Up</strong> and <strong>Down</strong>
-        still step, as aliases — and <strong>Ctrl+1..9</strong> addresses
-        tiles in reading order, left to right, the chord shown as a corner
-        badge on each of the first nine tiles. The pointer drives the same
-        gesture per tile: hover moves the selection, a click commits, the
-        wheel steps.</li>
+        <li><strong><code>"vertical"</code> (default)</strong>: the tall
+        column of rows.</li>
+        <li><strong><code>"horizontal"</code></strong>: the band, the same
+        MRU window list as one row of tiles in a wide, short card. A tile is
+        the window's application icon with its title beneath, clamped to the
+        tile's width; a list longer than the band ends in a
+        <code>…</code> tile, and stepping past the band scrolls it enough to
+        keep the selection visible. <strong>Left</strong> and
+        <strong>Right</strong> become the primary step keys
+        (<strong>Up</strong> and <strong>Down</strong> still step, as
+        aliases), and <strong>Ctrl+1..9</strong> addresses tiles in reading
+        order, the chord shown as a corner badge on the first nine. The pointer
+        drives the same gesture per tile: hover moves the selection, a click
+        commits, the wheel steps.</li>
       </ul>
-      <p><code>rows</code> binds the vertical card only — the band's budget
+      <p><code>rows</code> binds the vertical card only; the band's budget
       is <a href="#columns">Columns</a>. A grouped session
       (<code>grouping = true</code>) renders the grouped card, which is
       vertical; <code>layout</code> binds the flat list.</p>
-      <p>Like every setting, <code>layout</code> is read when a gesture
-      starts. An edit mid-gesture changes nothing until the next press —
-      a session keeps the axis it opened with until <kbd>Alt</kbd> is
-      released.</p>
     </section>
 
     <section id="columns">
       <h2>Columns</h2>
-      <p><code>columns</code> sizes the horizontal band —
+      <p><code>columns</code> sizes the horizontal band:
       <code>"auto"</code> (the default) or a whole number from 3 to 12.
       The vertical card ignores it.</p>
       <ul>
-        <li><strong><code>"auto"</code></strong> — the band holds as many
+        <li><strong><code>"auto"</code></strong>: the band holds as many
         tiles as two-thirds of the invoking output's logical width fits,
-        never fewer than three: a 1920-logical output opens eight tiles, a
+        never fewer than three. A 1920-logical output opens eight tiles, a
         2560 one ten. The share is read from the output the gesture starts
-        on and frozen for the session — auto is responsive per monitor,
-        not mid-gesture.</li>
-        <li><strong><code>columns = N</code></strong> — a pinned budget:
-        exactly N tiles, whatever the output. Three is the shortest band
-        that still reads as a strip; twelve spans 1960 logical pixels —
-        past the full logical width of a 4-K panel at 200 %.</li>
+        on and frozen for the session, so auto is per monitor, not
+        mid-gesture.</li>
+        <li><strong>A whole number</strong>: a pinned budget of exactly that
+        many tiles, whatever the output. Three is the shortest band that
+        still reads as a strip; twelve spans 1960 logical pixels, past the
+        full logical width of a 4K panel at 200%.</li>
       </ul>
       <p><code>columns</code> is read with <code>layout</code> when a
-      gesture starts and frozen for the session like it — a pinned value
-      live-applies on the next press.</p>
+      gesture starts and frozen for the session; a pinned value applies on
+      the next press.</p>
     </section>
 
     <section id="grouping">
       <h2>Grouping</h2>
       <p><code>grouping = true</code> re-partitions the same MRU window
       list into a two-level tree. Level 1 is the app layer: one entry per
-      application — ordered by each app's most-recently-used window — plus
+      application, ordered by each app's most-recently-used window, plus
       one row per window COSMIC cannot attribute to any app. An entry is a
-      pure label, never a window itself, but committing it
+      label, never a window itself, but committing it
       (<kbd>Alt</kbd> release or <kbd>Enter</kbd>) activates its app's most
-      recently used window — the same window its first child shows.</p>
+      recently used window, the same window its first child shows.</p>
       <p>Groups start <strong>collapsed</strong>: the card opens showing
       only the level-1 entries. Expanding is part of entering
       (<kbd>→</kbd> below), and the expanded or collapsed state of every
@@ -306,15 +278,14 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       <ul>
         <li><strong>Alt+Tab / Alt+Shift+Tab, ↑/↓, and the mouse wheel</strong>
         are one and the same walk: one <em>visible</em> row at a time,
-        linearly, wrapping — entries, leaves, and the windows of expanded
-        groups together, group boundaries crossed without ceremony. A
-        collapsed group contributes only its entry; nothing ever descends
-        into a collapsed group, and a workspace holding a single collapsed
-        entry simply keeps the selection where it is.</li>
-        <li><strong><kbd>→</kbd></strong> expands the selected group — the
-        state persists — and enters its windows, landing on the most
-        recently used one, one past the window you just left when entering
-        your own app. On a leaf it does nothing.</li>
+        wrapping, through entries, leaves, and the windows of expanded
+        groups. A collapsed group contributes only its entry; nothing
+        descends into a collapsed group, and a workspace holding a single
+        collapsed entry keeps the selection where it is.</li>
+        <li><strong><kbd>→</kbd></strong> expands the selected group (the
+        state persists) and enters its windows, landing on the most
+        recently used one, or one past the window you just left when
+        entering your own app. On a leaf it does nothing.</li>
         <li><strong><kbd>←</kbd></strong> on a child returns to its entry
         (the group stays expanded); on an expanded entry it collapses the
         group; elsewhere it does nothing.</li>
@@ -324,18 +295,13 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
         unchanged: Tab steps rows and ←/→ ride with ↑/↓ as step
         aliases.</li>
       </ul>
-      <p><strong>The quick tap</strong> — one Tab press with
-      <kbd>Alt</kbd> released before the card can be read — is the first
+      <p><strong>The quick tap</strong>, one Tab press with
+      <kbd>Alt</kbd> released before the card can be read, is the first
       step of the same walk: your own app's next window when its group is
       expanded (the flat list's MRU-second window), the next app entry's
-      window while it is collapsed — skipping your own app's other
+      window while it is collapsed, skipping your own app's other
       windows.</p>
-      <p>The <code>rows</code> budget applies to the visible rows.
-      <code>grouping</code> is read when a gesture starts like every
-      setting: a session keeps the window list it opened with until
-      <kbd>Alt</kbd> is released. A non-boolean value
-      (<code>grouping = 1</code>, <code>grouping = "yes"</code>) is named
-      in a diagnostic and the last-good settings apply.</p>
+      <p>The <code>rows</code> budget applies to the visible rows.</p>
     </section>
     <section id="what-isolated-false-changes">
       <h2>What <code>isolated = false</code> changes</h2>
@@ -343,68 +309,64 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       <kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Tab</kbd> on that workspace lists
       every non-minimized window across all workspaces in MRU order (sticky
       windows are naturally included everywhere). Committing a selection
-      parked on another workspace switches to it and focuses it — the gesture
-      can take you across workspaces, like the stock switcher. Mid-gesture
-      the rules of the core still hold: the list is never swapped under a
-      held <kbd>Alt</kbd>, and a workspace switch voids the session.</p>
+      parked on another workspace switches to it and focuses it, so the
+      gesture can take you across workspaces, like the stock switcher.
+      Mid-gesture the list is never swapped under a held
+      <kbd>Alt</kbd>, and a workspace switch voids the session.</p>
     </section>
 
     <section id="live-apply">
       <h2>Live apply</h2>
       <p>The daemon checks the file's modification time each time a gesture
-      starts. Edit the config while the daemon runs and the next
-      <kbd>Alt</kbd>+<kbd>Tab</kbd> uses it — no restart, no re-login. The
-      check happens only at gesture start: a session keeps the scope it
-      opened with until <kbd>Alt</kbd> is released.</p>
+      starts, so an edit applies on the next
+      <kbd>Alt</kbd>+<kbd>Tab</kbd> with no restart or re-login. A session
+      keeps the settings it opened with until <kbd>Alt</kbd> is released.</p>
     </section>
 
     <section id="errors-and-limits">
       <h2>Errors and limits</h2>
       <p>A bad config never breaks switching:</p>
       <ul>
-        <li><strong>Missing or empty file</strong> — every workspace
+        <li><strong>Missing or empty file</strong>: every workspace
         isolated, silently.</li>
-        <li><strong>Malformed file</strong> — the daemon logs a diagnostic
+        <li><strong>Malformed file</strong>: the daemon logs a diagnostic
         naming the offending line/column or the 1-based entry number, and
         keeps using the last-good settings (defaults, if none ever parsed).
-        Editing the file again re-applies it once valid.</li>
-        <li><strong>Bad entries</strong> — both <code>name</code> and
-        <code>index</code>, neither, <code>index = 0</code> or negative, or a
-        wrong type (<code>name = 3</code>, <code>isolated = "yes"</code>)
+        Fixing the file re-applies it.</li>
+        <li><strong>Bad entries</strong>: both <code>name</code> and
+        <code>index</code>, neither, <code>index = 0</code> or negative, or
+        a wrong type (<code>name = 3</code>, <code>isolated = "yes"</code>)
         each name their entry number.</li>
         <li><strong><code>[workspace]</code> with single brackets</strong> is
         rejected: entries must be <code>[[workspace]]</code> (an array of
         tables). One <code>[workspace]</code> table cannot carry several
         rules anyway.</li>
-        <li><strong>A bad <code>theme</code> value</strong> — a wrong type
-        (<code>theme = 3</code>) or an unknown string
-        (<code>theme = "blue"</code>) — is named in a diagnostic and the
-        last-good settings apply, like any malformed edit.</li>
-        <li><strong>A bad <code>rows</code> value</strong> — a wrong type
-        (<code>rows = 8.5</code>, <code>rows = "8"</code>) or a number
-        outside 3–10 — is named in a diagnostic ("must be a whole number" /
-        "must be between 3 and 10") and the last-good settings apply, like
-        any malformed edit.</li>
-        <li><strong>A bad <code>font</code> value</strong> — a wrong type
-        (<code>font = 12</code>, <code>[font]</code>) — is named in a
-        diagnostic ("<code>font</code> must be a font family name (a
-        string)") and the last-good settings apply. A family name that
-        simply is not installed is <em>not</em> a config error: the daemon
-        logs that it fell back to the interface font.</li>
-        <li><strong>A bad <code>layout</code> value</strong> — a wrong type
-        (<code>layout = 1</code>) or an unknown string
-        (<code>layout = "side"</code>) — is named in a diagnostic and the
+        <li><strong>A bad <code>theme</code> value</strong>
+        (<code>theme = 3</code>, <code>theme = "blue"</code>) is named in a
+        diagnostic; the last-good settings apply.</li>
+        <li><strong>A bad <code>rows</code> value</strong>
+        (<code>rows = 8.5</code>, <code>rows = "8"</code>, or outside
+        3–10) is named ("must be a whole number" / "must be between 3 and
+        10"); the last-good settings apply.</li>
+        <li><strong>A bad <code>font</code> value</strong>
+        (<code>font = 12</code>, <code>[font]</code>) is named
+        ("<code>font</code> must be a font family name (a string)"); the
+        last-good settings apply. A family that is not installed is
+        <em>not</em> a config error: the daemon logs the fallback to the
+        interface font.</li>
+        <li><strong>A bad <code>layout</code> value</strong>
+        (<code>layout = 1</code>, <code>layout = "side"</code>) is named;
+        the last-good settings apply.</li>
+        <li><strong>A bad <code>columns</code> value</strong> (anything
+        but <code>"auto"</code> or a whole number 3–12) is named; the
         last-good settings apply.</li>
-        <li><strong>A bad <code>columns</code> value</strong> — anything
-        but <code>"auto"</code> or a whole number 3–12 — is named in one
-        diagnostic and the last-good settings apply.</li>
-        <li><strong>A bad <code>grouping</code> value</strong> —
-        <code>grouping = 1</code>, <code>grouping = "yes"</code> — is
-        named in a diagnostic ("<code>grouping</code> must be a boolean")
-        and the last-good settings apply.</li>
-        <li><strong>Unknown keys are ignored</strong> — extra keys inside an
+        <li><strong>A bad <code>grouping</code> value</strong>
+        (<code>grouping = 1</code>, <code>grouping = "yes"</code>) is named
+        ("<code>grouping</code> must be a boolean"); the last-good settings
+        apply.</li>
+        <li><strong>Unknown keys are ignored</strong>: extra keys inside an
         entry cost nothing.</li>
-        <li><strong>Size cap</strong> — files over 1 MiB are ignored entirely
+        <li><strong>Size cap</strong>: files over 1 MiB are ignored entirely
         (defaults apply); the read runs on the gesture path and must stay
         cheap.</li>
       </ul>
@@ -422,40 +384,38 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
         order, and committing one parked elsewhere switches to it</li>
         <li>Set <code>theme = "light"</code> on a dark-mode desktop; the next
         <kbd>Alt</kbd>+<kbd>Tab</kbd> paints the light card
-        (<code>"dark"</code> paints the dark card on a light-mode desktop)</li>
-        <li>With <code>theme = "auto"</code>, flip COSMIC's dark mode; the
-        next <kbd>Alt</kbd>+<kbd>Tab</kbd> already matches</li>
+        (<code>"dark"</code> paints the dark card on a light-mode desktop).
+        On <code>"auto"</code>, flip COSMIC's dark mode and the next press
+        already matches</li>
         <li>Set <code>rows = 10</code>, then <code>rows = 3</code>; the next
         <kbd>Alt</kbd>+<kbd>Tab</kbd> keeps that many windows in view,
-        <code>…</code> rows riding on top — no restart</li>
+        <code>…</code> rows riding on top, with no restart</li>
         <li>Set <code>layout = "horizontal"</code>; the next
         <kbd>Alt</kbd>+<kbd>Tab</kbd> lays the same windows out as a band
-        of tiles — Left/Right step, the first nine tiles show their
+        of tiles: Left/Right step, the first nine tiles show their
         Ctrl+N corner badges, a long list ends in a <code>…</code>
-        tile</li>
+        tile. Set <code>layout = "vertical"</code> and the tall card
+        returns; <code>grouping = true</code> renders the grouped card,
+        vertical whatever <code>layout</code> says</li>
         <li>With the band open, set <code>columns = 3</code>, then
-        <code>columns = 12</code> — each applies on the next press; on
+        <code>columns = 12</code>; each applies on the next press. On
         <code>"auto"</code> the band refits when the gesture starts on a
         different-sized output</li>
-        <li>Set <code>layout = "vertical"</code>; the next
-        <kbd>Alt</kbd>+<kbd>Tab</kbd> is the tall card again, unchanged —
-        and <code>grouping = true</code> renders the grouped card, vertical
-        whatever <code>layout</code> says</li>
         <li>Flip COSMIC's Appearance style (Round / Slightly-Round /
         Square); the next <kbd>Alt</kbd>+<kbd>Tab</kbd>'s corners already
-        match — 12 / 8 / 2 px</li>
+        match, at 12 / 8 / 2 px</li>
         <li>Flip COSMIC's interface density (Compact / Comfortable /
         Spacious); the next <kbd>Alt</kbd>+<kbd>Tab</kbd>'s rows tighten or
-        breathe — 40 / 48 / 56 px — and the card's width stays put</li>
+        breathe (40 / 48 / 56 px), and the card's width stays put</li>
         <li>At Spacious density, set <code>rows = 10</code>; the card opens
-        clamped to eight windows and the daemon log names the clamp — the
-        setting keeps its value</li>
-        <li>Set <code>font = "&lt;an installed family&gt;"</code>; the next
-        <kbd>Alt</kbd>+<kbd>Tab</kbd> paints it — no restart. Edit it under
-        held <kbd>Alt</kbd>: the open card does not repaint until the next
-        press</li>
+        clamped to eight windows and the daemon log names the clamp;
+        the setting keeps its value</li>
+        <li>Set <code>font = "Fira Sans"</code>; the next
+        <kbd>Alt</kbd>+<kbd>Tab</kbd> paints it, with no restart. Edit it
+        under held <kbd>Alt</kbd>: the open card does not repaint until the
+        next press</li>
         <li>Unset <code>font</code>: the next <kbd>Alt</kbd>+<kbd>Tab</kbd>
-        paints the desktop's interface font — flip COSMIC Settings' own
+        paints the desktop's interface font; flip COSMIC Settings' own
         font and the next press follows</li>
         <li>Open a window with a CJK or emoji title: the glyphs render for
         real</li>
@@ -463,8 +423,8 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
         the key and the card paints the interface font</li>
         <li>With <code>grouping = true</code>: expand a group
         (<kbd>→</kbd>), release <kbd>Alt</kbd>, press
-        <kbd>Alt</kbd>+<kbd>Tab</kbd> again — the step continues the linear
-        walk from where it left off, through the expanded group's windows
+        <kbd>Alt</kbd>+<kbd>Tab</kbd> again; the step continues the walk
+        from where it left off, through the expanded group's windows
         and on to the next app; Tab and ↓ land on the expanded entry like
         any row</li>
       </ul>
