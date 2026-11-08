@@ -18,19 +18,19 @@
 //! The cache is bounded ([`GLYPH_CACHE_CAP`]) and cleared when the
 //! shaped family changes (OQ 3).
 
-// TY1 lands the backend's ownership, cache, and deterministic fixture
-// path; the System render path (TY3) and the `font` key (TY4) consume
-// the rest of this surface. Until then only the daemon's startup scan
-// and the tests touch it, so the not-yet-wired items carry this one
-// allowance — removed when TY3 lands (the GE1→GE3 precedent).
+// The binary consumes the System path from TY4, when the daemon
+// resolves the backend per open (`FontQuery::Named` is the configured
+// key's arm, `from_dir`/`face_count` the floor's); until then only the
+// lib's render path and the tests touch this surface. Removed in TY4
+// (the GE1→GE3 precedent).
 #![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use cosmic_text::{
-    Attrs, Buffer, CacheKey, Family, FontSystem, Hinting, Metrics, Shaping, SubpixelBin, Weight,
-    Wrap,
+    Attrs, Buffer, CacheKey, Family, FontSystem, Hinting, Metrics, Shaping, SubpixelBin,
+    SwashCache, SwashContent, SwashImage, Weight, Wrap,
 };
 
 /// The one face size this backend paints, logical px — the 11-07 12-px
@@ -131,8 +131,12 @@ pub fn centering(ascent_px: f32, descent_px: f32, row_h: u32) -> u32 {
 /// One rasterized glyph: 8-bit coverage over a `width × height` block
 /// whose top-left sits `(left, top)` device px from the glyph's pen
 /// position at the baseline (`top` is ≤ 0 for ink above the baseline).
-/// Grayscale AA — the coverage value is the pixel's blend factor, the
-/// same ramp the renderer's corners use.
+/// Grayscale AA — the coverage value is the pixel's blend factor toward
+/// the paint color, the same ramp the renderer's corners use. Color
+/// bitmaps (CBDT/COLR emoji, the fallback chains' pick) carry their own
+/// `colors` per pixel; their coverage is the pixel's alpha, so the
+/// glyph paints as the small image it is — the same color-glyph
+/// honesty the card's themed icons already practice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlyphMask {
     pub left: i32,
@@ -140,6 +144,8 @@ pub struct GlyphMask {
     pub width: u32,
     pub height: u32,
     pub coverage: Vec<u8>,
+    /// Straight RGB per pixel, present only for color-bitmap glyphs.
+    pub colors: Option<Vec<[u8; 3]>>,
 }
 
 /// The bounded glyph-mask cache (OQ 3): one mask per `CacheKey`, whole
@@ -191,6 +197,7 @@ impl GlyphCache {
 #[derive(Debug)]
 pub struct TextSystem {
     fonts: FontSystem,
+    swash: SwashCache,
     cache: GlyphCache,
     family: ResolvedFamily,
 }
@@ -231,6 +238,20 @@ impl TextSystem {
     /// The glyph-mask cache (tests and the rasterizer share it).
     pub fn cache(&mut self) -> &mut GlyphCache {
         &mut self.cache
+    }
+
+    /// The rasterized mask for `key`, rasterizing through swash on the
+    /// first ask and recalling it from the bounded cache after. `None`
+    /// when swash cannot rasterize the glyph at all (no outline, no
+    /// bitmap) — the caller skips it, exactly the glyph cosmic-text's
+    /// own renderer would not paint.
+    pub fn mask(&mut self, key: &CacheKey) -> Option<&GlyphMask> {
+        if self.cache.get(key).is_none() {
+            let image = self.swash.get_image_uncached(&mut self.fonts, *key)?;
+            let mask = mask_from_image(&image)?;
+            self.cache.insert(*key, mask);
+        }
+        self.cache.get(key)
     }
 
     /// Shapes `text` at [`TEXT_PX`] × `scale` device px in `query`'s
@@ -323,10 +344,20 @@ impl TextSystem {
             .lines
             .get_mut(line_i)
             .map(|line| {
-                line.shape(&mut self.fonts, 8)
-                    .layout(TEXT_PX, None, Wrap::None, None, None, Hinting::Disabled)
+                line.shape(&mut self.fonts, 8).layout(
+                    TEXT_PX,
+                    None,
+                    Wrap::None,
+                    None,
+                    None,
+                    Hinting::Disabled,
+                )
             })
-            .and_then(|lines| lines.first().map(|layout| (layout.max_ascent, layout.max_descent)))
+            .and_then(|lines| {
+                lines
+                    .first()
+                    .map(|layout| (layout.max_ascent, layout.max_descent))
+            })
             .unwrap_or((0.0, 0.0));
         (
             GlyphRun {
@@ -378,10 +409,64 @@ impl TextSystem {
     fn with_fonts(fonts: FontSystem) -> Self {
         TextSystem {
             fonts,
+            swash: SwashCache::new(),
             cache: GlyphCache::default(),
             family: ResolvedFamily::SansSerif,
         }
     }
+}
+
+/// Converts one swash image into a [`GlyphMask`]: mask content is the
+/// coverage bytes as rasterized; color bitmaps split into per-pixel
+/// straight RGB plus alpha-as-coverage (the byte order — R, G, B, A —
+/// is cosmic-text's own `with_pixels` read of the same image);
+/// subpixel-mask content (never requested from this design, grayscale
+/// AA only) degrades to its alpha byte so a face that answers with it
+/// still paints, never tofu. `None` for a zero-sized image.
+fn mask_from_image(image: &SwashImage) -> Option<GlyphMask> {
+    let placement = image.placement;
+    if placement.width == 0 || placement.height == 0 {
+        return None;
+    }
+    let expected = (placement.width as usize) * (placement.height as usize);
+    let (coverage, colors) = match image.content {
+        SwashContent::Mask => {
+            if image.data.len() < expected {
+                return None;
+            }
+            (image.data[..expected].to_vec(), None)
+        }
+        SwashContent::SubpixelMask | SwashContent::Color => {
+            if image.data.len() < expected * 4 {
+                return None;
+            }
+            let coverage = image.data[..expected * 4]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|px| px[3])
+                .collect();
+            let colors = (image.content == SwashContent::Color).then(|| {
+                image.data[..expected * 4]
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|px| [px[0], px[1], px[2]])
+                    .collect()
+            });
+            (coverage, colors)
+        }
+    };
+    Some(GlyphMask {
+        left: placement.left,
+        // Swash measures `top` upward from the baseline; masks speak
+        // the same axis as their pixels (down positive).
+        top: -placement.top,
+        width: placement.width,
+        height: placement.height,
+        coverage,
+        colors,
+    })
 }
 
 /// One cluster's shaping facts, the unit a budget cut keeps whole.
@@ -457,6 +542,7 @@ mod tests {
             width: 1,
             height: 1,
             coverage: vec![0xFF],
+            colors: None,
         };
         // 8 × the cap in distinct keys: the bound must hold throughout.
         for glyph_id in 0..(GLYPH_CACHE_CAP * 8) as u16 {
@@ -522,7 +608,9 @@ mod tests {
         let patterns: Vec<Vec<f32>> = vec![
             vec![7.5; 80],
             (0..80).map(|i| 1.0 + i as f32 * 0.25).collect(),
-            (0..80).map(|i| if i % 2 == 0 { 12.0 } else { 1.5 }).collect(),
+            (0..80)
+                .map(|i| if i % 2 == 0 { 12.0 } else { 1.5 })
+                .collect(),
             (0..80).map(|i| 3.0 + (i % 7) as f32 * 0.3).collect(),
         ];
         for widths in patterns {
@@ -538,10 +626,7 @@ mod tests {
                     "kept prefix + ellipsis inside the budget"
                 );
                 if kept > 0 && kept < widths.len() {
-                    assert!(
-                        sum + widths[kept] + ellipsis > budget,
-                        "the cut is maximal"
-                    );
+                    assert!(sum + widths[kept] + ellipsis > budget, "the cut is maximal");
                 }
                 // Maximality at zero: a nonzero first unit would not
                 // have fit either.
@@ -615,5 +700,24 @@ mod tests {
         let (display, run) = system.shape_budgeted("Airlock", FontQuery::SansSerif, 2, band_px());
         assert_eq!(display, "Airlock");
         assert!(run.width_px <= band_px());
+    }
+
+    #[test]
+    fn mask_rasterizes_real_coverage_from_the_fixture_face() {
+        let mut system = TextSystem::from_dir(&fixture_dir());
+        let run = system.shape("A", FontQuery::SansSerif, 2);
+        let key = run.glyphs[0].cache_key;
+        let mask = system
+            .mask(&key)
+            .expect("the fixture face rasterizes")
+            .clone();
+        assert!(mask.width > 0 && mask.height > 0, "the glyph has extent");
+        assert!(
+            mask.coverage.iter().any(|&c| c > 0),
+            "the glyph carries ink"
+        );
+        assert!(mask.colors.is_none(), "an outline glyph is coverage only");
+        // Second ask recalls the identical mask from the cache.
+        assert_eq!(system.mask(&key), Some(&mask));
     }
 }

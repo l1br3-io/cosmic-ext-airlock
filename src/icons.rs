@@ -750,6 +750,7 @@ mod tests {
                 rows: ui::DEFAULT_ROWS,
                 prev: None,
             },
+            ui::TextBackend::Bitmap,
         )
         .expect("eligible windows exist");
         let bitmap = model.rows[0]
@@ -771,6 +772,7 @@ mod tests {
                 rows: ui::DEFAULT_ROWS,
                 prev: None,
             },
+            ui::TextBackend::Bitmap,
         )
         .expect("eligible windows exist");
         assert!(model.rows[0].icon.is_none(), "unprepared scale must miss");

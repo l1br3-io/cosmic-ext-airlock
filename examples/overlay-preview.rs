@@ -13,15 +13,23 @@
 //! `--geometry` renders the geometry sheet instead (the `geometry`
 //! module's judged artifact): a 3 × 3 grid of style (Round,
 //! SlightlyRound, Square, left to right) × density (Compact, Standard,
-//! Spacious, top to bottom); each cell stacks the dark card's and the
-//! light card's long list (a windowed 15-row gesture, dots at both
+//! Spacious, top to bottom); each cell stacks the dark card's and
+//! the light card's long list (a windowed 15-row gesture, dots at both
 //! edges) over their short list (two rows, one selected — the band and
 //! the corners at their tightest), every card over both backdrops.
 //! Square's 2-px rung, Compact's 4-px half-grid, and the band's 8-px
 //! cap are judged on this image at native resolution.
 //!
+//! `--system-font <dir>` renders text through the System backend
+//! (`typography` TY3) instead of the font8x8 floor: a fresh database
+//! holding only `<dir>`'s faces, so the sheet is deterministic —
+//! `res/test-fonts` is the committed fixture (Open Sans, the COSMIC
+//! default family itself). Titles keep this sheet's own composition;
+//! the flag judges the face and its coverage, live-applying the real
+//! daemon's shaping/rasterization path.
+//!
 //! ```sh
-//! cargo run --example overlay-preview -- preview.png [--scale 2] [--light] [--geometry]
+//! cargo run --example overlay-preview -- preview.png [--scale 2] [--light] [--geometry] [--system-font res/test-fonts]
 //! ```
 //!
 //! Icons come from the real pipeline (`src/icons.rs`) against the host's
@@ -32,6 +40,7 @@
 use std::rc::Rc;
 
 use cosmic_ext_airlock::switcher::Handle;
+use cosmic_ext_airlock::text::{FontQuery, TextSystem};
 use cosmic_ext_airlock::ui::{self, IconBitmap, OverlayModel, RowModel};
 
 /// Sample app ids spanning themed SVG icons, Flatpak ids, and misses.
@@ -62,12 +71,15 @@ struct Scenario {
 fn main() {
     let mut args = std::env::args().skip(1);
     let Some(path) = args.next().map(std::path::PathBuf::from) else {
-        eprintln!("usage: overlay-preview <out.png> [--scale N] [--light]");
+        eprintln!(
+            "usage: overlay-preview <out.png> [--scale N] [--light] [--geometry] [--system-font <dir>]"
+        );
         std::process::exit(2);
     };
     let mut scale = 2;
     let mut light = false;
     let mut geometry = false;
+    let mut system_font: Option<std::path::PathBuf> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--scale" => {
@@ -79,12 +91,25 @@ fn main() {
             }
             "--light" => light = true,
             "--geometry" => geometry = true,
+            "--system-font" => {
+                system_font = args.next().map(std::path::PathBuf::from);
+                if system_font.is_none() {
+                    eprintln!("--system-font needs a font directory argument");
+                    std::process::exit(2);
+                }
+            }
             other => {
-                eprintln!("unknown argument {other}; expected --scale N, --light, or --geometry");
+                eprintln!(
+                    "unknown argument {other}; expected --scale N, --light, --geometry, or --system-font <dir>"
+                );
                 std::process::exit(2);
             }
         }
     }
+    // The System text backend when asked for: a fresh database holding
+    // only the flag's directory, never the host's fonts — deterministic
+    // sheets (the `typography` fixture rule).
+    let mut text_system = system_font.as_ref().map(|dir| TextSystem::from_dir(dir));
 
     // The card the plain scenarios judge: the dark card the daemon
     // paints today, or the light palette's card under review. Icons
@@ -99,7 +124,7 @@ fn main() {
     let light_icons = ui_icons(scale, &ui::Palette::light());
     if geometry {
         let cells = geometry_cells(&dark_icons, &light_icons);
-        write_grid(&path, &cells, scale);
+        write_grid(&path, &cells, scale, &mut text_system);
         return;
     }
     let scenarios = scenarios(base, &dark_icons, &light_icons);
@@ -131,7 +156,16 @@ fn main() {
         let model = &scenario.model;
         let mut card = vec![0u8; (model.width * model.height * 4 * scale * scale) as usize];
         let (cw, ch) = (model.width * scale, model.height * scale);
-        ui::render(model, &mut card, cw, ch, cw * 4, scale, &scenario.palette);
+        ui::render(
+            model,
+            &mut card,
+            cw,
+            ch,
+            cw * 4,
+            scale,
+            &scenario.palette,
+            text_backend(&mut text_system),
+        );
         for (dx, backdrop) in [(0, [46u8, 46, 50]), (backdrop_w as i64, [235, 235, 235])] {
             composite(
                 &mut sheet,
@@ -147,6 +181,19 @@ fn main() {
 
     write_png(&path, width, height, &sheet).expect("write preview png");
     println!("wrote {} ({width}x{height}, scale {scale})", path.display());
+}
+
+/// The backend every card render paints through: the System text stack
+/// over the flag's fixture fonts when `--system-font` was given, the
+/// font8x8 floor otherwise.
+fn text_backend(system: &mut Option<TextSystem>) -> ui::TextBackend<'_> {
+    match system {
+        Some(ts) => ui::TextBackend::System {
+            system: ts,
+            query: FontQuery::SansSerif,
+        },
+        None => ui::TextBackend::Bitmap,
+    }
 }
 
 /// The geometry sheet's nine cells: density rows (Compact, Standard,
@@ -207,7 +254,12 @@ fn geometry_cells(
 /// The geometry sheet's grid composition: one backdrop pair per cell,
 /// cells in a 3 × 3 grid with gutters. Cards paint centered on their
 /// backdrop columns so the corners judge away from the seams.
-fn write_grid(path: &std::path::Path, cells: &[Vec<Scenario>], scale: u32) {
+fn write_grid(
+    path: &std::path::Path,
+    cells: &[Vec<Scenario>],
+    scale: u32,
+    text_system: &mut Option<TextSystem>,
+) {
     let gutter = 32 * scale;
     let backdrop_w = cells
         .iter()
@@ -247,7 +299,16 @@ fn write_grid(path: &std::path::Path, cells: &[Vec<Scenario>], scale: u32) {
                 let model = &scenario.model;
                 let mut card = vec![0u8; (model.width * model.height * 4 * scale * scale) as usize];
                 let (cw, ch) = (model.width * scale, model.height * scale);
-                ui::render(model, &mut card, cw, ch, cw * 4, scale, &scenario.palette);
+                ui::render(
+                    model,
+                    &mut card,
+                    cw,
+                    ch,
+                    cw * 4,
+                    scale,
+                    &scenario.palette,
+                    text_backend(text_system),
+                );
                 let cell_x = column as u64 * (backdrop_w as u64 * 2);
                 for (dx, backdrop) in [(0, [46u8, 46, 50]), (backdrop_w as i64, [235, 235, 235])] {
                     let x = gutter as i64

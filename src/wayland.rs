@@ -1165,6 +1165,10 @@ impl Overlay {
             stride,
             self.scale,
             &self.palette,
+            // The floor while the render path gains its System twin
+            // (TY3); TY4 resolves the backend per open and carries it
+            // onto the overlay with the model.
+            ui::TextBackend::Bitmap,
         );
         let surface = self.layer.wl_surface();
         surface.damage_buffer(0, 0, bw as i32, bh as i32);

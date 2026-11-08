@@ -638,6 +638,33 @@ pub enum SelectionSetting {
     Neutral,
 }
 
+/// The text backend one card paints through, chosen once at session
+/// open beside the palette and frozen for the gesture's life (the
+/// palette freeze philosophy): `Bitmap` is the font8x8 floor — today's
+/// paint, byte-identical, and the zero-fonts fallback — and `System`
+/// shapes and rasterizes through the daemon's
+/// [`crate::text::TextSystem`] in the family the session resolved.
+/// The model builders and the renderer take the same enum, so a card's
+/// titles are composed, truncated, and painted under one backend end
+/// to end.
+pub enum TextBackend<'a> {
+    /// The font8x8 paint: folded titles, column caps, the hand-drawn
+    /// `…` — every byte as shipped.
+    Bitmap,
+    /// The system stack: real glyphs, fallback chains, pixel budgets,
+    /// the font's own `…`. `query` is the family the session froze
+    /// (`FontQuery::SansSerif` is the default face — the interface-font
+    /// follow resolves before this, at open).
+    // Constructed from TY4, when the daemon resolves the backend per
+    // open; until then the lib's render path and the tests are its only
+    // constructors. Removed in TY4 (the GE1→GE3 precedent).
+    #[allow(dead_code)]
+    System {
+        system: &'a mut crate::text::TextSystem,
+        query: crate::text::FontQuery<'a>,
+    },
+}
+
 // Geometry pins. The 8-grid holds for every stepped metric; the row is
 // exactly the icon cell plus its breathing; rows stay clear of the
 // corner arcs, so a selection band can never clip a corner, and the
@@ -954,17 +981,18 @@ pub fn visible_window(len: usize, sel: usize, rows: usize, prev: Option<Viewport
 /// highlighted, listing windows under `scope`, with app icons from
 /// `icons` prepared at `scale` for the card `palette` paints, windowed
 /// by `windowing` — the session's `rows` budget and the sticky viewport
-/// it carries (`None` at open). Rows follow [`switcher::eligible`]
-/// order (most recently activated first); every row hints its Ctrl+N
-/// chord ([`RowHint::Ctrl`]).
+/// it carries (`None` at open) — composing titles through `text` (the
+/// backend the session froze; see [`TextBackend`]). Rows follow
+/// [`switcher::eligible`] order (most recently activated first); every
+/// row hints its Ctrl+N chord ([`RowHint::Ctrl`]).
 ///
 /// One list, one budget: window per [`visible_window`], a continuation
 /// row replacing the outermost slot at each truncated edge, and the
 /// model reports the window it computed for the session to carry next.
 /// Returns `None` when there is nothing to show: no active workspace,
 /// no eligible windows, or a selection that is not in the eligible set.
-// Eight render inputs now — the shape profile joined the seam beside
-// the windowing (the geometry follow), past clippy's seven.
+// Nine render inputs — the text backend joined the seam beside the
+// windowing and the shape profile (the geometry follow's note).
 #[expect(clippy::too_many_arguments)]
 pub fn overlay_model(
     snapshot: &Snapshot,
@@ -975,6 +1003,7 @@ pub fn overlay_model(
     palette: &Palette,
     profile: StyleProfile,
     windowing: Windowing,
+    mut text: TextBackend<'_>,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
     let entries = switcher::eligible(&snapshot.toplevels, active, scope);
@@ -983,15 +1012,20 @@ pub fn overlay_model(
     }
     let sel = entries.iter().position(|&handle| handle == selected)?;
     let mut rows = Vec::with_capacity(entries.len());
+    let mut bands = Vec::with_capacity(entries.len());
     for (index, &handle) in entries.iter().enumerate() {
         // Unreachable in practice: the sequence draws from this same
         // snapshot.
         let toplevel = snapshot.toplevels.iter().find(|t| t.handle == handle)?;
+        let (title, band) = compose_title(
+            &toplevel.title,
+            &toplevel.app_id,
+            RowKind::Leaf,
+            &mut text,
+            scale,
+        );
         rows.push(RowModel {
-            title: truncate_cols(
-                fold_title(&display_title(&toplevel.title, &toplevel.app_id)),
-                MAX_COLS,
-            ),
+            title,
             icon: icons.bitmap(&toplevel.app_id, scale, palette),
             selected: index == sel,
             handle: Some(handle),
@@ -1000,8 +1034,9 @@ pub fn overlay_model(
             hint: RowHint::ctrl(index),
             expanded: false,
         });
+        bands.push(band);
     }
-    finish_model(rows, sel, windowing, profile)
+    finish_model(rows, sel, windowing, profile, bands)
 }
 
 /// Builds the grouped overlay contents: the session's frozen tree cut to
@@ -1009,7 +1044,8 @@ pub fn overlay_model(
 /// with the tree row `selected` highlighted. Titles and icons draw from
 /// `snapshot`; the window set does not — a window that appeared after
 /// the session froze never joins the card, and one that died was
-/// filtered out of `visible` by the caller.
+/// filtered out of `visible` by the caller. Titles compose through
+/// `text` (the session's frozen backend; see [`TextBackend`]).
 ///
 /// Level-1 rows (app entries and leaves) hint their Ctrl+N chord by
 /// position among level 1; a child hints its Alt+N chord by position
@@ -1022,9 +1058,8 @@ pub fn overlay_model(
 /// parent badge, so the card is stable under stepping and breathes
 /// only when the user expands or collapses. Returns `None` when
 /// nothing is visible or the selection is not on a visible row.
-// Ten render inputs, each a distinct concern (tree, visible window,
-// selection, cycle scope, snapshot, icons, scale, colors, shape,
-// windowing) — the flat builder's seam, one level deeper.
+// Eleven render inputs — the text backend joined the flat builder's
+// seam one level deeper (its note).
 #[expect(clippy::too_many_arguments)]
 pub fn overlay_model_grouped(
     tree: &switcher::Grouping,
@@ -1037,9 +1072,11 @@ pub fn overlay_model_grouped(
     palette: &Palette,
     profile: StyleProfile,
     windowing: Windowing,
+    mut text: TextBackend<'_>,
 ) -> Option<OverlayModel> {
     let sel = visible.iter().position(|&index| index == selected)?;
     let mut rows = Vec::with_capacity(visible.len());
+    let mut bands = Vec::with_capacity(visible.len());
     // The hint ordinals: level-1 position (Ctrl) and position within
     // the open group (Alt) — the parent row resets the child count.
     let mut level1 = 0;
@@ -1054,11 +1091,15 @@ pub fn overlay_model_grouped(
             .find(|t| t.handle == grow.handle)?;
         match grow.kind {
             RowKind::Child => {
+                let (title, band) = compose_title(
+                    &toplevel.title,
+                    &toplevel.app_id,
+                    RowKind::Child,
+                    &mut text,
+                    scale,
+                );
                 rows.push(RowModel {
-                    title: truncate_cols(
-                        fold_title(&display_title(&toplevel.title, &toplevel.app_id)),
-                        MAX_COLS - TREE_INDENT / TEXT_W,
-                    ),
+                    title,
                     icon: icons.bitmap(&toplevel.app_id, scale, palette),
                     selected: index == selected,
                     handle: Some(grow.handle),
@@ -1067,6 +1108,7 @@ pub fn overlay_model_grouped(
                     hint: RowHint::alt(child),
                     expanded: false,
                 });
+                bands.push(band);
                 child += 1;
             }
             kind => {
@@ -1089,14 +1131,18 @@ pub fn overlay_model_grouped(
                     // only through the chevron. Under open cycling an
                     // expanded entry is a divider — [`divider`]: it
                     // still counts toward the Ctrl+N ordinal (the
-                    // chord works), it just says nothing.
+                    // chord works), it just says nothing. The label
+                    // composes with no app_id fallback — the grouping
+                    // tree only parents non-empty app_ids.
                     let hint = if divider(RowKind::Parent, expanded, scoped) {
                         None
                     } else {
                         RowHint::ctrl(ordinal)
                     };
+                    let (title, band) =
+                        compose_title(&grow.app_id, "", RowKind::Parent, &mut text, scale);
                     rows.push(RowModel {
-                        title: truncate_cols(fold_title(&grow.app_id), MAX_COLS - BADGE_COLS),
+                        title,
                         icon: icons.bitmap(&grow.app_id, scale, palette),
                         selected: index == selected,
                         handle: Some(grow.handle),
@@ -1105,12 +1151,17 @@ pub fn overlay_model_grouped(
                         hint,
                         expanded,
                     });
+                    bands.push(band);
                 } else {
+                    let (title, band) = compose_title(
+                        &toplevel.title,
+                        &toplevel.app_id,
+                        RowKind::Leaf,
+                        &mut text,
+                        scale,
+                    );
                     rows.push(RowModel {
-                        title: truncate_cols(
-                            fold_title(&display_title(&toplevel.title, &toplevel.app_id)),
-                            MAX_COLS,
-                        ),
+                        title,
                         icon: icons.bitmap(&toplevel.app_id, scale, palette),
                         selected: index == selected,
                         handle: Some(grow.handle),
@@ -1119,32 +1170,84 @@ pub fn overlay_model_grouped(
                         hint: RowHint::ctrl(ordinal),
                         expanded: false,
                     });
+                    bands.push(band);
                 }
             }
         }
     }
-    finish_model(rows, sel, windowing, profile)
+    finish_model(rows, sel, windowing, profile, bands)
+}
+
+/// Composes one row's title under `text`'s backend and returns it with
+/// the title-band width the card sizes from (the title's own px — the
+/// kind's extras are geometry and ride in the same number so
+/// [`finish_model`] sees one width per row).
+///
+/// The two backends are two honest faces of one budget: `Bitmap` folds
+/// and column-caps exactly as shipped (byte-identity — the floor's
+/// every pin depends on it); `System` measures the un-folded title
+/// through the real font and pixel-budgets it — real glyphs, real
+/// accents, fallback chains — with the kind's extras paid out of the
+/// same [`MAX_COLS`] × [`TEXT_W`] territory (the child indent and the
+/// parent badge always fit, exactly as the column caps paid for them).
+fn compose_title(
+    title: &str,
+    app_id: &str,
+    kind: RowKind,
+    text: &mut TextBackend<'_>,
+    scale: u32,
+) -> (String, u32) {
+    // A parent's label is its app_id verbatim — no `display_title`
+    // fallback (the grouping tree only parents non-empty app_ids, and
+    // the floor's byte-identity keeps the raw path).
+    let label = |title: &str| -> String {
+        if kind == RowKind::Parent {
+            title.to_owned()
+        } else {
+            display_title(title, app_id)
+        }
+    };
+    match text {
+        TextBackend::Bitmap => {
+            let cap = match kind {
+                RowKind::Child => MAX_COLS - TREE_INDENT / TEXT_W,
+                RowKind::Parent => MAX_COLS - BADGE_COLS,
+                RowKind::Leaf => MAX_COLS,
+            };
+            let folded = truncate_cols(fold_title(&label(title)), cap);
+            let band = folded.chars().count() as u32 * TEXT_W
+                + (kind == RowKind::Child) as u32 * TREE_INDENT
+                + (kind == RowKind::Parent) as u32 * BADGE_COLS * TEXT_W;
+            (folded, band)
+        }
+        TextBackend::System { system, query } => {
+            let extras = match kind {
+                RowKind::Child => TREE_INDENT,
+                RowKind::Parent => BADGE_COLS * TEXT_W,
+                RowKind::Leaf => 0,
+            };
+            let budget = (MAX_COLS * TEXT_W - extras) as f32;
+            let (display, run) = system.shape_budgeted(&label(title), *query, scale, budget);
+            // Ceiling: the card must be at least as wide as the ink it
+            // holds, whole logical px.
+            (display, run.width_px.ceil() as u32 + extras)
+        }
+    }
 }
 
 /// The builders' shared tail: widest-row sizing, the windowing rule, and
-/// the continuation rows at truncated edges. `sel` indexes `rows`; the
-/// profile sizes the card's height and rides onto the model for the
-/// renderer and the pointer to read back.
+/// the continuation rows at truncated edges. `sel` indexes `rows`;
+/// `bands` carries each row's title-band width (one per row, the
+/// backend's own measure); the profile sizes the card's height and
+/// rides onto the model for the renderer and the pointer to read back.
 fn finish_model(
     rows: Vec<RowModel>,
     sel: usize,
     windowing: Windowing,
     profile: StyleProfile,
+    bands: Vec<u32>,
 ) -> Option<OverlayModel> {
-    let cols = rows
-        .iter()
-        .map(|row| {
-            row.title.chars().count() as u32
-                + (row.kind == RowKind::Child) as u32 * (TREE_INDENT / TEXT_W)
-                + (row.kind == RowKind::Parent) as u32 * BADGE_COLS
-        })
-        .max()
-        .unwrap_or(0);
+    let band = bands.iter().copied().max().unwrap_or(0);
     let viewport = visible_window(rows.len(), sel, windowing.rows, windowing.prev);
     let mut windowed =
         Vec::with_capacity(viewport.top as usize + viewport.content + viewport.bottom as usize);
@@ -1159,7 +1262,11 @@ fn finish_model(
     let count = windowed.len() as u32;
     Some(OverlayModel {
         rows: windowed,
-        width: 2 * PAD_X + ICON + ICON_GAP + cols * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
+        // The title band's width is the widest row's own measure —
+        // columns × TEXT_W on the Bitmap floor, measured ink on System
+        // — under the same ceiling: the band never exceeds
+        // MAX_COLS × TEXT_W (the compile-time pin above its formula).
+        width: 2 * PAD_X + ICON + ICON_GAP + band + HINT_GAP + HINT_COLS * TEXT_W,
         // The row gap lives between rows only; the bottom edge mirrors
         // the top. Height follows the profile's rhythm — width never
         // does (density has no width analogue).
@@ -1196,13 +1303,17 @@ fn edge_spans(ly: u32, lh: u32, lw: u32, reach: u32) -> [(u32, u32); 2] {
 
 /// Renders `model` into `canvas` as ARGB8888 (`stride` bytes per row) at
 /// `scale` device pixels per logical pixel, in the card colors of
-/// `palette`.
+/// `palette`, painting text through `text` (the session's frozen
+/// backend; see [`TextBackend`]).
 ///
 /// Paint order, back to front: card fill through the rounded-corner
 /// coverage mask, selection band per selected row, title glyphs, app
 /// icons, and the border hairline last so the stroke reads above the
 /// selection. Every device pixel inside `width`/`height` is written;
 /// coordinates outside are skipped, so an oversized canvas is harmless.
+// Nine render inputs — the text backend joined the seam beside the
+/// windowing and the shape profile (the geometry follow's note).
+#[expect(clippy::too_many_arguments)]
 pub fn render(
     model: &OverlayModel,
     canvas: &mut [u8],
@@ -1211,6 +1322,7 @@ pub fn render(
     stride: u32,
     scale: u32,
     palette: &Palette,
+    mut text: TextBackend<'_>,
 ) {
     // Unreachable in production (render_scale clamps with max(2, ·)),
     // but render is pub: fail loudly in debug, clamp in release, never
@@ -1282,17 +1394,42 @@ pub fn render(
         // the native-resolution round passing both palettes over both
         // backdrops at even perceived weight.
         if row.handle.is_none() {
-            let dots_x = lw.saturating_sub(TEXT_W) / 2;
-            let dots_y = top + (rhythm.row_h - TEXT_H) / 2;
-            draw_glyph(
-                canvas,
-                stride,
-                ELLIPSIS_GLYPH,
-                dots_x * scale,
-                dots_y * scale,
-                TEXT_W * scale / GLYPH_W,
-                palette.muted,
-            );
+            match &mut text {
+                TextBackend::Bitmap => {
+                    let dots_x = lw.saturating_sub(TEXT_W) / 2;
+                    let dots_y = top + (rhythm.row_h - TEXT_H) / 2;
+                    draw_glyph(
+                        canvas,
+                        stride,
+                        ELLIPSIS_GLYPH,
+                        dots_x * scale,
+                        dots_y * scale,
+                        TEXT_W * scale / GLYPH_W,
+                        palette.muted,
+                    );
+                }
+                TextBackend::System { system, query } => {
+                    // The font's own `…` on the same muted line: the
+                    // measured ink centers on the card (the LV3
+                    // card-centered rule, now against real metrics),
+                    // the baseline by the ink box.
+                    let run = system.shape("…", *query, scale);
+                    let dots_x = lw.saturating_sub(run.width_px.ceil() as u32) / 2;
+                    let baseline =
+                        top + crate::text::centering(run.ascent_px, run.descent_px, rhythm.row_h);
+                    paint_run(
+                        system,
+                        &run,
+                        canvas,
+                        stride,
+                        scale,
+                        palette.muted,
+                        dots_x,
+                        baseline,
+                        lw,
+                    );
+                }
+            }
             continue;
         }
         if row.selected {
@@ -1363,25 +1500,53 @@ pub fn render(
         // Title: vertically centered against the row, stopping at the
         // title band's right edge — the hint's territory is its own, so
         // even a max-cols title can never touch a hint (the model sizes
-        // for `cols`; this guard is the defense in depth).
-        let text_y = top + (rhythm.row_h - TEXT_H) / 2;
+        // for the band; the edge guard is the defense in depth). The
+        // match also fixes the row's text line for the chip and hint
+        // below: on Bitmap that is the TEXT_H cell's top y, on System
+        // the shaped run's baseline — each backend's own anchor — and
+        // `title_end` is where the title's ink stopped (the chip's
+        // clearing measures from it).
         let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * TEXT_W);
-        let mut lx = cell_x + ICON + ICON_GAP;
-        for ch in row.title.chars() {
-            if lx + TEXT_W > title_edge {
-                break;
+        let title_x = cell_x + ICON + ICON_GAP;
+        let (text_line_y, title_end) = match &mut text {
+            TextBackend::Bitmap => {
+                let text_y = top + (rhythm.row_h - TEXT_H) / 2;
+                let mut lx = title_x;
+                for ch in row.title.chars() {
+                    if lx + TEXT_W > title_edge {
+                        break;
+                    }
+                    draw_glyph(
+                        canvas,
+                        stride,
+                        glyph(ch),
+                        lx * scale,
+                        text_y * scale,
+                        TEXT_W * scale / GLYPH_W,
+                        palette.text,
+                    );
+                    lx += TEXT_W;
+                }
+                (text_y, lx)
             }
-            draw_glyph(
-                canvas,
-                stride,
-                glyph(ch),
-                lx * scale,
-                text_y * scale,
-                TEXT_W * scale / GLYPH_W,
-                palette.text,
-            );
-            lx += TEXT_W;
-        }
+            TextBackend::System { system, query } => {
+                let run = system.shape(&row.title, *query, scale);
+                let baseline =
+                    top + crate::text::centering(run.ascent_px, run.descent_px, rhythm.row_h);
+                paint_run(
+                    system,
+                    &run,
+                    canvas,
+                    stride,
+                    scale,
+                    palette.text,
+                    title_x,
+                    baseline,
+                    title_edge,
+                );
+                (baseline, title_x + run.width_px.ceil() as u32)
+            }
+        };
         // Parent count chip and disclosure chevron — re-pinned
         // 2026-11-08 (owner, in-thread) for prominence after the muted
         // `x3` text and `>`/`v` glyphs proved unnoticeable. The chip is
@@ -1398,7 +1563,7 @@ pub fn render(
         if row.kind == RowKind::Parent {
             let digits: Vec<char> = row.count.to_string().chars().take(2).collect();
             let chip_w = digits.len() as u32 * TEXT_W + 2 * BADGE_PAD_X;
-            let chip_x = lx + BADGE_GAP;
+            let chip_x = title_end + BADGE_GAP;
             let chip_y = top + (rhythm.row_h - BADGE_H) / 2;
             if chip_x + chip_w <= title_edge {
                 // The pill: exact rounded-rect coverage, the same
@@ -1436,20 +1601,42 @@ pub fn render(
                 }
                 // The count digit, centered in the chip and cut out in
                 // the card's own background.
-                let digit_x = chip_x + (chip_w - digits.len() as u32 * TEXT_W) / 2;
-                let digit_y = chip_y + (BADGE_H - TEXT_H) / 2;
-                let mut dx = digit_x;
-                for ch in digits {
-                    draw_glyph(
-                        canvas,
-                        stride,
-                        glyph(ch),
-                        dx * scale,
-                        digit_y * scale,
-                        TEXT_W * scale / GLYPH_W,
-                        palette.background,
-                    );
-                    dx += TEXT_W;
+                match &mut text {
+                    TextBackend::Bitmap => {
+                        let digit_x = chip_x + (chip_w - digits.len() as u32 * TEXT_W) / 2;
+                        let digit_y = chip_y + (BADGE_H - TEXT_H) / 2;
+                        let mut dx = digit_x;
+                        for ch in digits {
+                            draw_glyph(
+                                canvas,
+                                stride,
+                                glyph(ch),
+                                dx * scale,
+                                digit_y * scale,
+                                TEXT_W * scale / GLYPH_W,
+                                palette.background,
+                            );
+                            dx += TEXT_W;
+                        }
+                    }
+                    TextBackend::System { system, query } => {
+                        let label: String = digits.into_iter().collect();
+                        let run = system.shape(&label, *query, scale);
+                        let digit_x = chip_x + (chip_w - run.width_px.ceil() as u32) / 2;
+                        let baseline =
+                            chip_y + crate::text::centering(run.ascent_px, run.descent_px, BADGE_H);
+                        paint_run(
+                            system,
+                            &run,
+                            canvas,
+                            stride,
+                            scale,
+                            palette.background,
+                            digit_x,
+                            baseline,
+                            chip_x + chip_w,
+                        );
+                    }
                 }
             }
             let chevron = if row.expanded {
@@ -1472,26 +1659,46 @@ pub fn render(
         }
         // Hint: the row's own number chord, right-aligned in the band
         // the card always reserves and vertically centered on the
-        // titles' own line. Rows past nine paint nothing — every
+        // titles' own line (`text_line_y`: the Bitmap cell top, the
+        // System baseline). Rows past nine paint nothing — every
         // displayed hint is a wired key (the model's [`RowHint`] is
         // that truth's single source, paired with `key_input`).
         if let Some(label) = row.hint.map(RowHint::label) {
             let band_right = lw.saturating_sub(PAD_X);
-            let mut hx = band_right.saturating_sub(label.chars().count() as u32 * TEXT_W);
-            for ch in label.chars() {
-                if hx + TEXT_W > band_right {
-                    break; // a degenerate canvas: never paint past the card
+            match &mut text {
+                TextBackend::Bitmap => {
+                    let mut hx = band_right.saturating_sub(label.chars().count() as u32 * TEXT_W);
+                    for ch in label.chars() {
+                        if hx + TEXT_W > band_right {
+                            break; // a degenerate canvas: never paint past the card
+                        }
+                        draw_glyph(
+                            canvas,
+                            stride,
+                            glyph(ch),
+                            hx * scale,
+                            text_line_y * scale,
+                            TEXT_W * scale / GLYPH_W,
+                            palette.muted,
+                        );
+                        hx += TEXT_W;
+                    }
                 }
-                draw_glyph(
-                    canvas,
-                    stride,
-                    glyph(ch),
-                    hx * scale,
-                    text_y * scale,
-                    TEXT_W * scale / GLYPH_W,
-                    palette.muted,
-                );
-                hx += TEXT_W;
+                TextBackend::System { system, query } => {
+                    let run = system.shape(&label, *query, scale);
+                    let hx = band_right.saturating_sub(run.width_px.ceil() as u32);
+                    paint_run(
+                        system,
+                        &run,
+                        canvas,
+                        stride,
+                        scale,
+                        palette.muted,
+                        hx,
+                        text_line_y,
+                        band_right,
+                    );
+                }
             }
         }
     }
@@ -1638,6 +1845,70 @@ fn mix_pixel(dst: u32, src: u32, coverage: u8) -> u32 {
         | (mix((src >> 16) & 0xFF, (dst >> 16) & 0xFF) << 16)
         | (mix((src >> 8) & 0xFF, (dst >> 8) & 0xFF) << 8)
         | mix(src & 0xFF, dst & 0xFF)
+}
+
+/// Paints one shaped run through the System backend: each glyph's
+/// cached-or-rasterized mask composites over the canvas at its
+/// whole-device-pixel position — pen `x_logical`, baseline
+/// `baseline_logical` — with every pixel past `edge_logical` (logical)
+/// skipped, the title-band guard the Bitmap loop's break has always
+/// been. Coverage blends toward `color` by the mask's ramp (grayscale
+/// AA, the corners' own arithmetic); a color-bitmap glyph (the fallback
+/// chains' emoji pick) paints its own RGB under its alpha instead — a
+/// small image, exactly the honesty the themed icons practice.
+// Eight paint inputs, the render seam's own (canvas, stride, scale,
+// run, color, position, edge) — the Bitmap twin's draw_glyph signature
+// flattened one level up.
+#[expect(clippy::too_many_arguments)]
+fn paint_run(
+    system: &mut crate::text::TextSystem,
+    run: &crate::text::GlyphRun,
+    canvas: &mut [u8],
+    stride: u32,
+    scale: u32,
+    color: u32,
+    x_logical: u32,
+    baseline_logical: u32,
+    edge_logical: u32,
+) {
+    let pen = i64::from(x_logical) * i64::from(scale);
+    let baseline = i64::from(baseline_logical) * i64::from(scale);
+    let edge = i64::from(edge_logical) * i64::from(scale);
+    for glyph in &run.glyphs {
+        // The immutable mask borrow outlives only the pixel loop — the
+        // canvas is not the system's, so no borrow crosses a mutation.
+        let Some(mask) = system.mask(&glyph.cache_key) else {
+            continue; // nothing rasterizable: skip, as cosmic's own renderer would
+        };
+        for row in 0..mask.height as i64 {
+            for col in 0..mask.width as i64 {
+                let index = (row * mask.width as i64 + col) as usize;
+                let coverage = mask.coverage[index];
+                if coverage == 0 {
+                    continue;
+                }
+                let x = pen + i64::from(glyph.x) + i64::from(mask.left) + col;
+                if x < 0 || x >= edge {
+                    continue; // the band guard
+                }
+                let y = baseline + i64::from(glyph.y) + i64::from(mask.top) + row;
+                let pixel = y * i64::from(stride) + x * 4;
+                if pixel < 0 {
+                    continue;
+                }
+                let Some(slot) = canvas.get_mut(pixel as usize..pixel as usize + 4) else {
+                    continue; // off the canvas: an oversized canvas is harmless
+                };
+                let dst = u32::from_le_bytes(slot.try_into().expect("pixel is four bytes"));
+                let paint = mask.colors.as_ref().map_or(color, |rgb| {
+                    let [r, g, b] = rgb[index];
+                    0xFF00_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
+                });
+                let out = mix_pixel(dst, paint, coverage);
+                slot.copy_from_slice(&out.to_le_bytes());
+            }
+        }
+    }
 }
 
 /// Draws one 8×8 glyph in `text` color with `block` device pixels per
@@ -2457,6 +2728,7 @@ mod tests {
                 rows: DEFAULT_ROWS,
                 prev: None,
             },
+            TextBackend::Bitmap,
         )
     }
 
@@ -2467,7 +2739,16 @@ mod tests {
         let (w, h) = (model.width * scale, model.height * scale);
         let stride = w * 4;
         let mut canvas = vec![0u8; (stride * h) as usize];
-        render(model, &mut canvas, w, h, stride, scale, &Palette::dark());
+        render(
+            model,
+            &mut canvas,
+            w,
+            h,
+            stride,
+            scale,
+            &Palette::dark(),
+            TextBackend::Bitmap,
+        );
         (canvas, stride)
     }
 
@@ -2694,6 +2975,7 @@ mod tests {
                 rows: DEFAULT_ROWS,
                 prev: None,
             },
+            TextBackend::Bitmap,
         )
         .expect("eligible windows exist");
         let (canvas, _) = rendered(&model, 2);
@@ -2730,6 +3012,7 @@ mod tests {
                     rows: DEFAULT_ROWS,
                     prev: None,
                 },
+                TextBackend::Bitmap,
             )
             .expect("eligible windows exist");
             assert_eq!(model.profile, profile, "the model carries what it renders");
@@ -2761,6 +3044,7 @@ mod tests {
                 rows: DEFAULT_ROWS,
                 prev: None,
             },
+            TextBackend::Bitmap,
         )
         .expect("eligible windows exist");
         let rhythm = rhythm(Density::Spacious);
@@ -3434,6 +3718,7 @@ mod tests {
             &Palette::dark(),
             StyleProfile::default(),
             Windowing { rows, prev },
+            TextBackend::Bitmap,
         )
     }
 
@@ -3469,6 +3754,7 @@ mod tests {
                 rows: DEFAULT_ROWS,
                 prev: None,
             },
+            TextBackend::Bitmap,
         )
     }
 
@@ -3711,6 +3997,7 @@ mod tests {
                 rows: 3,
                 prev: None,
             },
+            TextBackend::Bitmap,
         )
         .expect("eligible windows exist");
         let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
@@ -4084,7 +4371,16 @@ mod tests {
             let (w, h) = (model.width * 2, model.height * 2);
             let stride = w * 4;
             let mut canvas = vec![0u8; (stride * h) as usize];
-            render(&model, &mut canvas, w, h, stride, 2, &palette);
+            render(
+                &model,
+                &mut canvas,
+                w,
+                h,
+                stride,
+                2,
+                &palette,
+                TextBackend::Bitmap,
+            );
             for slot in [0, 9] {
                 let mut paints = 0;
                 let mut muted = 0;
@@ -4488,7 +4784,16 @@ mod tests {
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4;
         let mut canvas = vec![0u8; (stride * h) as usize];
-        render(&model, &mut canvas, w, h, stride, 2, &palette);
+        render(
+            &model,
+            &mut canvas,
+            w,
+            h,
+            stride,
+            2,
+            &palette,
+            TextBackend::Bitmap,
+        );
         assert_eq!(
             palette.selected_bg,
             blend_over(palette.background, palette.text, 20)
@@ -4995,7 +5300,16 @@ mod tests {
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4 + 64; // padding between rows, like a shared pool
         let mut canvas = vec![0x11; (stride * h) as usize];
-        render(&model, &mut canvas, w, h, stride, 2, &Palette::dark());
+        render(
+            &model,
+            &mut canvas,
+            w,
+            h,
+            stride,
+            2,
+            &Palette::dark(),
+            TextBackend::Bitmap,
+        );
         // The 'A' pixels land at the text origin — font column 2 — not
         // at the row start.
         let block = TEXT_W * 2 / GLYPH_W;
@@ -5261,7 +5575,16 @@ mod tests {
         // 30 iterations at 4× the pre-refresh pixel count ≈ twice the
         // old guard's total work (200 renders of the 8-px card).
         for _ in 0..30 {
-            render(&model, &mut canvas, w, h, stride, 2, &Palette::dark());
+            render(
+                &model,
+                &mut canvas,
+                w,
+                h,
+                stride,
+                2,
+                &Palette::dark(),
+                TextBackend::Bitmap,
+            );
         }
         let elapsed = start.elapsed();
         assert!(
@@ -6486,5 +6809,270 @@ mod tests {
         assert_eq!(hover.observe(Some(3)), Some(3));
         hover.reset();
         assert_eq!(hover.observe(Some(3)), None, "fresh session seeds again");
+    }
+
+    // --- the System text backend (typography TY3) -------------------------
+
+    /// The committed fixture's text system — a fresh database holding
+    /// only `res/test-fonts`, never the host's fonts.
+    fn fixture_text() -> crate::text::TextSystem {
+        crate::text::TextSystem::from_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("res/test-fonts"),
+        )
+    }
+
+    /// A one-window snapshot titled `title`, active on workspace 1.
+    fn titled_snapshot(title: &str) -> Snapshot {
+        let toplevels = vec![toplevel(
+            1,
+            title,
+            "app.a",
+            &[1],
+            switcher::State::ACTIVATED,
+            1,
+        )];
+        snapshot(toplevels, Some(1))
+    }
+
+    /// The card-width formula's ceiling — the title band can never
+    /// exceed `MAX_COLS × TEXT_W`, so the card can never either.
+    fn card_width_ceiling() -> u32 {
+        2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
+    }
+
+    #[test]
+    fn system_titles_stay_unfolded_and_budget_inside_the_band() {
+        let snap = titled_snapshot(&"W".repeat(64));
+        let mut text = fixture_text();
+        let model = overlay_model(
+            &snap,
+            Handle(1),
+            Scope::CurrentWorkspace,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            StyleProfile::default(),
+            Windowing {
+                rows: DEFAULT_ROWS,
+                prev: None,
+            },
+            TextBackend::System {
+                system: &mut text,
+                query: crate::text::FontQuery::SansSerif,
+            },
+        )
+        .expect("eligible windows exist");
+        let title = &model.rows[0].title;
+        assert!(
+            title.ends_with('\u{2026}'),
+            "the cut marker is the font's own ellipsis"
+        );
+        assert!(title.chars().count() < 64, "the budget cut something");
+        assert!(
+            model.width <= card_width_ceiling(),
+            "the System card never exceeds the formula's ceiling"
+        );
+        assert!(
+            model.width > 2 * PAD_X + ICON + ICON_GAP,
+            "the title band still holds ink"
+        );
+    }
+
+    #[test]
+    fn system_titles_render_unicode_verbatim() {
+        // The fold is the Bitmap floor's degradation, not the System
+        // path's: accents and CJK ride the title string un-folded (the
+        // fixture db carries Latin; the CJK run shapes through the
+        // empty fallback to nothing — the string itself is the pin).
+        let snap = titled_snapshot("café — naïve.txt");
+        let mut text = fixture_text();
+        let model = overlay_model(
+            &snap,
+            Handle(1),
+            Scope::CurrentWorkspace,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            StyleProfile::default(),
+            Windowing {
+                rows: DEFAULT_ROWS,
+                prev: None,
+            },
+            TextBackend::System {
+                system: &mut text,
+                query: crate::text::FontQuery::SansSerif,
+            },
+        )
+        .expect("eligible windows exist");
+        assert_eq!(model.rows[0].title, "café — naïve.txt");
+    }
+
+    #[test]
+    fn system_render_paints_real_glyphs_deterministically() {
+        let snap = titled_snapshot("Airlock — the fixture face");
+        let mut composer = fixture_text();
+        let model = overlay_model(
+            &snap,
+            Handle(1),
+            Scope::CurrentWorkspace,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            StyleProfile::default(),
+            Windowing {
+                rows: DEFAULT_ROWS,
+                prev: None,
+            },
+            TextBackend::System {
+                system: &mut composer,
+                query: crate::text::FontQuery::SansSerif,
+            },
+        )
+        .expect("eligible windows exist");
+
+        let render_system = |system: &mut crate::text::TextSystem| -> Vec<u8> {
+            let (w, h) = (model.width * 2, model.height * 2);
+            let stride = w * 4;
+            let mut canvas = vec![0u8; (stride * h) as usize];
+            render(
+                &model,
+                &mut canvas,
+                w,
+                h,
+                stride,
+                2,
+                &Palette::dark(),
+                TextBackend::System {
+                    system,
+                    query: crate::text::FontQuery::SansSerif,
+                },
+            );
+            canvas
+        };
+        let first = render_system(&mut fixture_text());
+        let second = render_system(&mut fixture_text());
+        assert_eq!(first, second, "same model, same bytes, fresh systems");
+
+        // Real ink: full-coverage glyph cores paint the exact text
+        // color inside the title band. (A Bitmap render of this
+        // un-folded title would fold the em dash and mark — the
+        // backends differ by design.)
+        let stride = model.width * 2 * 4;
+        let title_x = (PAD_X + ICON + ICON_GAP) * 2;
+        let title_edge = (model.width - (PAD_X + HINT_GAP + HINT_COLS * TEXT_W)) * 2;
+        let (band_top, band_bottom) = (PAD_Y * 2, (PAD_Y + ROW_H) * 2);
+        let mut ink = 0;
+        for y in band_top..band_bottom {
+            for x in title_x..title_edge {
+                if pixel(&first, stride, x, y) == COLOR_TEXT {
+                    ink += 1;
+                }
+            }
+        }
+        assert!(
+            ink > 20,
+            "the fixture face paints real glyph cores ({ink} px)"
+        );
+    }
+
+    #[test]
+    fn system_ink_never_crosses_into_the_hint_gap() {
+        // A budget-length title is the worst case: its ink must stay
+        // inside the title band so the hint's territory is its own —
+        // the guard paint_run carries, proven on the strip that has
+        // nothing else painting into it.
+        let snap = titled_snapshot(&"W".repeat(64));
+        let mut composer = fixture_text();
+        let model = overlay_model(
+            &snap,
+            Handle(1),
+            Scope::CurrentWorkspace,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            StyleProfile::default(),
+            Windowing {
+                rows: DEFAULT_ROWS,
+                prev: None,
+            },
+            TextBackend::System {
+                system: &mut composer,
+                query: crate::text::FontQuery::SansSerif,
+            },
+        )
+        .expect("eligible windows exist");
+        let mut system = fixture_text();
+        let (w, h) = (model.width * 2, model.height * 2);
+        let stride = w * 4;
+        let mut canvas = vec![0u8; (stride * h) as usize];
+        render(
+            &model,
+            &mut canvas,
+            w,
+            h,
+            stride,
+            2,
+            &Palette::dark(),
+            TextBackend::System {
+                system: &mut system,
+                query: crate::text::FontQuery::SansSerif,
+            },
+        );
+        let gap_x0 = (model.width - (PAD_X + HINT_GAP + HINT_COLS * TEXT_W)) * 2;
+        let gap_x1 = (model.width - (PAD_X + HINT_COLS * TEXT_W)) * 2;
+        for y in (PAD_Y * 2)..((PAD_Y + ROW_H) * 2) {
+            for x in gap_x0..gap_x1 {
+                let argb = pixel(&canvas, stride, x, y);
+                assert_ne!(
+                    argb, COLOR_TEXT,
+                    "title ink crossed into the hint gap at ({x}, {y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn paint_run_skips_every_pixel_past_its_edge() {
+        // The band guard on its own, at the helper level: a run painted
+        // against a tight edge leaves every pixel beyond it untouched.
+        let mut system = fixture_text();
+        let run = system.shape("WWWWWWWWWW", crate::text::FontQuery::SansSerif, 2);
+        assert!(run.width_px > 8.0, "the run genuinely overflows the edge");
+        let (w, h) = (64u32, 24u32);
+        let stride = w * 4;
+        let sentinel = 0xFA_11_22_33u32;
+        let mut canvas = vec![0u8; (stride * h) as usize];
+        for slot in canvas.as_chunks_mut::<4>().0 {
+            slot.copy_from_slice(&sentinel.to_le_bytes());
+        }
+        paint_run(
+            &mut system,
+            &run,
+            &mut canvas,
+            stride,
+            2,
+            COLOR_TEXT,
+            0,
+            12,
+            8, // the edge: 8 logical px = 16 device
+        );
+        for y in 0..h {
+            for x in 16..w {
+                assert_eq!(
+                    pixel(&canvas, stride, x, y),
+                    sentinel,
+                    "a pixel past the edge changed at ({x}, {y})"
+                );
+            }
+        }
+        let mut inked = 0;
+        for y in 0..h {
+            for x in 0..16 {
+                if pixel(&canvas, stride, x, y) != sentinel {
+                    inked += 1;
+                }
+            }
+        }
+        assert!(inked > 10, "ink landed inside the edge ({inked} px)");
     }
 }

@@ -1390,6 +1390,11 @@ fn show_selection(
                 &palette,
                 current.profile,
                 windowing,
+                // TY3 wires the daemon's builds through the floor while
+                // the render path gains its System twin; TY4 resolves
+                // the backend per open (the `font` key, the follow, the
+                // zero-fonts floor) and freezes it on the session.
+                crate::ui::TextBackend::Bitmap,
             ),
             // Flat and same-app sessions (the exemption): the flat
             // card over the (possibly re-filtered) snapshot, selection
@@ -1409,6 +1414,7 @@ fn show_selection(
                         &palette,
                         current.profile,
                         windowing,
+                        crate::ui::TextBackend::Bitmap,
                     )
                 })
             }
