@@ -1160,19 +1160,6 @@ pub struct Banding {
     pub prev: Option<Viewport>,
 }
 
-/// Which band of the grouped-horizontal card holds the selection. The
-/// band is *focus*, not expansion: the combined card has no collapse
-/// state, so band 2 always shows the focused app's whole window set and
-/// this only says which of the two bands the selection sits in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Band {
-    /// Band 1: the app tiles (level-1 entries).
-    #[default]
-    Apps,
-    /// Band 2: the focused app's window tiles.
-    Windows,
-}
-
 /// Resolves the `columns` setting against the invoking output's
 /// logical width: `Pinned` is the budget verbatim (parser-guaranteed
 /// [`COLUMNS_MIN`]..=[`COLUMNS_MAX`]), `Auto` fits

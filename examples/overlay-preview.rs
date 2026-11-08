@@ -500,17 +500,17 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
         ..RowModel::default()
     };
     // apps: (label, window count); windows: the focused app's titles.
-    // selected: Some((Apps, i)) — the closed strip, an app tile; some
-    // ((Windows, pos)) — the open run, that window. The strip derives:
+    // selected: Some((false, i)) — the closed strip, an app tile;
+    // Some((true, pos)) — the open run, that window. The strip derives:
     // the focused app's tile is replaced in place by its run exactly
     // while a window holds the selection (`inplace-strip`).
     let combined = |apps: &[(&str, usize)],
                     focused: usize,
                     windows: &[&str],
-                    selected: Option<(ui::Band, usize)>,
+                    selected: Option<(bool, usize)>,
                     tiles: usize|
      -> OverlayModel {
-        let open = matches!(selected, Some((ui::Band::Windows, _)));
+        let open = matches!(selected, Some((true, _)));
         let mut full: Vec<RowModel> = Vec::new();
         let mut selected_row = 0usize;
         let mut icon_index = 0usize;
@@ -518,7 +518,7 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
         for (index, &(label, count)) in apps.iter().enumerate() {
             if open && index == focused {
                 for (position, window) in windows.iter().enumerate() {
-                    let selected = selected == Some((ui::Band::Windows, position));
+                    let selected = selected == Some((true, position));
                     if selected {
                         selected_row = full.len();
                     }
@@ -540,7 +540,7 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
                 );
                 row.kind = switcher_row_kind(count);
                 row.count = count;
-                if selected == Some((ui::Band::Apps, index)) {
+                if selected == Some((false, index)) {
                     selected_row = full.len();
                     row.selected = true;
                 }
@@ -584,7 +584,7 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
             &[("Files", 2), ("Editor", 5), ("Terminal", 3)],
             1,
             &editor_windows,
-            Some((ui::Band::Apps, 1)),
+            Some((false, 1)),
             8,
         ),
         // The same session with band 2 holding the selection, mid-list.
@@ -592,7 +592,7 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
             &[("Files", 2), ("Editor", 5), ("Terminal", 3)],
             1,
             &editor_windows,
-            Some((ui::Band::Windows, 1)),
+            Some((true, 1)),
             8,
         ),
         // A single-window app focused: band 2 shows its one tile.
@@ -614,7 +614,7 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
             ],
             1,
             &editor_windows,
-            Some((ui::Band::Windows, 4)),
+            Some((true, 4)),
             ui::COLUMNS_MIN,
         ),
     ]
