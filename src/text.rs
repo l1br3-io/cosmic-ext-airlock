@@ -57,7 +57,7 @@ pub const GLYPH_CACHE_CAP: usize = 1024;
 /// Resolution is paint-time by design — an unresolvable name never
 /// fails here, it shapes through cosmic-text's fallback and the caller
 /// logs the diagnostic (the `font` key's never-a-broken-switch rule).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontQuery<'a> {
     SansSerif,
     Named(&'a str),
@@ -94,6 +94,38 @@ pub struct GlyphRun {
     pub ascent_px: f32,
     /// Font descent below the baseline, logical px (positive down).
     pub descent_px: f32,
+}
+
+/// How many leading units of `advances` (per-cluster measured widths,
+/// logical px) fit `budget_px` once the ellipsis's own width rides
+/// along: the largest `k` with `advances[..k] + ellipsis_px ≤ budget`.
+/// Pure over measured widths — no font present, testable with
+/// synthetic data. `0` when even the ellipsis alone cannot fit; the
+/// whole input when everything fits.
+pub fn truncate_to_budget(advances: &[f32], ellipsis_px: f32, budget_px: f32) -> usize {
+    let mut kept = 0.0f32;
+    let mut count = 0usize;
+    for &advance in advances {
+        if kept + advance + ellipsis_px > budget_px {
+            break;
+        }
+        kept += advance;
+        count += 1;
+    }
+    count
+}
+
+/// The baseline's y position inside a row `row_h` logical px tall, for
+/// a run with these font metrics: the ink box (ascent + descent)
+/// centers in the row, the baseline sits `ascent` below the ink top,
+/// and the answer rounds to a whole logical pixel — the System path's
+/// whole-pixel pin (the Bitmap path centers on its `TEXT_H` cells, its
+/// own rule). Clamped inside the row so degenerate metrics can never
+/// place ink outside it.
+pub fn centering(ascent_px: f32, descent_px: f32, row_h: u32) -> u32 {
+    let ink = (ascent_px + descent_px).max(0.0);
+    let baseline = (row_h as f32 - ink) / 2.0 + ascent_px;
+    baseline.clamp(0.0, row_h as f32).round() as u32
 }
 
 /// One rasterized glyph: 8-bit coverage over a `width × height` block
@@ -208,6 +240,20 @@ impl TextSystem {
     /// an empty run — the caller's `(untitled)` path already owns that
     /// case.
     pub fn shape(&mut self, text: &str, query: FontQuery<'_>, scale: u32) -> GlyphRun {
+        self.shape_with_clusters(text, query, scale).0
+    }
+
+    /// [`shape`] plus the per-cluster facts truncation needs: each
+    /// cluster's end byte in `text` and the advance it consumed. A
+    /// cluster is the byte range one user-perceived character shaped
+    /// into (a base char, or a base with combining marks, or a
+    /// fallback-script run member) — the unit a budget cut keeps whole.
+    fn shape_with_clusters(
+        &mut self,
+        text: &str,
+        query: FontQuery<'_>,
+        scale: u32,
+    ) -> (GlyphRun, Vec<Cluster>) {
         let resolved = match query {
             FontQuery::SansSerif => ResolvedFamily::SansSerif,
             FontQuery::Named(name) => ResolvedFamily::Named(name.to_owned()),
@@ -217,7 +263,7 @@ impl TextSystem {
             self.family = resolved;
         }
         if text.is_empty() {
-            return GlyphRun::default();
+            return (GlyphRun::default(), Vec::new());
         }
         let family = match &query {
             FontQuery::SansSerif => Family::SansSerif,
@@ -233,12 +279,17 @@ impl TextSystem {
         buffer.set_text(text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut self.fonts, false);
         let Some(run) = buffer.layout_runs().next() else {
-            return GlyphRun::default();
+            return (GlyphRun::default(), Vec::new());
         };
         // Copied out before the shaping read below mutates the buffer
         // (the run borrows it).
         let (line_i, line_w) = (run.line_i, run.line_w);
         let mut glyphs = Vec::with_capacity(run.glyphs.len());
+        // Clusters accumulate over the glyphs their range covers; the
+        // advance is the glyph hitbox width (`w`), the width cosmic's
+        // own hit-testing uses — for a budget cut, exact to well under
+        // a px where it differs from the pen advance at all.
+        let mut clusters: Vec<Cluster> = Vec::new();
         for glyph in run.glyphs {
             let physical = glyph.physical((0.0, 0.0), scale as f32);
             // Rebuild the key at whole-pixel bins: a glyph's raster
@@ -253,6 +304,15 @@ impl TextSystem {
                 x: physical.x,
                 y: physical.y,
             });
+            match clusters.last_mut() {
+                Some(cluster) if cluster.end_byte == glyph.end => {
+                    cluster.advance_px += glyph.w;
+                }
+                _ => clusters.push(Cluster {
+                    end_byte: glyph.end,
+                    advance_px: glyph.w,
+                }),
+            }
         }
         // Ascent/descent live on the laid-out line, which the run
         // borrows but does not expose: read them from the line's cached
@@ -268,12 +328,50 @@ impl TextSystem {
             })
             .and_then(|lines| lines.first().map(|layout| (layout.max_ascent, layout.max_descent)))
             .unwrap_or((0.0, 0.0));
-        GlyphRun {
-            glyphs,
-            width_px: line_w,
-            ascent_px,
-            descent_px,
+        (
+            GlyphRun {
+                glyphs,
+                width_px: line_w,
+                ascent_px,
+                descent_px,
+            },
+            clusters,
+        )
+    }
+
+    /// Shapes `title` under a pixel budget: a title wider than
+    /// `budget_px` keeps the longest cluster prefix that fits beside a
+    /// real `…` (the font's own ellipsis glyph, re-shaped in place),
+    /// and the answer carries both the display string the card stores
+    /// and the run its width came from. A title inside the budget
+    /// passes through untouched. The budget is the title band's own
+    /// width — `MAX_COLS × TEXT_W` — never the full card (the hint
+    /// band's territory is not the title's to spend).
+    pub fn shape_budgeted(
+        &mut self,
+        title: &str,
+        query: FontQuery<'_>,
+        scale: u32,
+        budget_px: f32,
+    ) -> (String, GlyphRun) {
+        let (run, clusters) = self.shape_with_clusters(title, query, scale);
+        if run.width_px <= budget_px || clusters.is_empty() {
+            return (title.to_owned(), run);
         }
+        let ellipsis_px = self.shape_with_clusters("…", query, scale).0.width_px;
+        let advances: Vec<f32> = clusters.iter().map(|c| c.advance_px).collect();
+        let kept = truncate_to_budget(&advances, ellipsis_px, budget_px);
+        // The cut at zero clusters is the degenerate budget (an
+        // ellipsis that cannot fit): show the ellipsis alone rather
+        // than nothing — a title row never paints empty.
+        let cut = if kept == 0 {
+            0
+        } else {
+            clusters[kept - 1].end_byte
+        };
+        let display = format!("{}…", &title[..cut]);
+        let run = self.shape_with_clusters(&display, query, scale).0;
+        (display, run)
     }
 
     /// Assembles a system around `fonts` with a cold cache.
@@ -284,6 +382,16 @@ impl TextSystem {
             family: ResolvedFamily::SansSerif,
         }
     }
+}
+
+/// One cluster's shaping facts, the unit a budget cut keeps whole.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Cluster {
+    /// End byte of the cluster in the shaped text (a UTF-8 boundary —
+    /// shaping's own cluster indices).
+    end_byte: usize,
+    /// Advance the cluster consumed, logical px.
+    advance_px: f32,
 }
 
 #[cfg(test)]
@@ -362,5 +470,150 @@ mod tests {
         // refilled), and clear() empties it for the family change.
         cache.clear();
         assert!(cache.is_empty());
+    }
+
+    // --- TY2: truncation, centering, budgeted shaping -------------------
+
+    /// The title band's budget, straight from the constants the Bitmap
+    /// path sizes by — the System path spends the same territory.
+    fn band_px() -> f32 {
+        (crate::ui::MAX_COLS * crate::ui::TEXT_W) as f32
+    }
+
+    #[test]
+    fn truncation_keeps_the_longest_prefix_that_fits_with_its_ellipsis() {
+        let widths = [10.0, 10.0, 10.0, 10.0, 10.0];
+        // 20 + 3 fits in 24; 30 + 3 does not — and one more unit past
+        // the cut must overflow (maximality).
+        let kept = truncate_to_budget(&widths, 3.0, 24.0);
+        assert_eq!(kept, 2);
+        let sum: f32 = widths[..kept].iter().sum();
+        assert!(sum + 3.0 <= 24.0, "the kept prefix + ellipsis fits");
+        if kept < widths.len() {
+            assert!(
+                sum + widths[kept] + 3.0 > 24.0,
+                "one more unit would overflow"
+            );
+        }
+    }
+
+    #[test]
+    fn truncation_passes_the_whole_input_through_when_it_fits() {
+        let widths = [10.0, 10.0, 10.0];
+        assert_eq!(truncate_to_budget(&widths, 3.0, 100.0), 3);
+        // Exact fit counts as fitting — the budget is inclusive.
+        assert_eq!(truncate_to_budget(&widths, 3.0, 33.0), 3);
+        // Nothing at all is the empty-input answer.
+        assert_eq!(truncate_to_budget(&[], 3.0, 24.0), 0);
+    }
+
+    #[test]
+    fn truncation_degenerates_to_nothing_when_the_ellipsis_alone_cannot_fit() {
+        assert_eq!(truncate_to_budget(&[10.0, 10.0], 5.0, 3.0), 0);
+    }
+
+    #[test]
+    fn truncation_never_exceeds_the_budget_over_wide_inputs() {
+        // A deterministic sweep of synthetic width patterns (no rand
+        // dependency): uniform, growing, alternating wide/narrow, and
+        // sub-pixel noise. The invariant is the spec's own: the kept
+        // prefix + ellipsis never exceeds the budget, and the cut is
+        // maximal.
+        let patterns: Vec<Vec<f32>> = vec![
+            vec![7.5; 80],
+            (0..80).map(|i| 1.0 + i as f32 * 0.25).collect(),
+            (0..80).map(|i| if i % 2 == 0 { 12.0 } else { 1.5 }).collect(),
+            (0..80).map(|i| 3.0 + (i % 7) as f32 * 0.3).collect(),
+        ];
+        for widths in patterns {
+            for budget in [1.0f32, 10.0, 57.6, 100.0, 576.0] {
+                let ellipsis = 4.2;
+                let kept = truncate_to_budget(&widths, ellipsis, budget);
+                let sum: f32 = widths[..kept].iter().sum();
+                // `kept == 0` is the degenerate budget where even the
+                // ellipsis cannot fit — the only state where the sum
+                // invariant has nothing to hold.
+                assert!(
+                    kept == 0 || sum + ellipsis <= budget,
+                    "kept prefix + ellipsis inside the budget"
+                );
+                if kept > 0 && kept < widths.len() {
+                    assert!(
+                        sum + widths[kept] + ellipsis > budget,
+                        "the cut is maximal"
+                    );
+                }
+                // Maximality at zero: a nonzero first unit would not
+                // have fit either.
+                if kept == 0 && !widths.is_empty() {
+                    assert!(
+                        widths[0] + ellipsis > budget,
+                        "zero is honest — one unit truly cannot fit"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn centering_lands_whole_px_inside_every_rhythm_row() {
+        let mut system = TextSystem::from_dir(&fixture_dir());
+        let run = system.shape("Airlock", FontQuery::SansSerif, 2);
+        assert!(run.ascent_px > 0.0 && run.descent_px > 0.0);
+        // The geometry ladders' three row heights: 40/48/56.
+        for row_h in [40u32, 48, 56] {
+            let baseline = centering(run.ascent_px, run.descent_px, row_h);
+            assert!(
+                baseline > 0 && baseline < row_h,
+                "the baseline sits inside a {row_h}-px row"
+            );
+        }
+    }
+
+    #[test]
+    fn centering_mirrors_ink_within_the_row() {
+        // Equal ink, swapped halves: the two baselines sit symmetrically
+        // about the row's center (28 + 20 = 48).
+        assert_eq!(centering(10.0, 2.0, 48), 28);
+        assert_eq!(centering(2.0, 10.0, 48), 20);
+        assert_eq!(centering(10.0, 2.0, 48) + centering(2.0, 10.0, 48), 48);
+        // Degenerate metrics stay inside the row: ink dwarfing the row
+        // centers to a mid-row baseline ((48 − 180)/2 + 90 = 24), and
+        // zero ink parks the baseline at the center.
+        assert_eq!(centering(90.0, 90.0, 48), 24);
+        assert_eq!(centering(0.0, 0.0, 48), 24);
+    }
+
+    #[test]
+    fn a_64_char_title_budgets_to_inside_the_band_with_a_real_ellipsis() {
+        let mut system = TextSystem::from_dir(&fixture_dir());
+        let title = "W".repeat(64);
+        // Precondition: the full title genuinely overflows the band at
+        // the pinned 12 px (W is one of Open Sans's widest advances).
+        let full = system.shape(&title, FontQuery::SansSerif, 2);
+        assert!(
+            full.width_px > band_px(),
+            "the fixture's 64 Ws overflow the band"
+        );
+        let (display, run) = system.shape_budgeted(&title, FontQuery::SansSerif, 2, band_px());
+        assert!(
+            display.ends_with('…'),
+            "the truncation marker is the font's own ellipsis character"
+        );
+        assert!(display.chars().count() < 64, "something was cut");
+        // Sub-pixel float noise tolerance: the re-shaped kept prefix
+        // may differ from the accumulated cut by a hair.
+        assert!(
+            run.width_px <= band_px() + 1.0,
+            "the budgeted run stays inside the band"
+        );
+    }
+
+    #[test]
+    fn budget_passes_short_titles_through_untouched() {
+        let mut system = TextSystem::from_dir(&fixture_dir());
+        let (display, run) = system.shape_budgeted("Airlock", FontQuery::SansSerif, 2, band_px());
+        assert_eq!(display, "Airlock");
+        assert!(run.width_px <= band_px());
     }
 }
