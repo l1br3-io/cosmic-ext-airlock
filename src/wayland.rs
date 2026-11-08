@@ -532,28 +532,42 @@ impl KeyboardHandler for App {
         event: KeyEvent,
     ) {
         if self.overlay.is_some() {
-            // The key map rides the shown card: Tab/→/← mean tree walks
-            // exactly when the visible list paints the tree.
-            let grouped = self.overlay.as_ref().is_some_and(|overlay| overlay.grouped);
+            // The key map rides the shown card: the overlay carries the
+            // mode it was painted under, so every key means what the
+            // visible list shows.
+            let mode = self
+                .overlay
+                .as_ref()
+                .map(|overlay| overlay.mode)
+                .unwrap_or(ui::KeyMode::Flat);
             let input = ui::key_input(
                 event.keysym,
                 self.shift_held,
                 self.ctrl_held,
                 self.alt_held,
-                grouped,
+                mode,
             );
             // The Select twins: `key_input` stays pure (a keysym →
             // address translation), and every address resolves to its
             // window here, at event receipt against the live model —
             // the keyboard twin of the pointer boundary's capture. A
-            // row (flat Ctrl+N) or a level-1 entry (grouped Ctrl+N);
-            // everything else queues unchanged.
+            // row (flat Ctrl+N), a level-1 entry (vertical grouped
+            // Ctrl+N), or the Nth content tile in reading order
+            // (combined Ctrl+N — the card's rows interleave band 1's
+            // `…`, so the ordinal skips affordances exactly as the
+            // hints do); everything else queues unchanged.
             let input = match input {
                 GestureInput::Press {
                     key: GestureKey::Select(row),
                     shift,
                 } => GestureInput::Press {
-                    key: GestureKey::SelectHandle(self.overlay_row_handle(row)),
+                    key: GestureKey::SelectHandle(match mode {
+                        ui::KeyMode::GroupedHorizontal => self
+                            .overlay
+                            .as_ref()
+                            .and_then(|overlay| overlay.model().content_tile_handle(row)),
+                        _ => self.overlay_row_handle(row),
+                    }),
                     shift,
                 },
                 GestureInput::Press {
@@ -977,10 +991,10 @@ pub struct Overlay {
     /// family; swapped with the model so a redraw never repaints a card
     /// under a mid-gesture font edit.
     text: crate::text::TextDecision,
-    /// Whether the shown card paints the grouped tree — the key map's
-    /// mode, swapped with the model so Tab/→/← always mean what the
-    /// visible list shows.
-    grouped: bool,
+    /// The card's key-map mode — flat, vertical grouped, or the
+    /// grouped-horizontal combination — swapped with the model so every
+    /// key always means what the visible list shows.
+    mode: ui::KeyMode,
     /// Device pixels per logical pixel this overlay renders at.
     scale: u32,
     /// Size granted by the compositor; `None` until the first configure.
@@ -1015,7 +1029,7 @@ impl Overlay {
         model: OverlayModel,
         palette: ui::Palette,
         text: crate::text::TextDecision,
-        grouped: bool,
+        mode: ui::KeyMode,
         env: OverlayEnv<'_>,
     ) -> Result<Self, OverlayError> {
         let OverlayEnv {
@@ -1058,7 +1072,7 @@ impl Overlay {
             model,
             palette,
             text,
-            grouped,
+            mode,
             scale,
             size: None,
             close_at: Instant::now() + ui::CLOSE_AFTER,
@@ -1074,7 +1088,7 @@ impl Overlay {
         model: OverlayModel,
         palette: ui::Palette,
         text: crate::text::TextDecision,
-        grouped: bool,
+        mode: ui::KeyMode,
         system: &mut crate::text::TextSystem,
     ) {
         let unchanged = self.size == Some((model.width, model.height));
@@ -1083,7 +1097,7 @@ impl Overlay {
         self.model = model;
         self.palette = palette;
         self.text = text;
-        self.grouped = grouped;
+        self.mode = mode;
         if unchanged {
             self.draw(system);
         } else {
@@ -1544,7 +1558,7 @@ impl Session {
         model: OverlayModel,
         palette: ui::Palette,
         text: crate::text::TextDecision,
-        grouped: bool,
+        mode: ui::KeyMode,
     ) {
         // The overlay and its text system are sibling fields: borrow
         // them together so a refresh draws through the decision it
@@ -1555,7 +1569,7 @@ impl Session {
             ..
         } = &mut self.app;
         if let Some(overlay) = overlay.as_mut() {
-            overlay.update(model, palette, text, grouped, system);
+            overlay.update(model, palette, text, mode, system);
             let rows = overlay.model().rows.len();
             eprintln!("airlock daemon: overlay updated ({rows} rows)");
             let _ = self.conn.flush();
@@ -1573,7 +1587,7 @@ impl Session {
             model,
             palette,
             text,
-            grouped,
+            mode,
             OverlayEnv {
                 compositor: &self.app.compositor,
                 layer_shell: &self.app.layer_shell,

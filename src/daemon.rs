@@ -81,6 +81,20 @@ impl Mru {
 /// is dismissed and the next press starts fresh against real state. The
 /// frozen scope extends the same philosophy to settings: an edit landing
 /// mid-gesture changes nothing until the next press.
+/// The combined card's addressing map: band 1's apps and band 2's
+/// windows (tree indices) exactly as the last model rendered them, beside
+/// each band's viewport — so a pointer row maps back to a tree index
+/// without handle guessing and the per-band `…` follow carries on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CombinedMap {
+    band1: crate::ui::Viewport,
+    band2: crate::ui::Viewport,
+    apps: Vec<usize>,
+    windows: Vec<usize>,
+}
+
+/// The frozen session — the selection ring over a scope plus the settings
+/// frozen at open. See [`session_step`] for how sessions are built.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Switch {
     ring: switcher::Ring,
@@ -174,6 +188,17 @@ pub struct Switch {
     /// it, never persisted across gestures: sessions are built fresh
     /// with `None`, and every open starts top-aligned on the MRU head.
     viewport: Option<crate::ui::Viewport>,
+    /// The grouped-horizontal card's focus band — band 1 (app tiles) or
+    /// band 2 (window tiles). `None` on every non-combined session; the
+    /// band is focus, not collapse: the combined card has no collapse
+    /// state, so band 2 always shows the focused app's whole window set.
+    band: Option<crate::ui::Band>,
+    /// The combined card's addressing map for the model last rendered:
+    /// band 1's apps and band 2's windows (tree indices) beside their
+    /// viewports, so a pointer row maps back to a tree index without
+    /// handle guessing and each band's `…` follow carries on. `None` on
+    /// every non-combined session.
+    combined_map: Option<CombinedMap>,
 }
 
 impl Switch {
@@ -203,6 +228,27 @@ impl Switch {
             return filtered.select(handle);
         }
         if let Some(tree) = &self.tree {
+            if let Some(map) = &self.combined_map {
+                // Combined: search band 1's apps then band 2's windows;
+                // the band follows which sequence the hit lives in (a
+                // leaf window tile is band 2 even though its kind is
+                // Leaf). A group's front window is both its parent and
+                // its first child, so the first hit lands on the parent
+                // — harmless, since a click/Ctrl+N commits immediately.
+                let found = map
+                    .apps
+                    .iter()
+                    .chain(map.windows.iter())
+                    .copied()
+                    .find(|&index| tree.rows()[index].handle == handle)?;
+                self.tree_sel = found;
+                self.band = Some(if map.apps.contains(&found) {
+                    crate::ui::Band::Apps
+                } else {
+                    crate::ui::Band::Windows
+                });
+                return Some(handle);
+            }
             let index = self
                 .visible
                 .iter()
@@ -221,8 +267,22 @@ impl Switch {
     /// past the window are `None`. The row index is exact where a
     /// handle alone is ambiguous — a group's front window is both its
     /// parent row and its first child, and hovering the child must
-    /// select the child.
+    /// select the child. The combined card maps through its two bands
+    /// instead: band 1's apps then band 2's windows, each behind its own
+    /// viewport.
     fn tree_row_at(&self, row: usize) -> Option<usize> {
+        if let Some(map) = &self.combined_map {
+            let s1 = map.band1.content + map.band1.bottom as usize;
+            if row < s1 {
+                return (row < map.band1.content)
+                    .then(|| map.apps.get(map.band1.start + row).copied())
+                    .flatten();
+            }
+            let r2 = row - s1;
+            return (r2 < map.band2.content)
+                .then(|| map.windows.get(map.band2.start + r2).copied())
+                .flatten();
+        }
         let viewport = self.viewport?;
         let top = viewport.top as usize;
         if row < top || row >= top + viewport.content {
@@ -237,7 +297,12 @@ impl Switch {
     /// MRU head. An empty card leaves the selection exactly where it
     /// was (the caller's rebuild decides what an empty card means).
     fn select_first(&mut self, snapshot: &Snapshot, expanded: &std::collections::HashSet<String>) {
-        if self.tree.is_some() {
+        if self.is_combined() {
+            if let Some(&first) = combined_apps(self, snapshot).first() {
+                self.tree_sel = first;
+                self.band = Some(crate::ui::Band::Apps);
+            }
+        } else if self.tree.is_some() {
             let visible = grouped_visible(self, snapshot, expanded);
             if let Some(&first) = visible.first() {
                 self.tree_sel = first;
@@ -252,9 +317,19 @@ impl Switch {
     /// Applies a pointer hover crossing: flat sessions select by the
     /// event-time handle; grouped sessions by the event-time row — both
     /// captured against the model the user saw. Rev 5: every visible
-    /// row selects, headers included — the divider rule is gone.
-    /// Returns whether the selection moved.
+    /// row selects, headers included — the divider rule is gone. The
+    /// combined card derives its band from the row's position (band 1's
+    /// tiles come first), so a leaf window tile is never mistaken for
+    /// its band-1 app tile. Returns whether the selection moved.
     fn select_pointer_row(&mut self, row: usize, handle: Option<Handle>) -> bool {
+        if self.is_combined() {
+            let Some(index) = self.tree_row_at(row) else {
+                return false;
+            };
+            self.tree_sel = index;
+            self.band = Some(self.band_at_row(row).unwrap_or(crate::ui::Band::Apps));
+            return true;
+        }
         match &self.tree {
             Some(_) => {
                 let Some(index) = self.tree_row_at(row) else {
@@ -264,6 +339,39 @@ impl Switch {
                 true
             }
             None => handle.is_some_and(|handle| self.ring.select(handle).is_some()),
+        }
+    }
+
+    /// Whether this session is the grouped-horizontal combination: the
+    /// frozen tree plus a horizontal layout.
+    fn is_combined(&self) -> bool {
+        self.tree.is_some() && self.layout == crate::ui::LayoutSetting::Horizontal
+    }
+
+    /// The focused app driving band 2 — a level-1 tree index: the
+    /// selection's parent when band 2 holds focus, the selection itself
+    /// when band 1 does.
+    fn combined_focused(&self) -> Option<usize> {
+        let tree = self.tree.as_ref()?;
+        match self.band {
+            Some(crate::ui::Band::Apps) => Some(self.tree_sel),
+            Some(crate::ui::Band::Windows) => {
+                Some(tree.parent_of(self.tree_sel).unwrap_or(self.tree_sel))
+            }
+            None => None,
+        }
+    }
+
+    /// The band a model row lives in: band 1 for rows before band 1's
+    /// slots, band 2 for the rest. `None` off the card or on a
+    /// continuation tile.
+    fn band_at_row(&self, row: usize) -> Option<crate::ui::Band> {
+        let map = self.combined_map.as_ref()?;
+        let s1 = map.band1.content + map.band1.bottom as usize;
+        if row < s1 {
+            (row < map.band1.content).then_some(crate::ui::Band::Apps)
+        } else {
+            (row - s1 < map.band2.content).then_some(crate::ui::Band::Windows)
         }
     }
 }
@@ -371,6 +479,7 @@ pub fn ring_step(
         } else {
             (eligible.clone(), None)
         };
+        let combined = grouping && layout == crate::ui::LayoutSetting::Horizontal;
         *open = Some(Switch {
             ring: switcher::Ring::new(handles),
             workspace: active,
@@ -392,10 +501,19 @@ pub fn ring_step(
             hovered: None,
             visible: Vec::new(),
             viewport: None,
+            band: combined.then_some(crate::ui::Band::Apps),
+            combined_map: None,
         });
         if open.as_ref().is_some_and(|session| session.tree.is_some()) {
             let session = open.as_mut()?;
-            step_open(session, snapshot, expanded, direction);
+            if session.is_combined() {
+                // Combined: the opening press steps apps (lands on the
+                // second app tile, band 1) — Tab's behavior, the
+                // quick-tap criterion.
+                step_apps(session, snapshot, direction);
+            } else {
+                step_open(session, snapshot, expanded, direction);
+            }
             return session.selected_handle();
         }
     }
@@ -454,11 +572,16 @@ pub fn session_step(
     // An open grouped session steps its visible rows (Tab, ↓/↑, and
     // the wheel share the one linear walk); the snapshot, scope,
     // palette, rows, and grouping only matter when a session opens.
-    // Plain opens go straight through.
+    // Plain opens go straight through. The combined card's step is
+    // within-band, not the linear walk.
     if let Some(session) = open.as_mut()
         && session.tree.is_some()
     {
-        step_visible(session, snapshot, expanded, direction);
+        if session.is_combined() {
+            step_band(session, snapshot, direction);
+        } else {
+            step_visible(session, snapshot, expanded, direction);
+        }
         return session.selected_handle();
     }
     if open.is_some() || !same_app {
@@ -649,6 +772,121 @@ fn step_visible(
     session.tree_sel = step_in(&visible, session.tree_sel, direction);
 }
 
+// --- grouped-horizontal: the combined card's session walks -----------
+//
+// The combination has no collapse state: band 1 is the whole level-1
+// sequence (apps), band 2 the focused app's whole window set. The walks
+// below resolve against those two domains directly — the expansion set
+// plays no part.
+
+/// Band 1's domain: the level-1 tree rows (parents and leaves),
+/// liveness-filtered — the whole app list (no collapse state).
+fn combined_apps(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
+    let Some(tree) = session.tree.as_ref() else {
+        return Vec::new();
+    };
+    tree.visible(&std::collections::HashSet::new())
+        .into_iter()
+        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, session.scope))
+        .collect()
+}
+
+/// Band 2's domain: the focused app's windows, liveness-filtered. A
+/// parent contributes its whole child set; a leaf its single window.
+fn combined_windows(session: &Switch, snapshot: &Snapshot, focused: usize) -> Vec<usize> {
+    let Some(tree) = session.tree.as_ref() else {
+        return Vec::new();
+    };
+    let indices = match tree.rows().get(focused).map(|row| row.kind) {
+        Some(switcher::RowKind::Parent) => tree.children_of(focused),
+        _ => vec![focused],
+    };
+    indices
+        .into_iter()
+        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, session.scope))
+        .collect()
+}
+
+/// The combined card's visible walk, in reading order: band 1's apps
+/// then the focused app's windows (tree indices).
+fn combined_sequence(session: &Switch, snapshot: &Snapshot) -> (Vec<usize>, usize) {
+    let apps = combined_apps(session, snapshot);
+    let focused = session.combined_focused().unwrap_or(session.tree_sel);
+    let windows = combined_windows(session, snapshot, focused);
+    let apps_len = apps.len();
+    let mut seq = apps;
+    seq.extend(windows);
+    (seq, apps_len)
+}
+
+/// ←/→ in the combined card: step the focused band's tiles, wrapping.
+/// Band 1 steps the app list (band 2 swaps to the newly focused app);
+/// band 2 steps the focused app's windows.
+fn step_band(session: &mut Switch, snapshot: &Snapshot, direction: Direction) {
+    if !session.is_combined() {
+        return;
+    }
+    match session.band {
+        Some(crate::ui::Band::Apps) => {
+            let apps = combined_apps(session, snapshot);
+            if !apps.is_empty() {
+                session.tree_sel = step_in(&apps, session.tree_sel, direction);
+            }
+        }
+        Some(crate::ui::Band::Windows) => {
+            let focused = session.combined_focused().unwrap_or(session.tree_sel);
+            let windows = combined_windows(session, snapshot, focused);
+            if !windows.is_empty() {
+                session.tree_sel = step_in(&windows, session.tree_sel, direction);
+            }
+        }
+        None => {}
+    }
+}
+
+/// Tab in the combined card: step the app list from anywhere, landing in
+/// band 1 (the spec's "Tab steps apps from anywhere").
+fn step_apps(session: &mut Switch, snapshot: &Snapshot, direction: Direction) {
+    if !session.is_combined() {
+        return;
+    }
+    let apps = combined_apps(session, snapshot);
+    if apps.is_empty() {
+        return;
+    }
+    let current = session.combined_focused().unwrap_or(session.tree_sel);
+    session.tree_sel = step_in(&apps, current, direction);
+    session.band = Some(crate::ui::Band::Apps);
+}
+
+/// ↓ in the combined card: from an app tile, enter band 2 on that app's
+/// MRU-front window; from a window tile, the W3C deepest-level no-op.
+fn enter_band(session: &mut Switch, snapshot: &Snapshot) -> bool {
+    if !session.is_combined() || session.band == Some(crate::ui::Band::Windows) {
+        return false;
+    }
+    let focused = session.combined_focused().unwrap_or(session.tree_sel);
+    let windows = combined_windows(session, snapshot, focused);
+    let Some(&front) = windows.first() else {
+        return false;
+    };
+    session.tree_sel = front;
+    session.band = Some(crate::ui::Band::Windows);
+    true
+}
+
+/// ↑ in the combined card: from a window tile, return to band 1 on its
+/// app tile (selection intact); from an app tile, the W3C root no-op.
+fn exit_band(session: &mut Switch) -> bool {
+    if !session.is_combined() || session.band == Some(crate::ui::Band::Apps) {
+        return false;
+    }
+    let focused = session.combined_focused().unwrap_or(session.tree_sel);
+    session.tree_sel = focused;
+    session.band = Some(crate::ui::Band::Apps);
+    true
+}
+
 /// One character into the session's query (`type-filter`): append —
 /// the query caps at [`QUERY_MAX`], input past it ignored — then
 /// re-derive the narrowed ring over the frozen set and reselect its
@@ -761,6 +999,15 @@ fn advance_off_doomed(
     // The querying walk: the narrowed ring's handles.
     let sequence: Vec<Handle> = if let Some(filtered) = &session.filtered {
         filtered.handles().to_vec()
+    } else if session.is_combined() {
+        let (seq, _) = combined_sequence(session, snapshot);
+        let tree = session
+            .tree
+            .as_ref()
+            .expect("combined sessions carry a tree");
+        seq.into_iter()
+            .map(|index| tree.rows()[index].handle)
+            .collect()
     } else if let Some(tree) = &session.tree {
         grouped_visible(session, snapshot, expanded)
             .into_iter()
@@ -801,6 +1048,26 @@ fn select_fresh(
 ) -> bool {
     if let Some(filtered) = &mut session.filtered {
         return filtered.select(handle).is_some();
+    }
+    if session.is_combined() {
+        let tree = session
+            .tree
+            .as_ref()
+            .expect("combined sessions carry a tree");
+        let (seq, apps_len) = combined_sequence(session, snapshot);
+        return seq
+            .iter()
+            .position(|&index| tree.rows()[index].handle == handle)
+            .is_some_and(|pos| {
+                let index = seq[pos];
+                session.tree_sel = index;
+                session.band = Some(if pos < apps_len {
+                    crate::ui::Band::Apps
+                } else {
+                    crate::ui::Band::Windows
+                });
+                true
+            });
     }
     if let Some(tree) = &session.tree {
         let target = grouped_visible(session, snapshot, expanded)
@@ -1128,10 +1395,17 @@ pub fn run() -> Result<(), RunError> {
                 GestureOutput::EnterChild => {
                     // → expands the selected parent (persistently) and
                     // enters its children; on a leaf the W3C end-node
-                    // rule makes it a no-op.
-                    if open.as_mut().is_some_and(|session| {
-                        enter_group(session, &snapshot, &mut expanded, Direction::Next)
-                    }) {
+                    // rule makes it a no-op. ↓ in the combined card
+                    // enters band 2 on the focused app's front window.
+                    let entered = if open.as_ref().is_some_and(|session| session.is_combined()) {
+                        open.as_mut()
+                            .is_some_and(|session| enter_band(session, &snapshot))
+                    } else {
+                        open.as_mut().is_some_and(|session| {
+                            enter_group(session, &snapshot, &mut expanded, Direction::Next)
+                        })
+                    };
+                    if entered {
                         show_selection(
                             &mut session,
                             &mut gesture,
@@ -1145,11 +1419,32 @@ pub fn run() -> Result<(), RunError> {
                 GestureOutput::ExitParent => {
                     // ← exits a child to its parent row; an expanded
                     // parent collapses; a collapsed top-level row is the
-                    // W3C root no-op.
-                    if open
-                        .as_mut()
-                        .is_some_and(|session| exit_group(session, &mut expanded))
+                    // W3C root no-op. ↑ in the combined card returns to
+                    // band 1 on the focused app's tile.
+                    let exited = if open.as_ref().is_some_and(|session| session.is_combined()) {
+                        open.as_mut().is_some_and(exit_band)
+                    } else {
+                        open.as_mut()
+                            .is_some_and(|session| exit_group(session, &mut expanded))
+                    };
+                    if exited {
+                        show_selection(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            &expanded,
+                            &mut icons,
+                        );
+                    }
+                }
+                GestureOutput::StepApp(direction) => {
+                    // Tab in the combined card steps the app list from
+                    // anywhere, landing in band 1.
+                    if let Some(current) = open.as_mut()
+                        && current.is_combined()
                     {
+                        step_apps(current, &snapshot, direction);
                         show_selection(
                             &mut session,
                             &mut gesture,
@@ -1700,12 +1995,11 @@ fn show_selection(
         .map_or_else(crate::ui::Palette::dark, |session| session.palette);
     let scale = session.render_scale();
     // Icons rasterize at the side the shown card paints: the row's own
-    // 32 for every vertical card (the grouped tree included — the
-    // grouped-horizontal combination is its own module and stays
-    // vertical here), the tile's 48 for a horizontal flat session.
-    let horizontal = open.as_ref().is_some_and(|current| {
-        current.layout == crate::ui::LayoutSetting::Horizontal && current.tree.is_none()
-    });
+    // 32 for every vertical card, the tile's 48 for any horizontal card
+    // (flat band or the combined two-band card — both are tiles).
+    let horizontal = open
+        .as_ref()
+        .is_some_and(|current| current.layout == crate::ui::LayoutSetting::Horizontal);
     let icon_side = if horizontal {
         crate::ui::TILE_ICON
     } else {
@@ -1798,19 +2092,64 @@ fn show_selection(
         }
         match (&current.tree, current.app.as_deref()) {
             // Grouped plain session: the frozen tree cut to the stored
-            // visible sequence, selection by tree row.
-            (Some(tree), None) => crate::ui::overlay_model_grouped(
-                tree,
-                &current.visible,
-                current.tree_sel,
-                snapshot,
-                icons,
-                scale,
-                &palette,
-                current.profile,
-                windowing,
-                crate::ui::text_backend(&text, session.text_system()),
-            ),
+            // visible sequence, selection by tree row — or, combined,
+            // the two-band card.
+            (Some(tree), None) => {
+                if current.is_combined() {
+                    let apps = combined_apps(current, snapshot);
+                    let focused = current.combined_focused().unwrap_or(current.tree_sel);
+                    let windows = combined_windows(current, snapshot, focused);
+                    let band = current.band.unwrap_or(crate::ui::Band::Apps);
+                    let prev = current
+                        .combined_map
+                        .as_ref()
+                        .map(|map| (map.band1, map.band2));
+                    let model = crate::ui::overlay_model_grouped_horizontal(
+                        tree,
+                        &apps,
+                        &windows,
+                        current.tree_sel,
+                        band,
+                        snapshot,
+                        icons,
+                        scale,
+                        &palette,
+                        current.profile,
+                        crate::ui::CombinedBanding {
+                            tiles: current.tiles,
+                            band1: prev.map(|(band1, _)| band1),
+                            band2: prev.map(|(_, band2)| band2),
+                        },
+                        crate::ui::text_backend(&text, session.text_system()),
+                    );
+                    // Remember the two band sequences and viewports the
+                    // model just rendered — the pointer's row indexes and
+                    // the per-band follow address this exact map.
+                    if let Some(model) = &model
+                        && let Some(combined) = model.combined
+                    {
+                        current.combined_map = Some(CombinedMap {
+                            band1: combined.band1,
+                            band2: combined.band2,
+                            apps,
+                            windows,
+                        });
+                    }
+                    return model;
+                }
+                crate::ui::overlay_model_grouped(
+                    tree,
+                    &current.visible,
+                    current.tree_sel,
+                    snapshot,
+                    icons,
+                    scale,
+                    &palette,
+                    current.profile,
+                    windowing,
+                    crate::ui::text_backend(&text, session.text_system()),
+                )
+            }
             // Flat and same-app sessions (the exemption): the flat
             // card over the (possibly re-filtered) snapshot, selection
             // by ring — the horizontal band for a horizontal session
@@ -1871,17 +2210,26 @@ fn show_selection(
             let observed = open.as_ref().and_then(|session| session.hovered);
             let mut model = model;
             model.hovered = hovered_row(&model, observed);
-            // The key map rides the shown card: Tab/→/← mean tree
-            // walks exactly when the card paints the tree. The text
-            // decision rides it too — the overlay freezes what it
-            // draws under.
+            // The key map rides the shown card: flat, vertical grouped,
+            // or the grouped-horizontal combination (tree × horizontal).
+            // The text decision rides it too — the overlay freezes what
+            // it draws under.
             let open_session = open.as_ref();
-            let grouped = open_session.is_some_and(|session| session.tree.is_some());
+            let mode = match open_session {
+                Some(session) if session.tree.is_some() => {
+                    if session.layout == crate::ui::LayoutSetting::Horizontal {
+                        crate::ui::KeyMode::GroupedHorizontal
+                    } else {
+                        crate::ui::KeyMode::Grouped
+                    }
+                }
+                _ => crate::ui::KeyMode::Flat,
+            };
             let text = open_session.map_or_else(
                 || crate::text::TextDecision::Bitmap,
                 |session| session.text.clone(),
             );
-            session.overlay_show(model, palette, text, grouped)
+            session.overlay_show(model, palette, text, mode)
         }
         None => {
             session.overlay_hide("nothing eligible");
@@ -3875,6 +4223,8 @@ mod tests {
             profile: StyleProfile::default(),
             text: crate::text::TextDecision::Bitmap,
             viewport: None,
+            band: None,
+            combined_map: None,
         };
         assert_eq!(commit_target(&confined, &snap), None);
     }
@@ -5973,6 +6323,307 @@ mod tests {
         assert_eq!(
             open.as_ref().expect("fresh session opened").text,
             crate::text::TextDecision::Bitmap
+        );
+    }
+
+    // --- grouped-horizontal: the combined session (GH1) -------------------
+
+    /// Opens a combined (grouped-horizontal) session on `snap` with one
+    /// opening Alt+Tab — the grouped twin with a horizontal layout.
+    fn combined_session(snap: &Snapshot) -> (Option<Switch>, HashSet<String>) {
+        let mut open = None;
+        let mut expanded = HashSet::new();
+        session_step(
+            &mut open,
+            snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            true,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Horizontal,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut expanded,
+        );
+        (open, expanded)
+    }
+
+    /// Three two-window apps, MRU a1, a2, b1, b2, c1, c2. The frozen
+    /// tree reads [P-a1, C-a1, C-a2, P-b1, C-b1, C-b2, P-c1, C-c1,
+    /// C-c2] — apps at tree indices 0, 3, 6.
+    fn combined_three_apps() -> Snapshot {
+        snapshot(
+            vec![
+                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 60),
+                app_toplevel(2, "app.a", &[1], State::default(), 50),
+                app_toplevel(3, "app.b", &[1], State::default(), 40),
+                app_toplevel(4, "app.b", &[1], State::default(), 30),
+                app_toplevel(5, "app.c", &[1], State::default(), 20),
+                app_toplevel(6, "app.c", &[1], State::default(), 10),
+            ],
+            Some(1),
+        )
+    }
+
+    #[test]
+    fn combined_opening_press_lands_on_the_second_app_tile() {
+        // The quick-tap criterion: the opening press steps the app band
+        // once — the second app tile — and release activates that app's
+        // MRU-front window.
+        let snap = grouped_two_apps();
+        let (open, _expanded) = combined_session(&snap);
+        let session = open.as_ref().expect("session opened");
+        assert_eq!(session.tree_sel, 3, "b's parent tile");
+        assert_eq!(session.band, Some(crate::ui::Band::Apps));
+        assert_eq!(session.selected_handle(), Some(Handle(3)));
+    }
+
+    #[test]
+    fn combined_tab_steps_apps_from_anywhere() {
+        // Tab steps the app list from either band: from band 2 it lands
+        // on the next app after the focused one, focus returning to
+        // band 1; Shift+Tab wraps.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 1; // a's front child, band 2
+        session.band = Some(crate::ui::Band::Windows);
+        step_apps(session, &snap, Direction::Next);
+        assert_eq!(session.tree_sel, 3, "the next app after a");
+        assert_eq!(session.band, Some(crate::ui::Band::Apps));
+        step_apps(session, &snap, Direction::Next);
+        assert_eq!(session.tree_sel, 0, "wraps to a");
+        step_apps(session, &snap, Direction::Previous);
+        assert_eq!(session.tree_sel, 3, "wraps back");
+    }
+
+    #[test]
+    fn combined_arrows_step_the_focused_band() {
+        // ←/→ step within whichever band holds the selection: the app
+        // list in band 1 (band 2 swaps with the new app), the focused
+        // app's windows in band 2 — wrapping per the ring semantics.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        // Band 1: b's parent (3) → wraps to a (0).
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 3;
+        session.band = Some(crate::ui::Band::Apps);
+        step_band(session, &snap, Direction::Next);
+        assert_eq!(session.tree_sel, 0, "band 1 wraps");
+        // Band 2: a's front child (1) → a's second (2) → wraps to 1.
+        session.band = Some(crate::ui::Band::Windows);
+        session.tree_sel = 1;
+        step_band(session, &snap, Direction::Next);
+        assert_eq!(session.tree_sel, 2);
+        step_band(session, &snap, Direction::Next);
+        assert_eq!(session.tree_sel, 1, "band 2 wraps");
+    }
+
+    #[test]
+    fn combined_down_enters_band_2_and_up_exits() {
+        // ↓ from an app tile enters band 2 on that app's MRU-front
+        // window; ↑ from a window tile returns to its app tile,
+        // selection intact (the focused app never changed).
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 0; // a's parent
+        session.band = Some(crate::ui::Band::Apps);
+        assert!(enter_band(session, &snap));
+        assert_eq!(session.tree_sel, 1, "a's front child");
+        assert_eq!(session.band, Some(crate::ui::Band::Windows));
+        assert!(exit_band(session));
+        assert_eq!(session.tree_sel, 0, "back on a's tile");
+        assert_eq!(session.band, Some(crate::ui::Band::Apps));
+    }
+
+    #[test]
+    fn combined_level_keys_no_op_at_their_band_edges() {
+        // The four W3C no-op cases: ↓ from a window tile (deepest
+        // level) and ↑ from an app tile (root) — across child and leaf
+        // kinds alike, the selection and the band never move.
+        let two = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&two);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 1; // a's child, band 2
+        session.band = Some(crate::ui::Band::Windows);
+        assert!(!enter_band(session, &two), "↓ on a window tile");
+        assert_eq!(
+            (session.tree_sel, session.band),
+            (1, Some(crate::ui::Band::Windows))
+        );
+        session.tree_sel = 0; // a's parent, band 1
+        session.band = Some(crate::ui::Band::Apps);
+        assert!(!exit_band(session), "↑ on a parent tile");
+        assert_eq!(
+            (session.tree_sel, session.band),
+            (0, Some(crate::ui::Band::Apps))
+        );
+        // The leaf kinds: ↓ enters a leaf's single-tile band 2 — and ↑
+        // from it exits; ↑ on the band-1 leaf and ↓ on the band-2 leaf
+        // window are the no-ops.
+        let lone = grouped_lone_parent();
+        let (mut lone_open, _) = combined_session(&lone);
+        let session = lone_open.as_mut().expect("open");
+        session.tree_sel = 3; // c's leaf
+        session.band = Some(crate::ui::Band::Apps);
+        assert!(
+            enter_band(session, &lone),
+            "a single-window app enters its one tile"
+        );
+        assert_eq!(session.tree_sel, 3, "the leaf is its own band-2 tile");
+        assert_eq!(session.band, Some(crate::ui::Band::Windows));
+        assert!(!enter_band(session, &lone), "↓ on the leaf's window tile");
+        assert!(exit_band(session), "↑ exits to the leaf's app tile");
+        session.band = Some(crate::ui::Band::Apps);
+        assert!(!exit_band(session), "↑ on the leaf's band-1 tile");
+    }
+
+    #[test]
+    fn combined_down_enters_each_of_three_apps_children() {
+        // No collapse state anywhere: ↓ from *each* app tile enters that
+        // app's children in one press — the walk over three apps — and
+        // the expansion set stays empty throughout (the combined card
+        // never touches it).
+        let snap = combined_three_apps();
+        let (mut open, expanded) = combined_session(&snap);
+        for (parent, first_child) in [(0usize, 1usize), (3, 4), (6, 7)] {
+            let session = open.as_mut().expect("open");
+            session.tree_sel = parent;
+            session.band = Some(crate::ui::Band::Apps);
+            assert!(enter_band(session, &snap), "enters from tree row {parent}");
+            assert_eq!(session.tree_sel, first_child, "the app's MRU-front window");
+            assert_eq!(session.band, Some(crate::ui::Band::Windows));
+            assert!(
+                !session.tree.as_ref().expect("tree").rows()[first_child]
+                    .app_id
+                    .is_empty()
+            );
+        }
+        assert!(expanded.is_empty(), "no collapse state exists");
+    }
+
+    #[test]
+    fn combined_steps_flow_through_session_step() {
+        // The Step arm (Tab-alias arrows, wheel) routes through
+        // session_step into the within-band walk, not the vertical
+        // linear walk: from band 2 on a's front child, one step lands
+        // on a's second window — never on b's rows.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = combined_session(&snap);
+        open.as_mut().expect("open").tree_sel = 1;
+        open.as_mut().expect("open").band = Some(crate::ui::Band::Windows);
+        let selected = session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            true,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Horizontal,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut expanded,
+        );
+        assert_eq!(selected, Some(Handle(2)), "stays inside band 2");
+        assert_eq!(open.as_ref().expect("open").tree_sel, 2);
+    }
+
+    #[test]
+    fn combined_pointer_rows_map_to_the_exact_band() {
+        // A pointer crossing maps through the stored two-band map: the
+        // row index carries the band, so hovering the child tile
+        // selects the child (band 2) even though its handle is also its
+        // app's parent row — and hovering an app tile selects band 1.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        let whole = crate::ui::Viewport {
+            start: 0,
+            content: 2,
+            top: false,
+            bottom: false,
+        };
+        session.combined_map = Some(CombinedMap {
+            band1: whole,
+            band2: whole,
+            apps: vec![0, 3],
+            windows: vec![1, 2],
+        });
+        session.band = Some(crate::ui::Band::Apps);
+        assert!(session.select_pointer_row(2, Some(Handle(1))));
+        assert_eq!(session.tree_sel, 1, "the child, not its parent");
+        assert_eq!(session.band, Some(crate::ui::Band::Windows));
+        assert!(session.select_pointer_row(0, Some(Handle(1))));
+        assert_eq!(session.tree_sel, 0, "the parent tile");
+        assert_eq!(session.band, Some(crate::ui::Band::Apps));
+    }
+
+    #[test]
+    fn combined_close_advances_the_reading_order() {
+        // Advance-then-close walks the card's own reading order — apps
+        // then the focused app's windows — skipping rows carrying the
+        // doomed window (a header and its front child are one window);
+        // the session stays open for repeated closes.
+        let snap = grouped_two_apps();
+        let (mut open, expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 1; // a's front child, band 2
+        session.band = Some(crate::ui::Band::Windows);
+        assert!(prepare_close(session, &snap, &expanded, Handle(1)));
+        assert_eq!(session.tree_sel, 3, "the next live row: b's app tile");
+        assert_eq!(session.band, Some(crate::ui::Band::Apps));
+        // Closing a's *second* window instead wraps onto a's own parent
+        // tile — its handle is the still-live front window.
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 2; // a's second child
+        session.band = Some(crate::ui::Band::Windows);
+        assert!(prepare_close(session, &snap, &expanded, Handle(2)));
+        assert_eq!(session.tree_sel, 0, "wraps to a's tile");
+    }
+
+    #[test]
+    fn combined_sessions_ignore_the_expansion_state() {
+        // The combination has no collapse state: a pre-populated
+        // expansion set (a leftover from vertical grouped gestures)
+        // changes nothing — band 2 renders the focused app's whole
+        // window set without any enter, and entering never inserts.
+        let snap = grouped_two_apps();
+        let mut expanded = HashSet::new();
+        expanded.insert("app.a".to_string());
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            true,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Horizontal,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut expanded,
+        );
+        let session = open.as_ref().expect("open");
+        let focused = session.combined_focused().expect("a level-1 focus");
+        let windows = combined_windows(session, &snap, focused);
+        assert_eq!(windows, vec![4, 5], "b's whole set, expansion ignored");
+        assert_eq!(
+            open.as_mut().expect("open").combined_focused(),
+            Some(3),
+            "the opening press focused b"
         );
     }
 }

@@ -46,7 +46,7 @@
 
 use std::rc::Rc;
 
-use cosmic_ext_airlock::switcher::Handle;
+use cosmic_ext_airlock::switcher::{Handle, RowKind};
 use cosmic_ext_airlock::text::{FontQuery, TextSystem};
 use cosmic_ext_airlock::ui::{self, IconBitmap, OverlayModel, RowModel};
 
@@ -79,7 +79,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let Some(path) = args.next().map(std::path::PathBuf::from) else {
         eprintln!(
-            "usage: overlay-preview <out.png> [--scale N] [--light] [--geometry] [--system-font <dir>]"
+            "usage: overlay-preview <out.png> [--scale N] [--light] [--geometry] [--horizontal] [--combined] [--system-font <dir>]"
         );
         std::process::exit(2);
     };
@@ -87,6 +87,7 @@ fn main() {
     let mut light = false;
     let mut geometry = false;
     let mut horizontal = false;
+    let mut combined = false;
     let mut system_font: Option<std::path::PathBuf> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -100,6 +101,7 @@ fn main() {
             "--light" => light = true,
             "--geometry" => geometry = true,
             "--horizontal" => horizontal = true,
+            "--combined" => combined = true,
             "--system-font" => {
                 system_font = args.next().map(std::path::PathBuf::from);
                 if system_font.is_none() {
@@ -109,7 +111,7 @@ fn main() {
             }
             other => {
                 eprintln!(
-                    "unknown argument {other}; expected --scale N, --light, --geometry, --horizontal, or --system-font <dir>"
+                    "unknown argument {other}; expected --scale N, --light, --geometry, --horizontal, --combined, or --system-font <dir>"
                 );
                 std::process::exit(2);
             }
@@ -131,6 +133,31 @@ fn main() {
     };
     let dark_icons = ui_icons(scale, &ui::Palette::dark());
     let light_icons = ui_icons(scale, &ui::Palette::light());
+    if combined {
+        let band_dark = band_icons(scale, &ui::Palette::dark());
+        let band_light = band_icons(scale, &ui::Palette::light());
+        let icons = if base.is_dark {
+            &band_dark
+        } else {
+            &band_light
+        };
+        let mut sheet = combined_scenarios(base, icons);
+        // Both polarities judge the two bands, the horizontal family's
+        // rule.
+        let other = if base.is_dark {
+            ui::Palette::light()
+        } else {
+            ui::Palette::dark()
+        };
+        let other_icons = if other.is_dark {
+            &band_dark
+        } else {
+            &band_light
+        };
+        sheet.extend(combined_scenarios(other, other_icons));
+        write_sheet(&path, &sheet, scale, &mut text_system);
+        return;
+    }
     if horizontal {
         let icons = if base.is_dark {
             &dark_icons
@@ -442,6 +469,171 @@ fn band_icons(scale: u32, palette: &ui::Palette) -> Vec<Option<Rc<IconBitmap>>> 
         .collect()
 }
 
+/// The grouped-horizontal family (`grouped-horizontal`): the two-band
+/// card composed the way the daemon composes it — band 1 the app tiles,
+/// band 2 the focused app's window tiles, each behind its own
+/// `band_window`, one shared card width, hints in reading order across
+/// both bands. GH1's working tokens (the band separator included); GH2's
+/// sheet freezes the hierarchy values on scenarios of this shape.
+fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Vec<Scenario> {
+    let tile = |title: &str,
+                icon: Option<Rc<IconBitmap>>,
+                selected: bool,
+                hint: Option<usize>|
+     -> RowModel {
+        RowModel {
+            title: ui::clamp_tile_title(title),
+            icon,
+            selected,
+            handle: Some(Handle::default()),
+            hint: hint
+                .filter(|&position| position < 9)
+                .map(|position| ui::RowHint::Ctrl(position + 1)),
+            ..RowModel::default()
+        }
+    };
+    let dots = || RowModel {
+        title: String::new(),
+        icon: None,
+        selected: false,
+        handle: None,
+        ..RowModel::default()
+    };
+    // apps: (label, window count); windows: the focused app's titles.
+    let combined = |apps: &[(&str, usize)],
+                    focused: usize,
+                    windows: &[&str],
+                    selected: Option<(ui::Band, usize)>,
+                    tiles: usize|
+     -> OverlayModel {
+        let app_sel = focused;
+        let band1 = ui::band_window(apps.len(), app_sel, tiles, None);
+        let band2 = ui::band_window(
+            windows.len(),
+            selected.map_or(0, |(band, pos)| match band {
+                ui::Band::Windows => pos,
+                ui::Band::Apps => 0,
+            }),
+            tiles,
+            None,
+        );
+        let mut rows = Vec::new();
+        let mut hint_pos = 0usize;
+        for position in 0..band1.content {
+            let index = band1.start + position;
+            let (label, count) = apps[index];
+            let mut row = tile(
+                label,
+                icons[index % icons.len()].clone(),
+                false,
+                Some(hint_pos),
+            );
+            row.kind = switcher_row_kind(count);
+            row.count = count;
+            row.selected = selected == Some((ui::Band::Apps, index));
+            rows.push(row);
+            hint_pos += 1;
+        }
+        if band1.bottom {
+            rows.push(dots());
+        }
+        for position in 0..band2.content {
+            let index = band2.start + position;
+            rows.push(tile(
+                windows[index],
+                icons[index % icons.len()].clone(),
+                selected == Some((ui::Band::Windows, index)),
+                Some(hint_pos),
+            ));
+            hint_pos += 1;
+        }
+        if band2.bottom {
+            rows.push(dots());
+        }
+        let slots =
+            (band1.content + band1.bottom as usize).max(band2.content + band2.bottom as usize);
+        OverlayModel {
+            rows,
+            width: ui::band_width(slots as u32),
+            height: ui::combined_card_height(),
+            viewport: band1,
+            profile: ui::StyleProfile::default(),
+            horizontal: true,
+            query: None,
+            hovered: None,
+            combined: Some(ui::Combined {
+                apps: band1.content + band1.bottom as usize,
+                band1,
+                band2,
+            }),
+        }
+    };
+    let editor_windows = [
+        "Overview — the design pass",
+        "Renderer — the band split",
+        "Preview sheet — GH2",
+        "Key table — the axis swap",
+        "Notes",
+    ];
+    [
+        // Three apps, focus in band 1 on the editor's app tile: band 2
+        // holds its five windows, unselected.
+        combined(
+            &[("Files", 2), ("Editor", 5), ("Terminal", 3)],
+            1,
+            &editor_windows,
+            Some((ui::Band::Apps, 1)),
+            8,
+        ),
+        // The same session with band 2 holding the selection, mid-list.
+        combined(
+            &[("Files", 2), ("Editor", 5), ("Terminal", 3)],
+            1,
+            &editor_windows,
+            Some((ui::Band::Windows, 1)),
+            8,
+        ),
+        // A single-window app focused: band 2 shows its one tile.
+        combined(
+            &[("Files", 2), ("Notes", 1), ("Terminal", 3)],
+            1,
+            &["Notes"],
+            None,
+            8,
+        ),
+        // The truncated edge: `…` in each band at the pinned minimum.
+        combined(
+            &[
+                ("Files", 2),
+                ("Editor", 5),
+                ("Terminal", 3),
+                ("Chat", 2),
+                ("Mail", 4),
+            ],
+            1,
+            &editor_windows,
+            Some((ui::Band::Windows, 4)),
+            ui::COLUMNS_MIN,
+        ),
+    ]
+    .into_iter()
+    .map(|model| Scenario {
+        model,
+        palette: base,
+    })
+    .collect()
+}
+
+/// The tile kind an app tile carries for preview purposes: a parent when
+/// the app has more than one window, a leaf otherwise.
+fn switcher_row_kind(count: usize) -> RowKind {
+    if count > 1 {
+        RowKind::Parent
+    } else {
+        RowKind::Leaf
+    }
+}
+
 /// The horizontal band family (card-layout): the flat band as
 /// `overlay_model_horizontal` composes it — `band_window` over the
 /// selection, the trailing `…` tile, the tile grid's width — at CL4's
@@ -498,6 +690,7 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
             horizontal: true,
             query: None,
             hovered: None,
+            combined: None,
         }
     };
     // The 48-column clamp input: the tile's own budget (eleven columns
@@ -608,6 +801,7 @@ fn windowed(
         horizontal: false,
         query: None,
         hovered: None,
+        combined: None,
     }
 }
 

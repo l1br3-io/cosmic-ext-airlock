@@ -294,6 +294,15 @@ pub const TILE_CELL_H: u32 = TEXT_H + TILE_BADGE_GAP + TILE_ICON + TILE_TITLE_GA
 pub const fn band_card_height() -> u32 {
     2 * TILE_PAD_Y + TILE_CELL_H
 }
+/// The grouped-horizontal card's two bands' separation: the gap between
+/// band 1 (app tiles) and band 2 (window tiles) — GH1's working value,
+/// frozen by GH2's design pass.
+pub const BAND_SEPARATOR: u32 = 16;
+/// The combined card's height: two tile cells plus their padding and the
+/// band separation between them.
+pub const fn combined_card_height() -> u32 {
+    2 * TILE_PAD_Y + 2 * TILE_CELL_H + BAND_SEPARATOR
+}
 /// The band card's width: `slots` tiles plus gaps inside the padding —
 /// the `…` tile lives inside these slots, so the card never widens for
 /// it.
@@ -1027,6 +1036,11 @@ pub struct OverlayModel {
     /// — never headers or continuations). `None` on every pointerless
     /// card, so nothing paints without pointer presence.
     pub hovered: Option<usize>,
+    /// The grouped-horizontal card's two bands (`grouped-horizontal`):
+    /// `Some` marks the combination — `horizontal` is true and the rows
+    /// are band 1's app tiles followed by band 2's window tiles, split at
+    /// [`Combined::apps`] — `None` on every other card.
+    pub combined: Option<Combined>,
 }
 
 impl OverlayModel {
@@ -1064,7 +1078,10 @@ impl OverlayModel {
     /// logical pointer position × render `scale`, the point scaled down
     /// to the model's space. The footprint is the full band height
     /// (the cell is the unit); tile gaps, card padding, and points off
-    /// the card are `None`.
+    /// the card are `None`. The combined card stacks two bands and
+    /// returns the *flat* row index (band 1's tiles then band 2's), so
+    /// a band is unambiguous by position — `rows[..apps]` vs
+    /// `rows[apps..]` — and the separator between them is `None`.
     pub fn cell_at(&self, x: f64, y: f64, scale: u32) -> Option<usize> {
         let in_card = x >= 0.0
             && y >= 0.0
@@ -1073,13 +1090,45 @@ impl OverlayModel {
         if !in_card {
             return None;
         }
+        // The band this y lands in: its leading row index and its tile
+        // count. The combined card rejects its separator and the vertical
+        // padding; the single band admits every y inside the card (its
+        // height is exactly the cell plus padding).
+        let (band_offset, band_tiles) = if let Some(combined) = &self.combined {
+            let y = y / scale as f64;
+            let band1_top = TILE_PAD_Y as f64;
+            let band2_top = (TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR) as f64;
+            if y >= band2_top && y < band2_top + TILE_CELL_H as f64 {
+                (combined.apps, self.rows.len() - combined.apps)
+            } else if y >= band1_top && y < band1_top + TILE_CELL_H as f64 {
+                (0, combined.apps)
+            } else {
+                return None; // the separator or the card's vertical padding
+            }
+        } else {
+            (0, self.rows.len())
+        };
         let x_px = x / scale as f64 - TILE_PAD_X as f64;
         let pitch = (TILE_W + TILE_GAP) as f64;
-        if x_px < 0.0 || x_px >= self.rows.len() as f64 * pitch {
+        if x_px < 0.0 || x_px >= band_tiles as f64 * pitch {
             return None; // card padding before the first tile / past the last
         }
         let cell = (x_px / pitch) as usize;
-        (x_px - cell as f64 * pitch < TILE_W as f64).then_some(cell) // gap seam
+        (x_px - cell as f64 * pitch < TILE_W as f64).then_some(band_offset + cell) // gap seam
+    }
+
+    /// The window the Nth *content* tile in reading order resolves to
+    /// (0-based) — continuation affordances skipped, band 1 left→right
+    /// then band 2 — the address the combined card's Ctrl+N chords
+    /// resolve against at event receipt. The hint ordinals number the
+    /// same sequence, so every displayed hint is wired. `None` past the
+    /// content tiles.
+    pub fn content_tile_handle(&self, n: usize) -> Option<Handle> {
+        self.rows
+            .iter()
+            .filter(|row| row.handle.is_some())
+            .nth(n)
+            .and_then(|row| row.handle)
     }
 
     /// The row whose reserved hint band contains the device-pixel point
@@ -1143,6 +1192,45 @@ pub struct Windowing {
 pub struct Banding {
     pub tiles: usize,
     pub prev: Option<Viewport>,
+}
+
+/// Which band of the grouped-horizontal card holds the selection. The
+/// band is *focus*, not expansion: the combined card has no collapse
+/// state, so band 2 always shows the focused app's whole window set and
+/// this only says which of the two bands the selection sits in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Band {
+    /// Band 1: the app tiles (level-1 entries).
+    #[default]
+    Apps,
+    /// Band 2: the focused app's window tiles.
+    Windows,
+}
+
+/// The combined card's windowing inputs, carried into
+/// [`overlay_model_grouped_horizontal`]: the session's shared tile
+/// budget (frozen from `columns` at open, one budget for both bands) and
+/// each band's own sticky viewport — the `…` follow is per band, so the
+/// two windows carry independently across rebuilds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CombinedBanding {
+    pub tiles: usize,
+    pub band1: Option<Viewport>,
+    pub band2: Option<Viewport>,
+}
+
+/// The combined card's two-band addressing: how many leading rows are
+/// app tiles (band 1) and each band's own window. `None` on every
+/// non-combined card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Combined {
+    /// Band 1's tile count: `rows[..apps]` are app tiles, `rows[apps..]`
+    /// are the focused app's window tiles.
+    pub apps: usize,
+    /// Band 1's window over the app list.
+    pub band1: Viewport,
+    /// Band 2's window over the focused app's windows.
+    pub band2: Viewport,
 }
 
 /// Resolves the `columns` setting against the invoking output's
@@ -1395,6 +1483,7 @@ pub fn overlay_model_horizontal(
         horizontal: true,
         query: None,
         hovered: None,
+        combined: None,
     })
 }
 
@@ -1524,6 +1613,142 @@ pub fn overlay_model_grouped(
     finish_model(rows, sel, windowing, profile, bands)
 }
 
+/// Builds the grouped-horizontal card (`grouped-horizontal`): the frozen
+/// tree as two stacked bands — band 1 the app tiles (level-1 entries,
+/// parents and leaves), band 2 the focused app's window tiles — at one
+/// tile pitch and one card width, `columns` shared by both bands.
+///
+/// There is **no collapse state** anywhere in this card: `apps` is the
+/// whole level-1 sequence and `windows` the focused app's *whole* window
+/// set, so `↓` from any app tile enters that app's children in one press
+/// (band 2 is a viewport onto the focused parent, not an expansion
+/// gesture). `band` is focus, not expansion — it only says which band the
+/// selection sits in.
+///
+/// `apps` and `windows` are tree indices, liveness-filtered by the
+/// caller (the frozen window set), band 1 in MRU first-appearance order,
+/// band 2 the focused app's windows MRU-first. `selected` is the tree
+/// index of the selection; it sits in `apps` under [`Band::Apps`], in
+/// `windows` under [`Band::Windows`]. Each band windows per
+/// [`band_window`] with its own carried viewport (the `…` follow is per
+/// band), the `…` tile spending that band's last slot. Ctrl+N chords
+/// read band 1 left→right then band 2 left→right, ≤ 9. App tiles carry
+/// icon + label + count and a parent commits its MRU-front window;
+/// window tiles carry icon + title — activation always resolves the
+/// tile's own event-time handle.
+// Eleven render inputs — the banding joined the seam beside the
+// windowing (the geometry follow's note).
+#[expect(clippy::too_many_arguments)]
+pub fn overlay_model_grouped_horizontal(
+    tree: &switcher::Grouping,
+    apps: &[usize],
+    windows: &[usize],
+    selected: usize,
+    band: Band,
+    snapshot: &Snapshot,
+    icons: &crate::icons::Cache,
+    scale: u32,
+    palette: &Palette,
+    profile: StyleProfile,
+    banding: CombinedBanding,
+    mut text: TextBackend<'_>,
+) -> Option<OverlayModel> {
+    // The app band 2 shows: the selection's parent when band 2 holds
+    // focus (a child's app), the selection itself when band 1 does (a
+    // parent or leaf).
+    let focused = match band {
+        Band::Apps => selected,
+        Band::Windows => tree.parent_of(selected).unwrap_or(selected),
+    };
+    // Band 1 always keeps the focused app in view; band 2 follows the
+    // selection only while it holds focus, else shows the app's front
+    // window left-aligned.
+    let apps_pos = apps.iter().position(|&index| index == focused)?;
+    let windows_pos = windows.iter().position(|&index| index == selected);
+    let band1 = band_window(apps.len(), apps_pos, banding.tiles, banding.band1);
+    let band2 = match (band, windows_pos) {
+        (Band::Windows, Some(pos)) => band_window(windows.len(), pos, banding.tiles, banding.band2),
+        _ => band_window(windows.len(), 0, banding.tiles, None),
+    };
+    let band1_slots = band1.content + band1.bottom as usize;
+    let band2_slots = band2.content + band2.bottom as usize;
+    let mut rows = Vec::with_capacity(band1_slots + band2_slots);
+    // The chord ordinal rides the flat reading order across both bands.
+    let mut hint_pos = 0usize;
+    for position in 0..band1.content {
+        let index = apps[band1.start + position];
+        let grow = tree.rows().get(index)?;
+        // Unreachable in practice: the caller filtered to live windows.
+        let toplevel = snapshot
+            .toplevels
+            .iter()
+            .find(|t| t.handle == grow.handle)?;
+        let title = match grow.kind {
+            RowKind::Parent => compose_tile_title(&grow.app_id, "", &mut text, scale),
+            _ => compose_tile_title(&toplevel.title, &toplevel.app_id, &mut text, scale),
+        };
+        rows.push(RowModel {
+            title,
+            icon: icons.bitmap(&grow.app_id, TILE_ICON, scale, palette),
+            selected: band == Band::Apps && index == selected,
+            handle: Some(grow.handle),
+            kind: grow.kind,
+            count: if grow.kind == RowKind::Parent {
+                tree.children_of(index).len()
+            } else {
+                0
+            },
+            hint: RowHint::ctrl(hint_pos),
+            expanded: false,
+        });
+        hint_pos += 1;
+    }
+    if band1.bottom {
+        rows.push(continuation_row());
+    }
+    for position in 0..band2.content {
+        let index = windows[band2.start + position];
+        let grow = tree.rows().get(index)?;
+        let toplevel = snapshot
+            .toplevels
+            .iter()
+            .find(|t| t.handle == grow.handle)?;
+        rows.push(RowModel {
+            title: compose_tile_title(&toplevel.title, &toplevel.app_id, &mut text, scale),
+            icon: icons.bitmap(&grow.app_id, TILE_ICON, scale, palette),
+            selected: band == Band::Windows && index == selected,
+            handle: Some(grow.handle),
+            kind: grow.kind,
+            count: 0,
+            hint: RowHint::ctrl(hint_pos),
+            expanded: false,
+        });
+        hint_pos += 1;
+    }
+    if band2.bottom {
+        rows.push(continuation_row());
+    }
+    let slots = band1_slots.max(band2_slots);
+    Some(OverlayModel {
+        rows,
+        // One card width for both bands: the wider band's grid, the
+        // narrower left-aligned (the spec's "one tile pitch and one card
+        // width throughout").
+        width: band_width(slots as u32),
+        height: combined_card_height(),
+        viewport: band1,
+        profile,
+        horizontal: true,
+        query: None,
+        hovered: None,
+        combined: Some(Combined {
+            apps: band1_slots,
+            band1,
+            band2,
+        }),
+    })
+}
+
 /// Composes one row's title under `text`'s backend and returns it with
 /// the title-band width the card sizes from (the title's own px — the
 /// kind's extras are geometry and ride in the same number so
@@ -1622,6 +1847,7 @@ fn finish_model(
         horizontal: false,
         query: None,
         hovered: None,
+        combined: None,
     })
 }
 
@@ -1794,7 +2020,45 @@ pub fn render(
         }
     }
     if model.horizontal {
-        render_band(model, canvas, stride, lw, scale, palette, text);
+        if let Some(combined) = &model.combined {
+            // The combined card: band 1 (app tiles) on top, band 2 (the
+            // focused app's window tiles) below the separator — one tile
+            // renderer, two band tops.
+            render_band(
+                model,
+                canvas,
+                stride,
+                lw,
+                scale,
+                palette,
+                &mut text,
+                TILE_PAD_Y,
+                &model.rows[..combined.apps],
+            );
+            render_band(
+                model,
+                canvas,
+                stride,
+                lw,
+                scale,
+                palette,
+                &mut text,
+                TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR,
+                &model.rows[combined.apps..],
+            );
+        } else {
+            render_band(
+                model,
+                canvas,
+                stride,
+                lw,
+                scale,
+                palette,
+                &mut text,
+                TILE_PAD_Y,
+                &model.rows,
+            );
+        }
         border_ring(
             canvas,
             stride,
@@ -2336,6 +2600,15 @@ fn border_ring(
 /// muted glyph centered on the icon line and nothing else — no band,
 /// no icon, no title, no badge (a tile beyond addressability earns
 /// nothing but its dots).
+/// Paints one band of tiles — `tiles` at a card top of `y0` — the shared
+/// tile renderer behind the flat horizontal band and each of the
+/// combined card's two bands. A tile is the honest analogue the
+/// research locked: the app icon over the clamped title, the selection
+/// filling the whole tile cell, the Ctrl+N chord as a corner badge, and
+/// a handleless tile drawing the wordless `…` centered in the cell.
+// Nine paint inputs — the band top and slice joined the render seam
+// (the geometry follow's note).
+#[expect(clippy::too_many_arguments)]
 fn render_band(
     model: &OverlayModel,
     canvas: &mut [u8],
@@ -2343,16 +2616,18 @@ fn render_band(
     lw: u32,
     scale: u32,
     palette: &Palette,
-    mut text: TextBackend<'_>,
+    text: &mut TextBackend<'_>,
+    y0: u32,
+    tiles: &[RowModel],
 ) {
     let band_radius = model.profile.band_radius;
-    for (index, tile) in model.rows.iter().enumerate() {
+    for (index, tile) in tiles.iter().enumerate() {
         let left = TILE_PAD_X + index as u32 * (TILE_W + TILE_GAP);
         if tile.handle.is_none() {
-            match &mut text {
+            match text {
                 TextBackend::Bitmap => {
                     let dots_x = left + (TILE_W - TEXT_W) / 2;
-                    let dots_y = TILE_PAD_Y + TEXT_H + TILE_BADGE_GAP + (TILE_ICON - TEXT_H) / 2;
+                    let dots_y = y0 + TEXT_H + TILE_BADGE_GAP + (TILE_ICON - TEXT_H) / 2;
                     draw_glyph(
                         canvas,
                         stride,
@@ -2366,7 +2641,7 @@ fn render_band(
                 TextBackend::System { system, query } => {
                     let run = system.shape("\u{2026}", *query, scale);
                     let dots_x = left + (TILE_W - run.width_px.ceil() as u32) / 2;
-                    let baseline = TILE_PAD_Y
+                    let baseline = y0
                         + TEXT_H
                         + TILE_BADGE_GAP
                         + crate::text::centering(run.ascent_px, run.descent_px, TILE_ICON);
@@ -2386,18 +2661,12 @@ fn render_band(
             continue;
         }
         if tile.selected {
-            for ly in TILE_PAD_Y..TILE_PAD_Y + TILE_CELL_H {
+            for ly in y0..y0 + TILE_CELL_H {
                 for dy in 0..scale {
                     let y = ly * scale + dy;
                     for lx in left..left + TILE_W {
-                        let cov = shape_cov(
-                            lx - left,
-                            ly - TILE_PAD_Y,
-                            TILE_W,
-                            TILE_CELL_H,
-                            band_radius,
-                            0,
-                        );
+                        let cov =
+                            shape_cov(lx - left, ly - y0, TILE_W, TILE_CELL_H, band_radius, 0);
                         if cov == 0 {
                             continue;
                         }
@@ -2419,7 +2688,7 @@ fn render_band(
         // The icon, centered on its line: a bitmap prepared at
         // TILE_ICON × scale blits 1:1; a mismatched size or a miss
         // draws the generic window glyph (the row cell's rule).
-        let icon_y = TILE_PAD_Y + TEXT_H + TILE_BADGE_GAP;
+        let icon_y = y0 + TEXT_H + TILE_BADGE_GAP;
         match tile.icon.as_deref() {
             Some(bitmap) if bitmap.side == TILE_ICON * scale => {
                 blit_bitmap(
@@ -2445,7 +2714,7 @@ fn render_band(
         }
         // The title, one clamped line centered on the tile.
         let title_y = icon_y + TILE_ICON + TILE_TITLE_GAP;
-        match &mut text {
+        match text {
             TextBackend::Bitmap => {
                 // Centering saturates at the tile's own edges: a title
                 // longer than the tile (a caller that skipped the
@@ -2492,7 +2761,7 @@ fn render_band(
         // the tile's badge row (CL4-frozen placement, 2026-11-08).
         if let Some(hint) = tile.hint {
             let label = hint.label();
-            match &mut text {
+            match text {
                 TextBackend::Bitmap => {
                     let mut lx = left + TILE_TEXT_PAD;
                     for ch in label.chars() {
@@ -2501,7 +2770,7 @@ fn render_band(
                             stride,
                             glyph(ch),
                             lx * scale,
-                            TILE_PAD_Y * scale,
+                            y0 * scale,
                             TEXT_W * scale / GLYPH_W,
                             palette.muted,
                         );
@@ -2518,7 +2787,7 @@ fn render_band(
                         scale,
                         palette.muted,
                         left + TILE_TEXT_PAD,
-                        TILE_PAD_Y + crate::text::centering(run.ascent_px, run.descent_px, TEXT_H),
+                        y0 + crate::text::centering(run.ascent_px, run.descent_px, TEXT_H),
                         left + TILE_W - TILE_TEXT_PAD,
                     );
                 }
@@ -2934,6 +3203,12 @@ pub enum GestureKey {
     /// window. The boundary resolves it against the event-time model
     /// exactly as [`GestureKey::Select`] resolves a flat row.
     SelectApp(usize),
+    /// Tab in the grouped-horizontal card: step the next/previous app
+    /// (band 1) from anywhere — the spec's "Tab steps apps from
+    /// anywhere". Distinct from [`GestureKey::Arrow`], which steps
+    /// *within* the focused band in that mode. The daemon resolves it
+    /// against the frozen tree.
+    StepApp(Direction),
     /// The handle-carrying twin of the select family, produced only
     /// by the wayland boundary at event receipt: the window of the row
     /// the user addressed. `None` — a continuation row, or a row past
@@ -3065,6 +3340,10 @@ pub enum GestureOutput {
     /// resolves against the frozen tree; a collapsed top-level row's
     /// exit is the W3C no-op.
     ExitParent,
+    /// Tab in the grouped-horizontal card: step the next/previous app
+    /// tile (band 1) from anywhere. The daemon resolves it against the
+    /// frozen tree.
+    StepApp(Direction),
     /// A character types into the session's query (`type-filter`): the
     /// daemon narrows the card's frozen window set by it and reselects
     /// the first match.
@@ -3141,6 +3420,10 @@ impl Gesture {
                 // exactly as it forwards arrows.
                 GestureKey::EnterChild => GestureOutput::EnterChild,
                 GestureKey::ExitParent => GestureOutput::ExitParent,
+                // Tab in the combined card steps apps, not the focused
+                // band's tiles — a distinct output so the daemon can
+                // route it.
+                GestureKey::StepApp(direction) => GestureOutput::StepApp(direction),
                 // The query edits (`type-filter`): session state, not a
                 // row address — forwarded for the daemon to apply.
                 GestureKey::Type(ch) => GestureOutput::Type(ch),
@@ -3234,6 +3517,53 @@ impl Gesture {
 /// Type-to-filter (`type-filter`, 2026-11-08): a printable keysym types
 /// into the session's query through every modifier; Backspace erases.
 /// Chord arms win ahead of the printable arm — only Ctrl+N survives.
+/// The overlay's key-map mode — which card shape the grabbed keys map
+/// against: the flat list (vertical or horizontal), the vertical grouped
+/// tree, or the grouped-horizontal combination (the axis-swapped card).
+/// The boundary passes the live overlay's mode, so a keysym maps against
+/// the list the user sees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyMode {
+    /// The flat list: Tab/↑/↓/←/→ all step rows, Ctrl+N addresses rows.
+    Flat,
+    /// The vertical grouped tree (grouping rev 5): Tab/↑/↓ step the
+    /// linear walk, →/← expand/exit, Ctrl+N addresses level-1 entries.
+    Grouped,
+    /// The grouped-horizontal combination: ←/→ step within the focused
+    /// band, ↓/↑ enter/exit band 2, Tab steps apps, Ctrl+N addresses
+    /// the visible tiles in reading order.
+    GroupedHorizontal,
+}
+
+/// Normalizes a grabbed key press into gesture input, mode-aware.
+///
+/// Shift+Tab arrives as ISO_Left_Tab on most layouts and as Tab plus the
+/// shift modifier on others: both step backwards. `shift_held`,
+/// `ctrl_held`, and `alt_held` are the seat's last reported modifier
+/// states — Ctrl classifies digit presses, exactly as shift classifies
+/// Tab.
+///
+/// Grouped mode (the owner's 2026-11-08 rev-5 simplification): Tab
+/// steps one visible row like ↓/↑ — headers included, collapsed
+/// children never; → expands and enters ([`GestureKey::EnterChild`]), ←
+/// exits or collapses ([`GestureKey::ExitParent`]); Ctrl+N addresses
+/// level-1 entries ([`GestureKey::SelectApp`]). Flat mode
+/// keeps the flat mapping byte for byte — Tab and ←/→ step rows —
+/// pinned by the flat regression tests. The boundary passes the live
+/// model's own mode, so the keysym the user pressed maps against the
+/// list they see.
+///
+/// Grouped-horizontal (the combination): ←/→ step the focused band's
+/// tiles, ↓ enters band 2 from an app tile ([`GestureKey::EnterChild`]),
+/// ↑ exits band 2 to its app tile ([`GestureKey::ExitParent`]), Tab
+/// steps apps from anywhere ([`GestureKey::StepApp`]), and Ctrl+N
+/// addresses the visible tiles in reading order ([`GestureKey::Select`]
+/// — band 1 left→right then band 2 left→right, exactly as the card
+/// concatenates them).
+///
+/// Type-to-filter (`type-filter`, 2026-11-08): a printable keysym types
+/// into the session's query through every modifier; Backspace erases.
+/// Chord arms win ahead of the printable arm — only Ctrl+N survives.
 pub fn key_input(
     keysym: Keysym,
     shift_held: bool,
@@ -3241,28 +3571,44 @@ pub fn key_input(
     // Alt classifies the close key (minus); typing deliberately ignores
     // it — Alt is held the whole gesture.
     alt_held: bool,
-    grouped: bool,
+    mode: KeyMode,
 ) -> GestureInput {
+    use KeyMode::{Flat, Grouped, GroupedHorizontal};
     let (key, shift) = match keysym {
-        Keysym::ISO_Left_Tab => (GestureKey::Tab, true),
-        Keysym::Tab => (GestureKey::Tab, shift_held),
+        Keysym::ISO_Left_Tab => match mode {
+            GroupedHorizontal => (GestureKey::StepApp(Direction::Previous), true),
+            _ => (GestureKey::Tab, true),
+        },
+        Keysym::Tab => match mode {
+            GroupedHorizontal => (
+                GestureKey::StepApp(if shift_held {
+                    Direction::Previous
+                } else {
+                    Direction::Next
+                }),
+                shift_held,
+            ),
+            _ => (GestureKey::Tab, shift_held),
+        },
         Keysym::Return | Keysym::KP_Enter | Keysym::ISO_Enter => (GestureKey::Commit, shift_held),
-        Keysym::Up => (GestureKey::Arrow(Direction::Previous), false),
-        Keysym::Down => (GestureKey::Arrow(Direction::Next), false),
-        Keysym::Left => {
-            if grouped {
-                (GestureKey::ExitParent, shift_held)
-            } else {
-                (GestureKey::Arrow(Direction::Previous), false)
-            }
-        }
-        Keysym::Right => {
-            if grouped {
-                (GestureKey::EnterChild, shift_held)
-            } else {
-                (GestureKey::Arrow(Direction::Next), false)
-            }
-        }
+        Keysym::Up => match mode {
+            // Combined: ↑ exits band 2 to its app tile; vertical grouped
+            // and flat step the linear walk.
+            GroupedHorizontal => (GestureKey::ExitParent, shift_held),
+            _ => (GestureKey::Arrow(Direction::Previous), false),
+        },
+        Keysym::Down => match mode {
+            GroupedHorizontal => (GestureKey::EnterChild, shift_held),
+            _ => (GestureKey::Arrow(Direction::Next), false),
+        },
+        Keysym::Left => match mode {
+            Grouped => (GestureKey::ExitParent, shift_held),
+            _ => (GestureKey::Arrow(Direction::Previous), false),
+        },
+        Keysym::Right => match mode {
+            Grouped => (GestureKey::EnterChild, shift_held),
+            _ => (GestureKey::Arrow(Direction::Next), false),
+        },
         Keysym::Escape => (GestureKey::Escape, shift_held),
         // Backspace edits the query; never dismisses (the daemon treats
         // it as a no-op on an empty query).
@@ -3273,12 +3619,13 @@ pub fn key_input(
         Keysym::minus | Keysym::KP_Subtract if alt_held => (GestureKey::Close, shift_held),
         // Ctrl+digits map with or without shift held; without Ctrl the
         // number row stays Other — it must never surprise-activate. In
-        // grouped mode the chord addresses level-1 entries, not rows.
+        // vertical grouped mode the chord addresses level-1 entries; in
+        // flat and combined it addresses rows (the combined card's rows
+        // are already band 1 then band 2 in reading order).
         _ if ctrl_held && let Some(row) = digit_row(keysym) => (
-            if grouped {
-                GestureKey::SelectApp(row)
-            } else {
-                GestureKey::Select(row)
+            match mode {
+                Grouped => GestureKey::SelectApp(row),
+                Flat | GroupedHorizontal => GestureKey::Select(row),
             },
             shift_held,
         ),
@@ -4116,15 +4463,15 @@ mod tests {
     fn alt_minus_closes_the_selected_window() {
         // The close key (`close-window`): Alt+minus, top row or keypad,
         // both modes alike — Alt is the gesture's own modifier.
-        for grouped in [true, false] {
+        for mode in [KeyMode::Flat, KeyMode::Grouped] {
             for keysym in [Keysym::minus, Keysym::KP_Subtract] {
                 assert_eq!(
-                    key_input(keysym, false, false, true, grouped),
+                    key_input(keysym, false, false, true, mode),
                     GestureInput::Press {
                         key: GestureKey::Close,
                         shift: false
                     },
-                    "Alt+{keysym:?} grouped={grouped} closes"
+                    "Alt+{keysym:?} {mode:?} closes"
                 );
             }
         }
@@ -4132,14 +4479,14 @@ mod tests {
         // key; a plain minus types a hyphen (the gesture always holds
         // Alt, but the pure map answers honestly without it).
         assert_eq!(
-            key_input(Keysym::underscore, false, false, true, true),
+            key_input(Keysym::underscore, false, false, true, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::Type('_'),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::minus, false, false, false, true),
+            key_input(Keysym::minus, false, false, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::Type('-'),
                 shift: false
@@ -5985,6 +6332,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            combined: None,
         }
     }
 
@@ -6664,6 +7012,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -6703,6 +7052,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let glyph_x = (PAD_X + (ICON - GLYPH_W * GLYPH_SCALE) / 2) * 2;
@@ -6977,6 +7327,7 @@ mod tests {
                 horizontal: false,
                 query: None,
                 hovered: None,
+                combined: None,
             };
             let (canvas, stride) = rendered(&model, 2);
             // A probe column inside the band's horizontal extent, in the
@@ -7040,6 +7391,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -7074,6 +7426,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -7122,6 +7475,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -7162,6 +7516,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            combined: None,
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -7218,6 +7573,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            combined: None,
         };
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4;
@@ -7707,7 +8063,7 @@ mod tests {
     #[test]
     fn key_input_maps_tab_escape_and_backtab() {
         assert_eq!(
-            key_input(Keysym::Tab, false, false, false, false),
+            key_input(Keysym::Tab, false, false, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: false
@@ -7715,7 +8071,7 @@ mod tests {
         );
         // Shift held at the seat steers a plain Tab backwards.
         assert_eq!(
-            key_input(Keysym::Tab, true, false, false, false),
+            key_input(Keysym::Tab, true, false, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: true
@@ -7723,21 +8079,21 @@ mod tests {
         );
         // ISO_Left_Tab is Shift+Tab by another name.
         assert_eq!(
-            key_input(Keysym::ISO_Left_Tab, false, false, false, false),
+            key_input(Keysym::ISO_Left_Tab, false, false, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: true
             }
         );
         assert_eq!(
-            key_input(Keysym::Escape, false, false, false, false),
+            key_input(Keysym::Escape, false, false, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Escape,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Return, false, false, false, false),
+            key_input(Keysym::Return, false, false, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Commit,
                 shift: false
@@ -7750,7 +8106,7 @@ mod tests {
         // Return, KP_Enter, and ISO_Enter are one key by three names.
         for keysym in [Keysym::Return, Keysym::KP_Enter, Keysym::ISO_Enter] {
             assert_eq!(
-                key_input(keysym, false, false, false, false),
+                key_input(keysym, false, false, false, KeyMode::Flat),
                 GestureInput::Press {
                     key: GestureKey::Commit,
                     shift: false
@@ -7770,7 +8126,7 @@ mod tests {
             (Keysym::Right, Direction::Next),
         ] {
             assert_eq!(
-                key_input(keysym, true, false, false, false),
+                key_input(keysym, true, false, false, KeyMode::Flat),
                 GestureInput::Press {
                     key: GestureKey::Arrow(direction),
                     shift: false
@@ -7782,7 +8138,7 @@ mod tests {
     #[test]
     fn key_input_leaves_unknown_keysyms_alone() {
         assert_eq!(
-            key_input(Keysym::Delete, true, false, false, false),
+            key_input(Keysym::Delete, true, false, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: true
@@ -7807,7 +8163,7 @@ mod tests {
         ];
         for (keysym, row) in digits {
             assert_eq!(
-                key_input(keysym, false, true, false, false),
+                key_input(keysym, false, true, false, KeyMode::Flat),
                 GestureInput::Press {
                     key: GestureKey::Select(row),
                     shift: false
@@ -7833,7 +8189,7 @@ mod tests {
         ];
         for (keysym, row) in digits {
             assert_eq!(
-                key_input(keysym, false, true, false, false),
+                key_input(keysym, false, true, false, KeyMode::Flat),
                 GestureInput::Press {
                     key: GestureKey::Select(row),
                     shift: false
@@ -7849,14 +8205,14 @@ mod tests {
         // longer surprise-activate because it no longer activates at
         // all.
         assert_eq!(
-            key_input(Keysym::_3, false, false, false, false),
+            key_input(Keysym::_3, false, false, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Type('3'),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::KP_5, false, false, false, false),
+            key_input(Keysym::KP_5, false, false, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Type('5'),
                 shift: false
@@ -7869,7 +8225,7 @@ mod tests {
         // Shift is ignored for digits: the chord still selects, and the
         // seat's shift state is carried as-is.
         assert_eq!(
-            key_input(Keysym::_4, true, true, false, false),
+            key_input(Keysym::_4, true, true, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Select(3),
                 shift: true
@@ -7884,21 +8240,21 @@ mod tests {
         // like any printable (the query ignores modifier flavor), and
         // Ctrl on a non-printable (Delete) stays inert.
         assert_eq!(
-            key_input(Keysym::_0, false, true, false, false),
+            key_input(Keysym::_0, false, true, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Type('0'),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::KP_0, false, true, false, false),
+            key_input(Keysym::KP_0, false, true, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Type('0'),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Delete, false, true, false, false),
+            key_input(Keysym::Delete, false, true, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Other,
                 shift: false
@@ -7911,21 +8267,21 @@ mod tests {
         // Existing key semantics are byte-identical whatever Ctrl does:
         // the digit arm never swallows another gesture key.
         assert_eq!(
-            key_input(Keysym::Tab, false, true, false, false),
+            key_input(Keysym::Tab, false, true, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Escape, false, true, false, false),
+            key_input(Keysym::Escape, false, true, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Escape,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Return, false, true, false, false),
+            key_input(Keysym::Return, false, true, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Commit,
                 shift: false
@@ -7938,14 +8294,14 @@ mod tests {
         // Rev 5: Tab is ↓'s twin in grouped mode too — one visible row,
         // wrapping, headers included. The level-scoped step is gone.
         assert_eq!(
-            key_input(Keysym::Tab, false, false, false, true),
+            key_input(Keysym::Tab, false, false, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Tab, true, false, false, true),
+            key_input(Keysym::Tab, true, false, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: true
@@ -7953,7 +8309,7 @@ mod tests {
         );
         // ISO_Left_Tab is Shift+Tab by another name, grouped or flat.
         assert_eq!(
-            key_input(Keysym::ISO_Left_Tab, false, false, false, true),
+            key_input(Keysym::ISO_Left_Tab, false, false, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: true
@@ -7966,16 +8322,16 @@ mod tests {
         // Rev 5 removed the level toggle; `type-filter` claims the
         // letters — Alt+W types a w into the query in either mode, and
         // W without Alt types it too (printables ride every modifier).
-        for grouped in [true, false] {
+        for mode in [KeyMode::Flat, KeyMode::Grouped] {
             for (keysym, ch) in [(Keysym::w, 'w'), (Keysym::W, 'W')] {
                 for alt_held in [true, false] {
                     assert_eq!(
-                        key_input(keysym, false, false, alt_held, grouped),
+                        key_input(keysym, false, false, alt_held, mode),
                         GestureInput::Press {
                             key: GestureKey::Type(ch),
                             shift: false
                         },
-                        "Alt+{keysym:?} grouped={grouped} types"
+                        "Alt+{keysym:?} {mode:?} types"
                     );
                 }
             }
@@ -7987,15 +8343,15 @@ mod tests {
         // Rev 5 removed Alt+N; `type-filter` claims the number row —
         // digits type, through Alt, in grouped mode and out of it.
         // (Ctrl+N keeps its chord arm.)
-        for grouped in [true, false] {
+        for mode in [KeyMode::Flat, KeyMode::Grouped] {
             for keysym in [Keysym::KP_1, Keysym::KP_9] {
                 assert_eq!(
-                    key_input(keysym, false, false, true, grouped),
+                    key_input(keysym, false, false, true, mode),
                     GestureInput::Press {
                         key: GestureKey::Type(keysym.key_char().expect("keypad digits map")),
                         shift: false
                     },
-                    "Alt+{keysym:?} grouped={grouped} types, never chords"
+                    "Alt+{keysym:?} {mode:?} types, never chords"
                 );
             }
         }
@@ -8008,14 +8364,14 @@ mod tests {
         // gone in grouped mode — the vertical step axis is ↑/↓ (and
         // Alt+Tab / Alt+Shift+Tab) alone.
         assert_eq!(
-            key_input(Keysym::Right, false, false, false, true),
+            key_input(Keysym::Right, false, false, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::EnterChild,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Left, false, false, false, true),
+            key_input(Keysym::Left, false, false, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::ExitParent,
                 shift: false
@@ -8023,14 +8379,14 @@ mod tests {
         );
         // Up/Down keep stepping visible rows whatever the mode.
         assert_eq!(
-            key_input(Keysym::Up, false, false, false, true),
+            key_input(Keysym::Up, false, false, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::Arrow(Direction::Previous),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Down, false, false, false, true),
+            key_input(Keysym::Down, false, false, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::Arrow(Direction::Next),
                 shift: false
@@ -8043,21 +8399,21 @@ mod tests {
         // The regression pin: grouping off reproduces today's mapping
         // byte for byte — Left/Right step like Up/Down, Tab steps rows.
         assert_eq!(
-            key_input(Keysym::Left, false, false, false, false),
+            key_input(Keysym::Left, false, false, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Arrow(Direction::Previous),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Right, false, false, false, false),
+            key_input(Keysym::Right, false, false, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Arrow(Direction::Next),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Tab, false, false, false, false),
+            key_input(Keysym::Tab, false, false, false, KeyMode::Flat),
             GestureInput::Press {
                 key: GestureKey::Tab,
                 shift: false
@@ -8072,7 +8428,7 @@ mod tests {
         // Enter family still commits and Escape still dismisses,
         // whatever the mode.
         assert_eq!(
-            key_input(Keysym::_3, false, true, false, true),
+            key_input(Keysym::_3, false, true, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::SelectApp(2),
                 shift: false
@@ -8081,21 +8437,21 @@ mod tests {
         // Without Ctrl the digit types into the query — Ctrl is the
         // one modifier that wins over typing.
         assert_eq!(
-            key_input(Keysym::_3, false, false, false, true),
+            key_input(Keysym::_3, false, false, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::Type('3'),
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Return, false, false, false, true),
+            key_input(Keysym::Return, false, false, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::Commit,
                 shift: false
             }
         );
         assert_eq!(
-            key_input(Keysym::Escape, false, false, false, true),
+            key_input(Keysym::Escape, false, false, false, KeyMode::Grouped),
             GestureInput::Press {
                 key: GestureKey::Escape,
                 shift: false
@@ -8185,7 +8541,7 @@ mod tests {
         ];
         for (keysym, row) in digits {
             assert_eq!(
-                key_input(keysym, false, true, false, false),
+                key_input(keysym, false, true, false, KeyMode::Flat),
                 GestureInput::Press {
                     key: GestureKey::Select(row),
                     shift: false
@@ -8457,6 +8813,394 @@ mod tests {
         assert_eq!(hover.observe(Some(3)), Some(3));
         hover.reset();
         assert_eq!(hover.observe(Some(3)), None, "fresh session seeds again");
+    }
+
+    // --- grouped-horizontal: the two-band card (GH1) ---------------------
+
+    /// Like [`build_grouped`], combined: the two-band card over the same
+    /// fixture. `apps` and `windows` are the tree's level-1 and the
+    /// focused app's window rows (the daemon's liveness-filtered
+    /// domains), `selected` the tree row the session holds, `band`
+    /// which band holds it. The builder takes no expansion set — the
+    /// combination has no collapse state, pinned structurally.
+    fn build_combined(
+        snap: &Snapshot,
+        apps: &[usize],
+        windows: &[usize],
+        selected: usize,
+        band: Band,
+        tiles: usize,
+    ) -> Option<OverlayModel> {
+        let tree = crate::switcher::Grouping::new(
+            &snap.toplevels,
+            snap.active.expect("fixture has an active workspace"),
+            Scope::CurrentWorkspace,
+        );
+        overlay_model_grouped_horizontal(
+            &tree,
+            apps,
+            windows,
+            selected,
+            band,
+            snap,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            StyleProfile::default(),
+            CombinedBanding {
+                tiles,
+                band1: None,
+                band2: None,
+            },
+            TextBackend::Bitmap,
+        )
+    }
+
+    /// The grouped fixture's tree indices: [P-a1, C-a1, C-a2, L-b, L-u]
+    /// over [`grouped_snap`] — apps [0, 3, 4], a's windows [1, 2].
+    fn combined_fixture() -> (Snapshot, Vec<usize>, Vec<usize>) {
+        let snap = grouped_snap();
+        (
+            snap.clone(),
+            vec![0, 3, 4],
+            vec![1, 2], // app.a's children, front window first
+        )
+    }
+
+    #[test]
+    fn combined_key_input_swaps_the_tree_axes() {
+        // The W3C horizontal-tree axis swap: ←/→ are the step axis
+        // (within the focused band), ↓/↑ the level axis (enter band 2 /
+        // exit to the app tile), Tab steps apps from anywhere, and
+        // Ctrl+N addresses rows — the card's rows are already band 1
+        // then band 2 in reading order.
+        let combined = key_input(Keysym::Tab, false, false, false, KeyMode::GroupedHorizontal);
+        assert_eq!(
+            combined,
+            GestureInput::Press {
+                key: GestureKey::StepApp(Direction::Next),
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Tab, true, false, false, KeyMode::GroupedHorizontal),
+            GestureInput::Press {
+                key: GestureKey::StepApp(Direction::Previous),
+                shift: true
+            }
+        );
+        assert_eq!(
+            key_input(
+                Keysym::ISO_Left_Tab,
+                false,
+                false,
+                false,
+                KeyMode::GroupedHorizontal
+            ),
+            GestureInput::Press {
+                key: GestureKey::StepApp(Direction::Previous),
+                shift: true
+            }
+        );
+        assert_eq!(
+            key_input(
+                Keysym::Left,
+                false,
+                false,
+                false,
+                KeyMode::GroupedHorizontal
+            ),
+            GestureInput::Press {
+                key: GestureKey::Arrow(Direction::Previous),
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(
+                Keysym::Right,
+                false,
+                false,
+                false,
+                KeyMode::GroupedHorizontal
+            ),
+            GestureInput::Press {
+                key: GestureKey::Arrow(Direction::Next),
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(
+                Keysym::Down,
+                false,
+                false,
+                false,
+                KeyMode::GroupedHorizontal
+            ),
+            GestureInput::Press {
+                key: GestureKey::EnterChild,
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::Up, false, false, false, KeyMode::GroupedHorizontal),
+            GestureInput::Press {
+                key: GestureKey::ExitParent,
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::_3, false, true, false, KeyMode::GroupedHorizontal),
+            GestureInput::Press {
+                key: GestureKey::Select(2),
+                shift: false
+            },
+            "Ctrl+N addresses reading-order rows, not level-1 entries"
+        );
+        // The gesture machine forwards the app step like the tree keys.
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::StepApp(Direction::Next),
+                shift: false
+            }),
+            GestureOutput::StepApp(Direction::Next)
+        );
+    }
+
+    #[test]
+    fn combined_model_lays_both_bands_in_reading_order() {
+        // Band 1: every level-1 entry as an app tile — the parent
+        // labelled by its app_id with its window count, the leaves by
+        // their titles. Band 2: the focused app's whole window set,
+        // MRU-first. One selection, in whichever band holds it.
+        let (snap, apps, windows) = combined_fixture();
+        let model =
+            build_combined(&snap, &apps, &windows, 0, Band::Apps, 8).expect("eligible windows");
+        assert!(model.horizontal);
+        let combined = model.combined.expect("the two-band card");
+        let rows: Vec<(crate::switcher::RowKind, Option<Handle>, bool, usize)> = model
+            .rows
+            .iter()
+            .map(|row| (row.kind, row.handle, row.selected, row.count))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                // Band 1: P-a (front window 1), L-b, L-u.
+                (crate::switcher::RowKind::Parent, Some(Handle(1)), true, 2),
+                (crate::switcher::RowKind::Leaf, Some(Handle(2)), false, 0),
+                (crate::switcher::RowKind::Leaf, Some(Handle(4)), false, 0),
+                // Band 2: a's windows, front first.
+                (crate::switcher::RowKind::Child, Some(Handle(1)), false, 0),
+                (crate::switcher::RowKind::Child, Some(Handle(3)), false, 0),
+            ]
+        );
+        // The parent commits its app's MRU-front window; a window tile
+        // commits itself (the GR parent rule, one axis over).
+        assert_eq!(model.rows[0].title, "app.a");
+        assert_eq!(model.rows[3].title, "a-front");
+        // The chords read band 1 left→right then band 2 left→right.
+        let hints: Vec<Option<RowHint>> = model.rows.iter().map(|row| row.hint).collect();
+        assert_eq!(
+            hints,
+            vec![
+                Some(RowHint::Ctrl(1)),
+                Some(RowHint::Ctrl(2)),
+                Some(RowHint::Ctrl(3)),
+                Some(RowHint::Ctrl(4)),
+                Some(RowHint::Ctrl(5)),
+            ]
+        );
+        assert_eq!(combined.apps, 3, "band 1's slots");
+        // One card width and height for both bands.
+        assert_eq!(model.width, band_width(3));
+        assert_eq!(model.height, combined_card_height());
+        // Neither band truncates inside the budget: whole windows, no
+        // affordance tiles, the shared `columns` budget honored by both.
+        assert_eq!(combined.band1.content, 3);
+        assert_eq!(combined.band2.content, 2);
+    }
+
+    #[test]
+    fn combined_band2_swaps_to_the_focused_app_and_single_windows_show_one_tile() {
+        // Band 2 is a viewport onto the *focused* app's windows — it
+        // swaps with band 1's selection, and a single-window app shows
+        // its one tile (uniform, no special case).
+        let (snap, apps, _) = combined_fixture();
+        let b_windows = [3usize]; // app.b's single window row
+        let model =
+            build_combined(&snap, &apps, &b_windows, 3, Band::Apps, 8).expect("eligible windows");
+        let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
+        assert_eq!(
+            handles,
+            vec![
+                Some(Handle(1)),
+                Some(Handle(2)),
+                Some(Handle(4)),
+                Some(Handle(2))
+            ],
+            "band 1 then b's single window tile"
+        );
+        let selected: Vec<bool> = model.rows.iter().map(|row| row.selected).collect();
+        assert_eq!(selected, vec![false, true, false, false]);
+    }
+
+    #[test]
+    fn combined_band2_holds_the_selection() {
+        // Focus in band 2: the window tile carries the selection, the
+        // focused app's own band-1 tile does not.
+        let (snap, apps, windows) = combined_fixture();
+        let model = build_combined(&snap, &apps, &windows, 1, Band::Windows, 8).expect("builds");
+        let selected: Vec<bool> = model.rows.iter().map(|row| row.selected).collect();
+        assert_eq!(selected, vec![false, false, false, true, false]);
+    }
+
+    #[test]
+    fn combined_bands_window_independently_with_dots() {
+        // Two budgets, two windows: band 1 truncated by `columns` spends
+        // its own trailing tile on `…`, band 2 keeps its whole (shorter)
+        // list — the affordance never widens the card, and the chords
+        // keep reading order across the affordance.
+        let (snap, apps, windows) = combined_fixture();
+        let model = build_combined(&snap, &apps, &windows, 0, Band::Apps, 2).expect("builds");
+        let combined = model.combined.expect("two bands");
+        assert_eq!(model.rows.len(), 4, "band 1: one tile + dots; band 2: two");
+        assert_eq!(model.rows[0].handle, Some(Handle(1)));
+        assert_eq!(model.rows[1].handle, None, "band 1's own affordance tile");
+        assert_eq!(model.rows[2].handle, Some(Handle(1)), "band 2's front");
+        assert_eq!(model.rows[3].handle, Some(Handle(3)));
+        assert_eq!(combined.apps, 2, "band 1's slots include its affordance");
+        assert_eq!(combined.band1.content, 1);
+        assert!(!combined.band2.bottom, "band 2 fits whole");
+        // The reading order skips the affordance: Ctrl+2 addresses
+        // band 2's first tile, not the dots.
+        let hints: Vec<Option<RowHint>> = model.rows.iter().map(|row| row.hint).collect();
+        assert_eq!(
+            hints,
+            vec![
+                Some(RowHint::Ctrl(1)),
+                None,
+                Some(RowHint::Ctrl(2)),
+                Some(RowHint::Ctrl(3))
+            ]
+        );
+        assert_eq!(
+            model.content_tile_handle(1),
+            Some(Handle(1)),
+            "Ctrl+2 resolves band 2's front window, never the dots"
+        );
+        // The wider band sizes the shared card width.
+        assert_eq!(model.width, band_width(2));
+    }
+
+    #[test]
+    fn combined_ctrl_hints_address_content_tiles_in_reading_order() {
+        // Every displayed hint is wired: the Nth content tile in reading
+        // order (band 1 then band 2, affordances skipped) is exactly the
+        // tile the Nth chord addresses, and the ceiling past nine
+        // resolves nothing.
+        let (snap, apps, windows) = combined_fixture();
+        let model = build_combined(&snap, &apps, &windows, 0, Band::Apps, 8).expect("builds");
+        assert_eq!(model.content_tile_handle(0), Some(Handle(1)), "P-a");
+        assert_eq!(model.content_tile_handle(1), Some(Handle(2)), "L-b");
+        assert_eq!(model.content_tile_handle(2), Some(Handle(4)), "L-u");
+        assert_eq!(
+            model.content_tile_handle(3),
+            Some(Handle(1)),
+            "band 2's front"
+        );
+        assert_eq!(model.content_tile_handle(4), Some(Handle(3)));
+        assert_eq!(model.content_tile_handle(5), None, "past the content tiles");
+    }
+
+    #[test]
+    fn combined_cell_at_resolves_the_band_by_y() {
+        // The pointer addresses the geometry the user saw: y picks the
+        // band (band 1 above the separator, band 2 below), x the tile
+        // within it; the separator, the card's vertical padding, and
+        // tile gaps address nothing.
+        let (snap, apps, windows) = combined_fixture();
+        let model = build_combined(&snap, &apps, &windows, 0, Band::Apps, 8).expect("builds");
+        let scale = 2u32;
+        let tile_center_x = |index: u32| {
+            (TILE_PAD_X + index * (TILE_W + TILE_GAP) + TILE_W / 2) as f64 * scale as f64
+        };
+        let band1_y = (TILE_PAD_Y + TILE_CELL_H / 2) as f64 * scale as f64;
+        let band2_top = TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR;
+        let band2_y = (band2_top + TILE_CELL_H / 2) as f64 * scale as f64;
+        let separator_y = (TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR / 2) as f64 * scale as f64;
+        assert_eq!(model.cell_at(tile_center_x(1), band1_y, scale), Some(1));
+        assert_eq!(
+            model.cell_at(tile_center_x(0), band2_y, scale),
+            Some(3),
+            "band 2's first tile is row 3 in reading order"
+        );
+        assert_eq!(
+            model.cell_at(tile_center_x(0), separator_y, scale),
+            None,
+            "the separator addresses nothing"
+        );
+        assert_eq!(
+            model.cell_at(
+                tile_center_x(0),
+                (TILE_PAD_Y / 2) as f64 * scale as f64,
+                scale
+            ),
+            None,
+            "the card's top padding addresses nothing"
+        );
+        // A gap seam between band 1's tiles: x inside the gap, y valid.
+        let gap_x = (TILE_PAD_X + TILE_W + TILE_GAP / 2) as f64 * scale as f64;
+        assert_eq!(model.cell_at(gap_x, band1_y, scale), None);
+    }
+
+    #[test]
+    fn combined_render_paints_both_bands() {
+        // The paint contract, one axis over: the selected band-2 tile
+        // fills at its band's offset, band 1's unselected app tile stays
+        // the card, and the separator row never carries a band.
+        let (snap, apps, windows) = combined_fixture();
+        let model = build_combined(&snap, &apps, &windows, 1, Band::Windows, 8).expect("builds");
+        let scale = 2u32;
+        let lw = model.width;
+        let lh = model.height;
+        let mut canvas = vec![0u8; (lw * scale * lh * scale * 4) as usize];
+        render(
+            &model,
+            &mut canvas,
+            lw * scale,
+            lh * scale,
+            lw * scale * 4,
+            scale,
+            &Palette::dark(),
+            TextBackend::Bitmap,
+        );
+        let px = |lx: u32, ly: u32| {
+            let x = lx * scale;
+            let y = ly * scale;
+            let index = (y * lw * scale + x) as usize * 4;
+            u32::from_le_bytes(canvas[index..index + 4].try_into().expect("pixel"))
+        };
+        let tile_center_x = |index: u32| TILE_PAD_X + index * (TILE_W + TILE_GAP) + TILE_W / 2;
+        let band2_top = TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR;
+        let band = Palette::dark().selected_bg;
+        let background = Palette::dark().background;
+        assert_eq!(
+            px(tile_center_x(0), band2_top + TILE_CELL_H / 2),
+            band,
+            "the selected band-2 tile fills at its band's offset"
+        );
+        assert_eq!(
+            px(tile_center_x(0), TILE_PAD_Y + TILE_CELL_H / 2),
+            background,
+            "band 1's unselected app tile stays the card"
+        );
+        assert_eq!(
+            px(lw / 2, TILE_PAD_Y + TILE_CELL_H + BAND_SEPARATOR / 2),
+            background,
+            "the separator paints only the card"
+        );
     }
 
     // --- the System text backend (typography TY3) -------------------------
