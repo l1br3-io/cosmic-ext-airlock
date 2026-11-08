@@ -1519,36 +1519,39 @@ fn show_selection(
             // a dead one (closed between keystroke and rebuild) falls
             // through to None and the session closes through the
             // existing stale rule.
-            return filtered.selected().and_then(|handle| {
-                if current.layout == crate::ui::LayoutSetting::Horizontal {
-                    crate::ui::overlay_model_horizontal(
-                        &pruned,
-                        handle,
-                        current.scope,
-                        icons,
-                        scale,
-                        &palette,
-                        current.profile,
-                        crate::ui::Banding {
-                            tiles: current.tiles,
-                            prev: current.viewport,
-                        },
-                        crate::ui::text_backend(&text, session.text_system()),
-                    )
-                } else {
-                    crate::ui::overlay_model(
-                        &pruned,
-                        handle,
-                        current.scope,
-                        icons,
-                        scale,
-                        &palette,
-                        current.profile,
-                        windowing,
-                        crate::ui::text_backend(&text, session.text_system()),
-                    )
-                }
-            });
+            return filtered
+                .selected()
+                .and_then(|handle| {
+                    if current.layout == crate::ui::LayoutSetting::Horizontal {
+                        crate::ui::overlay_model_horizontal(
+                            &pruned,
+                            handle,
+                            current.scope,
+                            icons,
+                            scale,
+                            &palette,
+                            current.profile,
+                            crate::ui::Banding {
+                                tiles: current.tiles,
+                                prev: current.viewport,
+                            },
+                            crate::ui::text_backend(&text, session.text_system()),
+                        )
+                    } else {
+                        crate::ui::overlay_model(
+                            &pruned,
+                            handle,
+                            current.scope,
+                            icons,
+                            scale,
+                            &palette,
+                            current.profile,
+                            windowing,
+                            crate::ui::text_backend(&text, session.text_system()),
+                        )
+                    }
+                })
+                .map(|model| crate::ui::with_query(model, &current.query.clone()));
         }
         match (&current.tree, current.app.as_deref()) {
             // Grouped plain session: the frozen tree cut to the stored

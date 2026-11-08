@@ -496,6 +496,7 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
             viewport,
             profile: ui::StyleProfile::default(),
             horizontal: true,
+            query: None,
         }
     };
     // The 48-column clamp input: the tile's own budget (eleven columns
@@ -604,6 +605,7 @@ fn windowed(
         viewport,
         profile,
         horizontal: false,
+        query: None,
     }
 }
 
@@ -690,6 +692,37 @@ fn scenarios(
         palette: base,
     })
     .collect::<Vec<_>>();
+    // The querying family (`type-filter`, TF3): the strip over a
+    // narrowed list, the overflowing tail, and the no-matches verdict —
+    // judged like every other scenario on both polarities.
+    sheet.push(Scenario {
+        model: ui::with_query(
+            sized(OverlayModel {
+                rows: vec![
+                    row("firefox — docs", icons[1].clone(), true),
+                    row("firefox — mail", icons[2].clone(), false),
+                ],
+                ..single()
+            }),
+            "fir",
+        ),
+        palette: base,
+    });
+    sheet.push(Scenario {
+        model: ui::with_query(
+            sized(OverlayModel {
+                rows: vec![row("invoice.xlsx", icons[0].clone(), true)],
+                ..single()
+            }),
+            &"q".repeat(120),
+        ),
+        palette: base,
+    });
+    sheet.push(Scenario {
+        model: ui::no_matches_model("zzz", ui::StyleProfile::default())
+            .expect("the verdict card renders"),
+        palette: base,
+    });
     // The long-list family (list-viewport), each windowed and sized by
     // `windowed` itself — the map above must not re-derive their width
     // from the window's titles alone. A fresh 15-row gesture's head

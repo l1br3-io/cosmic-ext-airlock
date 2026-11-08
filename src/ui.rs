@@ -153,6 +153,24 @@ pub const HINT_GAP: u32 = 16;
 /// paint in it.
 pub const HINT_COLS: u32 = 6; // len("Ctrl+9")
 
+/// The query strip's breathing above its text, logical px
+/// (`type-filter`). One 4-grid step, the HINT_GAP family; the strip's
+/// own top zone, separate from the card's row padding, so the query
+/// never crowds the first row — the row gap below the strip's text
+/// supplies that separation (the strip is not a row and earns no
+/// row height).
+pub const STRIP_PAD_Y: u32 = 8;
+
+/// Clear between the query's last glyph and the caret bar, logical px:
+/// one 4-grid step — the caret reads as the text's terminal, not its
+/// neighbor.
+pub const STRIP_CARET_GAP: u32 = 4;
+
+/// The caret bar's width, logical px: Square's own hair (the one 2-px
+/// exception's precedent) — a static terminal, not a blinking one (the
+/// motion vocabulary is the selection fill and nothing else).
+pub const STRIP_CARET_W: u32 = 2;
+
 /// Indent of a grouped child row's whole cell — icon and title — from
 /// the top-level column, logical px: two 8-grid steps, deep enough to
 /// read as nesting at a glance without re-parenting the row rhythm (the
@@ -799,6 +817,9 @@ const _: () = {
     assert!(ICON.is_multiple_of(8));
     assert!(ICON_GAP.is_multiple_of(4));
     assert!(HINT_GAP.is_multiple_of(4));
+    assert!(STRIP_PAD_Y.is_multiple_of(4));
+    assert!(STRIP_CARET_GAP.is_multiple_of(4));
+    assert!(STRIP_CARET_W == 2);
     assert!(PAD_X.is_multiple_of(4));
     assert!(BORDER == 1);
     assert!(SELECT_INSET.is_multiple_of(4));
@@ -979,6 +1000,11 @@ pub struct OverlayModel {
     /// it back — hit-testing always addresses the geometry the user
     /// saw (the `profile` contract, one axis over).
     pub horizontal: bool,
+    /// The type-to-filter query this card is narrowed by (`type-filter`)
+    /// — `None` on every unfiltered card, so the strip and its height
+    /// exist exactly while a query stands and zero-query cards stay
+    /// byte-identical.
+    pub query: Option<String>,
 }
 
 impl OverlayModel {
@@ -996,9 +1022,13 @@ impl OverlayModel {
         if !in_card {
             return None;
         }
-        // The rhythm the model rendered under, not the default's.
+        // The rhythm the model rendered under, not the default's. The
+        // query strip, when one stands, shifts every row down by its
+        // height — the strip zone itself is the top padding's twin: no
+        // row, no selection.
         let rhythm = self.profile.rhythm;
-        let y_px = y / scale as f64 - rhythm.pad_y as f64;
+        let strip = strip_height(&self.query, rhythm) as f64;
+        let y_px = y / scale as f64 - rhythm.pad_y as f64 - strip;
         let pitch = (rhythm.row_h + rhythm.row_gap) as f64;
         if y_px < 0.0 || y_px >= self.rows.len() as f64 * pitch {
             return None; // card padding above the first row / below the last
@@ -1316,6 +1346,7 @@ pub fn overlay_model_horizontal(
         viewport: band,
         profile,
         horizontal: true,
+        query: None,
     })
 }
 
@@ -1541,6 +1572,7 @@ fn finish_model(
         viewport,
         profile,
         horizontal: false,
+        query: None,
     })
 }
 
@@ -1558,14 +1590,11 @@ fn continuation_row() -> RowModel {
     }
 }
 
-/// The empty-match card (`type-filter`): the query's one-word verdict —
-/// a single inert row no input can address (the continuation-row
-/// precedent: no handle, no hint, nothing selected), so the session and
-/// the query both stand while nothing matches. The query strip that
-/// rides above the card lands with TF3's design tokens; `query` is
-/// carried now so that render reads it without a signature change.
+/// The empty-match card (`type-filter`): the query's strip over its
+/// one-word verdict — a single inert row no input can address (the
+/// continuation-row precedent: no handle, no hint, nothing selected),
+/// so the session and the query both stand while nothing matches.
 pub fn no_matches_model(query: &str, profile: StyleProfile) -> Option<OverlayModel> {
-    let _ = query; // the strip's text, painted from TF3
     let mut text = TextBackend::Bitmap;
     let (title, band) = compose_title("no matches", "", RowKind::Leaf, &mut text, 2);
     let row = RowModel {
@@ -1578,7 +1607,7 @@ pub fn no_matches_model(query: &str, profile: StyleProfile) -> Option<OverlayMod
         hint: None,
         expanded: false,
     };
-    finish_model(
+    let model = finish_model(
         vec![row],
         0,
         Windowing {
@@ -1587,7 +1616,45 @@ pub fn no_matches_model(query: &str, profile: StyleProfile) -> Option<OverlayMod
         },
         profile,
         vec![band],
-    )
+    )?;
+    Some(with_query(model, query))
+}
+
+/// The height the query strip adds to a card: its pad, its text line,
+/// and the row gap that separates it from the first row — zero with no
+/// query (`type-filter`). The strip is not a row and earns no row
+/// height; the gap is the separation the rows themselves use.
+pub fn strip_height(query: &Option<String>, rhythm: Rhythm) -> u32 {
+    if query.is_some() {
+        STRIP_PAD_Y + TEXT_H + rhythm.row_gap
+    } else {
+        0
+    }
+}
+
+/// The strip's text: the query's *tail*, an ellipsis on the head when
+/// it overflows — what was just typed stays visible, matching how the
+/// query itself ignores everything before its last 64 characters. The
+/// cap shares the row title's column budget ([`MAX_COLS`]) minus the
+/// one column the leading ellipsis spends.
+fn strip_text(query: &str) -> String {
+    let cap = MAX_COLS as usize;
+    let count = query.chars().count();
+    if count > cap {
+        let tail: String = query.chars().skip(count - (cap - 1)).collect();
+        format!("\u{2026}{tail}")
+    } else {
+        query.to_string()
+    }
+}
+
+/// Sets `model`'s query and grows its height by the strip — the one
+/// seam between a querying session and its card. Pure, so the height
+/// math and the zero-query identity pin headlessly.
+pub fn with_query(mut model: OverlayModel, query: &str) -> OverlayModel {
+    model.height += strip_height(&Some(query.to_string()), model.profile.rhythm);
+    model.query = Some(strip_text(query));
+    model
 }
 
 /// The horizontal spans of logical row `ly` that lie within `reach` of a
@@ -1692,8 +1759,78 @@ pub fn render(
         );
         return;
     }
+    // The query strip (`type-filter`): the query in the titles' own
+    // column and voice — full text color, the session's frozen backend —
+    // with a static caret bar for its terminal. The strip exists only
+    // while a query stands; every row below shifts by its height, the
+    // same height `row_at` subtracts, so pointer rows and paint stay
+    // one geometry.
+    let strip = strip_height(&model.query, rhythm);
+    if let Some(query) = &model.query {
+        let strip_y = rhythm.pad_y + STRIP_PAD_Y;
+        let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * TEXT_W);
+        let title_x = PAD_X + ICON + ICON_GAP;
+        let text_end = match &mut text {
+            TextBackend::Bitmap => {
+                let mut lx = title_x;
+                for ch in query.chars() {
+                    if lx + TEXT_W > title_edge {
+                        break;
+                    }
+                    draw_glyph(
+                        canvas,
+                        stride,
+                        glyph(ch),
+                        lx * scale,
+                        strip_y * scale,
+                        TEXT_W * scale / GLYPH_W,
+                        palette.text,
+                    );
+                    lx += TEXT_W;
+                }
+                lx
+            }
+            TextBackend::System {
+                system,
+                query: fontq,
+            } => {
+                let run = system.shape(query, *fontq, scale);
+                let baseline =
+                    strip_y + crate::text::centering(run.ascent_px, run.descent_px, TEXT_H);
+                paint_run(
+                    system,
+                    &run,
+                    canvas,
+                    stride,
+                    scale,
+                    palette.text,
+                    title_x,
+                    baseline,
+                    title_edge,
+                );
+                title_x + run.width_px.ceil() as u32
+            }
+        };
+        // The caret: a 2-px hair in the full text color, the text's own
+        // height — static, the motion vocabulary's one-line budget
+        // spent elsewhere.
+        let caret_x = text_end + STRIP_CARET_GAP;
+        if caret_x + STRIP_CARET_W <= lw {
+            for ly in strip_y..strip_y + TEXT_H {
+                for dy in 0..scale {
+                    let y = ly * scale + dy;
+                    for lx in caret_x..caret_x + STRIP_CARET_W {
+                        let x0 = lx * scale;
+                        for x in x0..x0 + scale {
+                            put_pixel(canvas, stride, x, y, palette.text);
+                        }
+                    }
+                }
+            }
+        }
+    }
     for (index, row) in model.rows.iter().enumerate() {
-        let top = rhythm.pad_y + index as u32 * (rhythm.row_h + rhythm.row_gap);
+        let top = rhythm.pad_y + strip + index as u32 * (rhythm.row_h + rhythm.row_gap);
         // Continuation row: the `…` glyph card-centered on the titles'
         // own line, in the muted derivation — the hint color, quieter
         // than any title and legible on both card fills and both
@@ -1709,6 +1846,52 @@ pub fn render(
         // the native-resolution round passing both palettes over both
         // backdrops at even perceived weight.
         if row.handle.is_none() {
+            // A titled addressable-nothing is the no-matches verdict
+            // (`type-filter`): its words paint in the muted derivation —
+            // the beyond-addressability color, the dots' own — in the
+            // titles' column, wordless dots stay for the untitled
+            // continuation row.
+            if !row.title.is_empty() {
+                let verdict_x = PAD_X + ICON + ICON_GAP;
+                let verdict_y = top + (rhythm.row_h - TEXT_H) / 2;
+                match &mut text {
+                    TextBackend::Bitmap => {
+                        let mut lx = verdict_x;
+                        for ch in row.title.chars() {
+                            draw_glyph(
+                                canvas,
+                                stride,
+                                glyph(ch),
+                                lx * scale,
+                                verdict_y * scale,
+                                TEXT_W * scale / GLYPH_W,
+                                palette.muted,
+                            );
+                            lx += TEXT_W;
+                        }
+                    }
+                    TextBackend::System {
+                        system,
+                        query: fontq,
+                    } => {
+                        let run = system.shape(&row.title, *fontq, scale);
+                        let baseline = top
+                            + crate::text::centering(run.ascent_px, run.descent_px, rhythm.row_h);
+                        paint_run(
+                            system,
+                            &run,
+                            canvas,
+                            stride,
+                            scale,
+                            palette.muted,
+                            verdict_x,
+                            baseline,
+                            lw.saturating_sub(PAD_X),
+                        );
+                    }
+                }
+                continue;
+            }
             match &mut text {
                 TextBackend::Bitmap => {
                     let dots_x = lw.saturating_sub(TEXT_W) / 2;
@@ -3832,6 +4015,66 @@ mod tests {
     }
 
     #[test]
+    fn strip_height_exists_only_with_a_query() {
+        let rhythm = StyleProfile::default().rhythm;
+        assert_eq!(strip_height(&None, rhythm), 0, "no query, no strip");
+        assert_eq!(
+            strip_height(&Some("q".into()), rhythm),
+            STRIP_PAD_Y + TEXT_H + rhythm.row_gap
+        );
+        // The const pins: the tokens the formula rides.
+        assert_eq!((STRIP_PAD_Y, STRIP_CARET_GAP, STRIP_CARET_W), (8, 4, 2));
+    }
+
+    #[test]
+    fn with_query_grows_the_card_and_keeps_the_tail() {
+        let plain = hit_model(2);
+        let height = plain.height;
+        let queried = with_query(plain, "fir");
+        let rhythm = queried.profile.rhythm;
+        assert_eq!(
+            queried.height,
+            height + STRIP_PAD_Y + TEXT_H + rhythm.row_gap
+        );
+        assert_eq!(queried.query.as_deref(), Some("fir"));
+        // The overflow shows its tail under one leading ellipsis, inside
+        // the shared column budget.
+        let tail = with_query(hit_model(2), &"q".repeat(MAX_COLS as usize + 5));
+        let text = tail.query.expect("strip text");
+        let count = text.chars().count();
+        assert_eq!(count, MAX_COLS as usize, "the budget holds");
+        assert!(text.starts_with('\u{2026}'), "the head spends the ellipsis");
+        assert!(text.ends_with('q'), "the tail survives");
+    }
+
+    #[test]
+    fn row_at_shifts_rows_below_the_strip() {
+        // The strip is the top padding's twin: no row lives in it, and
+        // every row's zone moves down by exactly its height.
+        let plain = hit_model(2);
+        let rhythm = plain.profile.rhythm;
+        let strip = strip_height(&Some("ab".into()), rhythm);
+        let queried = with_query(plain, "ab");
+        // The old row-0 zone is now strip territory: no row.
+        assert_eq!(queried.row_at(4.0, (rhythm.pad_y + 1) as f64, 1), None);
+        // Row 0 moved down by the strip.
+        assert_eq!(
+            queried.row_at(4.0, (rhythm.pad_y + strip + 1) as f64, 1),
+            Some(0)
+        );
+        // And the card grew to hold it — row 1 answers at its shifted
+        // zone, not the plain one.
+        let row_one = (rhythm.pad_y + strip + rhythm.row_h + rhythm.row_gap + 1) as f64;
+        assert_eq!(queried.row_at(4.0, row_one, 1), Some(1));
+        // The shift is sub-row (28 < one pitch): the plain row-1 zone
+        // lands inside queried row 0 — the point of the shifted mapping.
+        assert_eq!(
+            queried.row_at(4.0, (rhythm.pad_y + rhythm.row_h + 1) as f64, 1),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn row_hints_address_exactly_one_through_nine() {
         // Entries 1..9 are addressable and hinted; entry 10 onward
         // paints nothing — no dead keys on the card (cosmic's own
@@ -5534,6 +5777,7 @@ mod tests {
         // glyph's own set columns, not hardcoded positions.
         let mut model = hit_model(3);
         model.rows[0].handle = None; // the top continuation row
+        model.rows[0].title = String::new(); // wordless, as continuation rows are
         let (canvas, stride) = rendered(&model, 2);
         let palette = Palette::dark();
         let dots_x = (model.width - TEXT_W) / 2;
@@ -5583,6 +5827,7 @@ mod tests {
             viewport: visible_window(rows, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
             horizontal: false,
+            query: None,
         }
     }
 
@@ -6083,6 +6328,7 @@ mod tests {
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
             horizontal: false,
+            query: None,
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -6120,6 +6366,7 @@ mod tests {
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
             horizontal: false,
+            query: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let glyph_x = (PAD_X + (ICON - GLYPH_W * GLYPH_SCALE) / 2) * 2;
@@ -6392,6 +6639,7 @@ mod tests {
                 viewport: visible_window(5, 0, DEFAULT_ROWS, None),
                 profile: StyleProfile::default(),
                 horizontal: false,
+                query: None,
             };
             let (canvas, stride) = rendered(&model, 2);
             // A probe column inside the band's horizontal extent, in the
@@ -6453,6 +6701,7 @@ mod tests {
             viewport: visible_window(12, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
             horizontal: false,
+            query: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -6485,6 +6734,7 @@ mod tests {
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
             horizontal: false,
+            query: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -6531,6 +6781,7 @@ mod tests {
             viewport: visible_window(2, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
             horizontal: false,
+            query: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -6569,6 +6820,7 @@ mod tests {
             viewport: visible_window(1, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
             horizontal: false,
+            query: None,
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -6623,6 +6875,7 @@ mod tests {
             viewport: visible_window(10, 0, DEFAULT_ROWS, None),
             profile: StyleProfile::default(),
             horizontal: false,
+            query: None,
         };
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4;
