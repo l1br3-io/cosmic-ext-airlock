@@ -38,7 +38,6 @@ rows = 8               # windows the card keeps in view (the default)
 layout = "vertical"    # the tall card; "horizontal" lays it out as a band of tiles
 # columns = "auto"     # the band's tile budget; or a whole number 3–12 (the default: "auto")
 grouping = false       # the flat list; true groups it by app (the default)
-scoped_cycling = false # grouping only: true keeps Tab inside one group (the default)
 
 [[workspace]]
 name = "code"          # matches a workspace COSMIC reports as named "code"
@@ -66,8 +65,7 @@ The top-level keys: `theme` picks the card (see
 [Theme](#theme)); `font` picks its typeface (see [Font](#font));
 `rows` picks how many windows it keeps in view (see [Rows](#rows));
 `layout` picks the card's axis and `columns` the horizontal band's
-width (see [Layout](#layout)); `grouping` picks the list's shape and
-`scoped_cycling` how Alt+Tab moves inside it (see
+width (see [Layout](#layout)); `grouping` picks the list's shape (see
 [Grouping](#grouping)).
 
 ## Referencing workspaces
@@ -264,52 +262,35 @@ as the daemon runs.
 
 The keys re-bind to the tree:
 
-- **Alt+Tab / Alt+Shift+Tab** follow the cycle scope
-  (`scoped_cycling`). The default — **open cycling** — steps through
-  every app in one sequence: the windows of expanded groups and the
-  entries of collapsed ones, group boundaries crossed without
-  stopping. An expanded group's entry is a **divider** there: the
-  highlight never rests on it, it shows no Ctrl+N chord, and the
-  pointer cannot pick it. `scoped_cycling = true` — **scoped
-  cycling** — steps the current **level** instead: app entries on
-  level 1 (never descending), the selected group's windows on level 2.
-  Either way a workspace holding a single app's windows is entered
-  and cycled inside, so the step always does something.
-- **→** (or **Alt+W** at level 1) expands the selected group and
-  enters its windows, landing on the most recently used one — one past
-  the window you just left when entering your own app. **←** on a
-  child returns to its entry — collapsing the group in the same
-  motion under open cycling, where the expanded entry cannot hold the
-  selection — and on an expanded entry (scoped cycling) it collapses
-  the group.
-- **Alt+W** flips one level either way: down at level 1, back out at
-  level 2 — the same collapse-and-exit as ← under open cycling.
-- **↑ / ↓ and the mouse wheel** walk the *visible* rows linearly —
-  parents and expanded children together, across groups, wrapping;
-  under open cycling the dividers are skipped and the walk is the
-  same sequence Tab steps.
-- **Ctrl+1..9** activates the Nth level-1 entry's window instantly —
-  a divider still answers its chord, it just does not show it;
-  **Alt+1..9** (shown on the expanded children) activates the selected
-  group's Nth window instantly.
+- **Alt+Tab / Alt+Shift+Tab, ↑/↓, and the mouse wheel** are one and
+  the same walk: one *visible* row at a time, linearly, wrapping —
+  entries, leaves, and the windows of expanded groups together, group
+  boundaries crossed without ceremony. A collapsed group contributes
+  only its entry; nothing ever descends into a collapsed group, and a
+  workspace holding a single collapsed entry simply keeps the
+  selection where it is.
+- **→** expands the selected group — the state persists — and enters
+  its windows, landing on the most recently used one, one past the
+  window you just left when entering your own app. On a leaf it does
+  nothing.
+- **←** on a child returns to its entry (the group stays expanded);
+  on an expanded entry it collapses the group; elsewhere it does
+  nothing.
+- **Ctrl+1..9** activates the Nth level-1 entry's window instantly.
 - Flat mode (`grouping = false`, the default) is unchanged: Tab steps
-  rows and ←/→ ride with ↑/↓ as step aliases. `scoped_cycling` means
-  nothing without `grouping = true`.
+  rows and ←/→ ride with ↑/↓ as step aliases.
 
 **The quick tap** — one Tab press with Alt released before the card can
-be read — is the first step of the same cycle, not the flat list's
-MRU-second window. Under open cycling it steps from the window you
-left: your own app's next window when its group is expanded; while the
-group is collapsed, the next app entry's window — skipping your own
-app's other windows. Under scoped cycling it is the next app entry's
-window, the MRU-second app's front window. A workspace holding a single
-app's windows steps inside it, one window past the one you left.
+be read — is the first step of the same walk: your own app's next
+window when its group is expanded (the flat list's MRU-second window),
+the next app entry's window while it is collapsed — skipping your own
+app's other windows.
 
-The `rows` budget applies to the visible rows. `grouping` and
-`scoped_cycling` are read when a gesture starts like every setting: a
-session keeps the window list and cycle scope it opened with until Alt
-is released. A non-boolean value (`grouping = 1`, `scoped_cycling =
-"yes"`) is named in a diagnostic and the last-good settings apply.
+The `rows` budget applies to the visible rows. `grouping` is read when
+a gesture starts like every setting: a session keeps the window list
+it opened with until Alt is released. A non-boolean value
+(`grouping = 1`, `grouping = "yes"`) is named in a diagnostic and the
+last-good settings apply.
 
 ## What `isolated = false` changes
 
@@ -366,9 +347,7 @@ A bad config never breaks switching:
   number between 3 and 12") and the last-good settings apply.
 - **A bad `grouping` value** — `grouping = 1`, `grouping = "yes"` —
   is named in a diagnostic ("`grouping` must be a boolean") and the
-  last-good settings apply, like any malformed edit. A bad
-  `scoped_cycling` value is named the same way
-  ("`scoped_cycling` must be a boolean").
+  last-good settings apply, like any malformed edit.
 - **Unknown keys are ignored** — extra keys inside an entry cost nothing.
 - **Size cap** — files over 1 MiB are ignored entirely (defaults apply);
   the read runs on the gesture path and must stay cheap.
@@ -413,6 +392,8 @@ A bad config never breaks switching:
 - Set `font = "Not Installed"`; the daemon log names the key and the
   card paints the interface font
 - With `grouping = true`: expand a group (→), release Alt, press
-  Alt+Tab again — under the default `scoped_cycling = false` the step
-  leaves the group for the next app and the expanded entry shows no
-  chord; with `scoped_cycling = true` it stays inside the group
+  Alt+Tab again — the step continues the linear walk from where it
+  left off, through the expanded group's windows and on to the next
+  app; Tab and ↓ land on the expanded entry like any row. A config
+  still carrying the removed `scoped_cycling` key parses fine —
+  unknown keys are ignored

@@ -2,7 +2,7 @@
 # press, no restart. As shipped, every line is commented out: that means
 # the defaults. Uncomment what you want to change.
 # Full reference: docs/settings.md in the source checkout, or
-# https://github.com/l1br3-io/cosmic-ext-airlock
+# https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md
 
 # theme = "auto"      # card color: "auto" (match the desktop), "dark", "light"
 # rows = 8            # windows the card keeps in view on a long list: 3–10

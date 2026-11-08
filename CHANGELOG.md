@@ -49,20 +49,18 @@ observe, not internal mechanics.
 - **App grouping** — the `grouping = true` setting re-partitions the
   switcher into a two-level tree. Level 1 is the app layer, collapsed
   by default: the card opens on app entries alone, each committing its
-  app's most recently used window. Alt+Tab / Alt+Shift+Tab cycle
-  through every app in one sequence — an expanded group's entry a
-  plain divider the highlight never rests on — or, with
-  `scoped_cycling = true`, cycle the current level only (app entries,
-  or one group's windows once entered); → or Alt+W expands and enters
-  a group (landing one past the window you just left when it's your
-  own app), ← exits a child — collapsing it first under the default
-  scope — and collapses an entry, and each app's expanded/collapsed
-  state persists across gestures. ↑/↓ and the mouse wheel walk the
-  visible rows linearly; Ctrl+N activates an app entry's window,
-  Alt+N a group's Nth window, both instantly. A lone app's windows
-  are entered and cycled instead of dead-keying the step. An entry's
-  structure reads at a glance: a solid disclosure triangle (right =
-  collapsed, down = expanded) and a count chip beside its title. See
+  app's most recently used window. Tab, Shift+Tab, the arrows, and the
+  mouse wheel are one linear walk over the visible rows — entries,
+  leaves, and expanded groups' windows together, wrapping, with an
+  expanded entry a normal row like any other. → expands the selected
+  group and enters it (landing one past the window you just left when
+  it's your own app); ← returns a child to its entry (the group stays
+  expanded) and collapses an expanded entry; each app's
+  expanded/collapsed state persists across gestures; Ctrl+N activates
+  an app entry's window instantly. Nothing ever descends into a
+  collapsed group. An entry's structure reads at a glance: a solid
+  disclosure triangle (right = collapsed, down = expanded) and a count
+  chip beside its title. See
   docs/settings.md — Grouping.
 - **A starter config on install**: `airlock install` now drops a fully
   commented `~/.config/airlock/config.toml` — every setting documented,

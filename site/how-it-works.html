@@ -69,6 +69,34 @@
       number key can reach it mid-gesture.</p>
     </section>
 
+
+    <section id="grouped-mode">
+      <h2>Grouped mode</h2>
+      <p>The <code>grouping = true</code> setting re-partitions the same
+      list into a two-level tree: one entry per application — ordered by
+      each app's most recently used window — with that app's whole window
+      set nested beneath it, and a top-level row for each window COSMIC
+      cannot attribute to any app and for each single-window app. Groups
+      start collapsed; expanding one (<kbd>→</kbd>) is remembered for as
+      long as the daemon runs. Committing an entry activates that app's
+      most recently used window — the same window its first child
+      shows.</p>
+      <p>The keys re-bind to the tree, one walk: <strong>Tab</strong>,
+      <strong>↑/↓</strong>, and the <strong>wheel</strong> are the same
+      linear step — one visible row at a time, wrapping — through entries,
+      leaves, and the windows of expanded groups alike; a collapsed group
+      contributes only its entry, and nothing ever descends into a
+      collapsed group. <strong><kbd>→</kbd></strong> expands and enters —
+      landing one past the window you just left when it is your own app —
+      <strong><kbd>←</kbd></strong> on a child returns to its entry (the
+      group stays expanded), and on an expanded entry collapses it.
+      <strong>Ctrl+N</strong> activates the Nth app entry's window. The
+      pointer picks rows like the keyboard does, expanded entries
+      included. The frozen-list rule holds for the tree: the window set
+      never changes mid-gesture, only which of it stands expanded. The
+      full table, including how a quick tap lands, lives in
+      <a href="settings.html#grouping">settings</a>.</p>
+    </section>
     <section id="the-card">
       <h2>The card</h2>
       <p>Each row shows the window's application icon — resolved through the
@@ -81,6 +109,15 @@
       <code>auto</code> (the default) follows the desktop's dark/light
       preference; see
       <a href="settings.html#theme">settings</a>.</p>
+      <p>The <code>layout = "horizontal"</code> setting trades the column
+      for a wide, short <strong>band</strong>: the same windows as tiles —
+      each the app icon with the title beneath, clamped to the tile —
+      ended by a <code>…</code> tile when the list outgrows the band. Left
+      and Right step the band, Ctrl+N and the pointer address its tiles
+      exactly as they address rows, and the <code>columns</code> setting
+      sizes it: two-thirds of the invoking output (<code>"auto"</code>, the
+      default) or a pinned 3–12 tiles. See
+      <a href="settings.html#layout">settings</a>.</p>
     </section>
 
     <section id="workspace-scoping">

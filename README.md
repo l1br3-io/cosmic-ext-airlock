@@ -52,8 +52,8 @@ pipeline the COSMIC launcher uses) beside its title.
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#layout)
 - **App grouping** (`grouping = true`) turns the list into a per-app tree:
   collapsed app entries that commit their most recently used window, → to
-  expand one (remembered across gestures), Alt+N to pick a window inside
-  it — see
+  expand one (remembered across gestures) and ← to collapse; Tab, arrows,
+  and the wheel walk the visible rows linearly — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#grouping)
 - Titles render in the desktop's own interface font — real glyphs,
   real accents, fallback chains for CJK and emoji — at the card's

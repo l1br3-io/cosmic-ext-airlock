@@ -42,24 +42,22 @@ two-level tree: one entry per application — ordered by each app's most
 recently used window — with that app's whole window set nested beneath
 it, and a top-level row for each window COSMIC cannot attribute to any
 app and for each single-window app. Groups start collapsed; expanding
-one (**→** or **Alt+W**) is remembered for as long as the daemon runs.
-Committing an entry activates that app's most recently used window —
-the same window its first child shows.
+one (**→**) is remembered for as long as the daemon runs. Committing an
+entry activates that app's most recently used window — the same window
+its first child shows.
 
-The keys re-bind to the tree. **Tab** follows the `scoped_cycling`
-setting: across every app in one sequence by default, where an expanded
-group's entry is a plain divider the highlight never rests on; inside
-one level when scoped — app entries, or one group's windows once
-entered. **↑/↓** and the **wheel** walk the visible rows linearly
-across groups, wrapping. **→** expands and enters — landing one past
-the window you just left when it is your own app — **←** and **Alt+W**
-exit, collapsing the group under the default scope. **Ctrl+N**
-activates the Nth app entry's window (an expanded entry still answers
-its chord, it just shows none); **Alt+N**, shown on expanded children,
-activates the entered group's Nth window. The pointer picks windows,
-never the divider. The frozen-list rule holds for the tree: the window
+The keys re-bind to the tree, one walk: **Tab**, **↑/↓**, and the
+**wheel** are the same linear step — one visible row at a time,
+wrapping — through entries, leaves, and the windows of expanded groups
+alike; a collapsed group contributes only its entry, and nothing ever
+descends into a collapsed group. **→** expands and enters — landing one
+past the window you just left when it is your own app — **←** on a
+child returns to its entry (the group stays expanded), and on an
+expanded entry collapses it. **Ctrl+N** activates the Nth app entry's
+window. The pointer picks rows like the keyboard does, expanded
+entries included. The frozen-list rule holds for the tree: the window
 set never changes mid-gesture, only which of it stands expanded. The
-full table, including how a quick tap lands under each scope, lives in
+full table, including how a quick tap lands, lives in
 [settings.md](settings.md#grouping).
 
 ## The card
