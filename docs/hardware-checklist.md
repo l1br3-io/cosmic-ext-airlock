@@ -323,7 +323,9 @@ binary.
 
 - [ ] Flat card: walk to a window you can spare, Alt+minus (top-row) —
       it closes, the selection lands on the next visible row (wrapping),
-      the card stays up for another close
+      the card stays up for another close, and the closed row leaves
+      the card the moment the window goes — no further key or pointer
+      input needed
 - [ ] Keypad minus closes the same; Shift+minus (underscore) types into
       the query (starting one if none stands) — never closes
 - [ ] Repeated closes walk the card down; closing the last eligible

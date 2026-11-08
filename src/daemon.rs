@@ -1064,7 +1064,8 @@ pub fn run() -> Result<(), RunError> {
         let mut activity = session.poll().map_err(RunError::Session)?;
         // Refresh first so input processing in this iteration sees the
         // state the poll just delivered.
-        if session.is_dirty() {
+        let world_changed = session.is_dirty();
+        if world_changed {
             snapshot = fresh_snapshot(&mut session, &mut mru);
             activity = true;
         }
@@ -1080,6 +1081,23 @@ pub fn run() -> Result<(), RunError> {
             session.overlay_hide("session stale");
             gesture.close();
             open = None;
+        }
+
+        // A changed world recomposes the open card (`close-window`):
+        // the poll that confirms a close drops the doomed row off the
+        // card the moment the compositor reports it. Without this the
+        // row ghosts until the next input repaints — the pointer's ×
+        // path hides behind the motion that follows a click, but
+        // Alt+minus sends no event after the request.
+        if world_changed && open.is_some() {
+            show_selection(
+                &mut session,
+                &mut gesture,
+                &mut open,
+                &snapshot,
+                &expanded,
+                &mut icons,
+            );
         }
 
         // Keyboard input on the grabbed overlay, queued during dispatch.
