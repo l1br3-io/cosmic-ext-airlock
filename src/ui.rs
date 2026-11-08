@@ -817,6 +817,9 @@ const _: () = {
     assert!(ICON.is_multiple_of(8));
     assert!(ICON_GAP.is_multiple_of(4));
     assert!(HINT_GAP.is_multiple_of(4));
+    // The × fits the band it claims, on the 4-grid like every mark.
+    assert!((GLYPH_W * CLOSE_SCALE).is_multiple_of(4));
+    assert!(GLYPH_W * CLOSE_SCALE <= HINT_COLS * TEXT_W);
     assert!(STRIP_PAD_Y.is_multiple_of(4));
     assert!(STRIP_CARET_GAP.is_multiple_of(4));
     assert!(STRIP_CARET_W == 2);
@@ -912,6 +915,17 @@ const CHEVRON_RIGHT_GLYPH: [u8; 8] = [0x00, 0x06, 0x1E, 0x7E, 0x7E, 0x1E, 0x06, 
 /// glyph rotated a quarter turn.
 const CHEVRON_DOWN_GLYPH: [u8; 8] = [0x00, 0x7E, 0x7E, 0x3C, 0x3C, 0x18, 0x18, 0x00];
 
+/// The close affordance's × (`close-window`): two 2-px diagonal arms
+/// meeting at a 2×2 center — the chevron family's solid weight, hand
+/// drawn like every glyph in the vocabulary, never a typed character.
+const CLOSE_GLYPH: [u8; 8] = [0xC3, 0xE7, 0x66, 0x3C, 0x3C, 0x66, 0xE7, 0xC3];
+
+/// The ×'s draw scale — the chevron's own 2 (16 logical px), so the
+/// affordance holds the row's weight class beside the disclosure
+/// marks, not the hints' text size: it is an action target the pointer
+/// aims at, not metadata.
+const CLOSE_SCALE: u32 = 2;
+
 /// The number chord a row advertises in its hint band — the single
 /// source of "which N selects this row" for both the renderer (the
 /// painted label) and the input map (the wired key): Ctrl+N addresses
@@ -1005,6 +1019,14 @@ pub struct OverlayModel {
     /// exist exactly while a query stands and zero-query cards stay
     /// byte-identical.
     pub query: Option<String>,
+    /// The row the pointer rests on (`close-window`'s × reveal) —
+    /// presence, not selection: the daemon sets it from hover
+    /// observations, validated against the rows this model just built,
+    /// and the renderer paints the close glyph in that row's reserved
+    /// band when the row is a window row (leaves, children, query rows
+    /// — never headers or continuations). `None` on every pointerless
+    /// card, so nothing paints without pointer presence.
+    pub hovered: Option<usize>,
 }
 
 impl OverlayModel {
@@ -1058,6 +1080,31 @@ impl OverlayModel {
         }
         let cell = (x_px / pitch) as usize;
         (x_px - cell as f64 * pitch < TILE_W as f64).then_some(cell) // gap seam
+    }
+
+    /// The row whose reserved hint band contains the device-pixel point
+    /// (`x`, `y`) — `close-window`'s click territory. The same footprint
+    /// [`OverlayModel::row_at`] resolves (the profile's rhythm, the
+    /// query strip's shift), gated to the band the card always reserves
+    /// at the row's right edge and to window rows: a group header never
+    /// offers its band, a continuation row has no window to close, and
+    /// the horizontal card has no close zone at all (its tiles keep
+    /// click-to-activate; Alt+minus closes everywhere). The boundary
+    /// evaluates this at the press and closes the row's own
+    /// event-time handle.
+    pub fn close_zone_at(&self, x: f64, y: f64, scale: u32) -> Option<usize> {
+        if self.horizontal {
+            return None;
+        }
+        let row = self.row_at(x, y, scale)?;
+        let logical_x = x / scale as f64;
+        let band_left = self.width.saturating_sub(PAD_X + HINT_COLS * TEXT_W) as f64;
+        let band_right = self.width.saturating_sub(PAD_X) as f64;
+        if logical_x < band_left || logical_x >= band_right {
+            return None; // the title's land, or the card's right margin
+        }
+        let row_model = self.rows.get(row)?;
+        (row_model.handle.is_some() && row_model.kind != RowKind::Parent).then_some(row)
     }
 }
 
@@ -1347,6 +1394,7 @@ pub fn overlay_model_horizontal(
         profile,
         horizontal: true,
         query: None,
+        hovered: None,
     })
 }
 
@@ -1573,6 +1621,7 @@ fn finish_model(
         profile,
         horizontal: false,
         query: None,
+        hovered: None,
     })
 }
 
@@ -2155,13 +2204,37 @@ pub fn render(
                 palette.text,
             );
         }
+        // The × reveal (`close-window`): pointer presence on a window
+        // row claims the reserved band for this row — the row's own
+        // hint label yields it — and paints the close affordance there,
+        // right-aligned like the labels, centered on the row's midline
+        // like the disclosure marks, in the full text color: an action
+        // target, not metadata. Headers and continuations never
+        // reveal, whatever the pointer does.
+        let close_revealed =
+            model.hovered == Some(index) && row.handle.is_some() && row.kind != RowKind::Parent;
+        if close_revealed {
+            let side = GLYPH_W * CLOSE_SCALE;
+            let close_x = lw.saturating_sub(PAD_X + side);
+            let close_y = top + (rhythm.row_h - side) / 2;
+            draw_glyph(
+                canvas,
+                stride,
+                CLOSE_GLYPH,
+                close_x * scale,
+                close_y * scale,
+                CLOSE_SCALE * scale,
+                palette.text,
+            );
+        }
         // Hint: the row's own number chord, right-aligned in the band
         // the card always reserves and vertically centered on the
         // titles' own line (`text_line_y`: the Bitmap cell top, the
         // System baseline). Rows past nine paint nothing — every
         // displayed hint is a wired key (the model's [`RowHint`] is
-        // that truth's single source, paired with `key_input`).
-        if let Some(label) = row.hint.map(RowHint::label) {
+        // that truth's single source, paired with `key_input`). A
+        // hovered window row yields its band to the × above.
+        if !close_revealed && let Some(label) = row.hint.map(RowHint::label) {
             let band_right = lw.saturating_sub(PAD_X);
             match &mut text {
                 TextBackend::Bitmap => {
@@ -2925,6 +2998,13 @@ pub enum PointerInput {
     /// motion, addressing the handle captured at the press. Presses on
     /// continuation rows queue nothing.
     Click { handle: Handle },
+    /// Left-button press inside the hovered row's × zone
+    /// (`close-window`): close that row's window — the handle captured
+    /// at the press, the same event-time resolution
+    /// [`PointerInput::Click`] carries. The boundary's click split
+    /// produces this only on the vertical card's window rows; every
+    /// other press activates.
+    Close { handle: Handle },
     /// One discrete wheel notch, riding the existing [`Direction`]
     /// vocabulary.
     Wheel(Direction),
@@ -5904,6 +5984,7 @@ mod tests {
             profile: StyleProfile::default(),
             horizontal: false,
             query: None,
+            hovered: None,
         }
     }
 
@@ -5993,6 +6074,183 @@ mod tests {
         // exactly so the token cannot drift by accident.
         assert_eq!(COLOR_SELECTED_BG, 0xFA_48_4B_50);
         assert_eq!(COLOR_BORDER, 0xFA44464B);
+    }
+
+    #[test]
+    fn the_close_zone_is_the_hint_band_of_window_rows() {
+        // `close-window`'s pointer affordance: the ×'s click territory
+        // is exactly the band the card always reserves — every row's
+        // right edge, full row height, window rows only. The band's own
+        // boundaries belong to it; one column left of it is the title's
+        // land, and the PAD_X margin past it is nobody's.
+        let model = hit_model(3);
+        let band_left = (model.width - PAD_X - HINT_COLS * TEXT_W) as f64;
+        let band_right = (model.width - PAD_X) as f64;
+        let mid_row =
+            |row: usize| PAD_Y as f64 + row as f64 * (ROW_H + ROW_GAP) as f64 + ROW_H as f64 / 2.0;
+        for row in 0..3 {
+            let x = (band_left + band_right) / 2.0;
+            assert_eq!(
+                model.close_zone_at(x, mid_row(row), 1),
+                Some(row),
+                "mid-band of row {row}"
+            );
+        }
+        // The band's own edges: first pixel in, last pixel in.
+        assert_eq!(model.close_zone_at(band_left, mid_row(1), 1), Some(1));
+        assert_eq!(
+            model.close_zone_at(band_right - 0.5, mid_row(1), 1),
+            Some(1)
+        );
+        // One column left of the band, and the right margin past it.
+        assert_eq!(model.close_zone_at(band_left - 0.5, mid_row(1), 1), None);
+        assert_eq!(model.close_zone_at(band_right, mid_row(1), 1), None);
+        // The title's land never closes.
+        assert_eq!(
+            model.close_zone_at(PAD_X as f64 + ICON as f64, mid_row(1), 1),
+            None
+        );
+    }
+
+    #[test]
+    fn the_close_zone_agrees_between_scale_1_and_scale_2_device_points() {
+        // The HiDPI twin of row_at's contract: the same on-screen point
+        // names one close zone at both scales.
+        let model = hit_model(3);
+        let band_left = (model.width - PAD_X - HINT_COLS * TEXT_W) as f64;
+        let band_right = (model.width - PAD_X) as f64;
+        let probes = [
+            ((band_left + band_right) / 2.0, 36.0),  // mid-band, row 0
+            (band_left - 0.5, 92.0),                 // the title's land
+            (band_left, 148.0),                      // band's first pixel, row 2
+            ((band_left + band_right) / 2.0, 64.0),  // a gap seam
+            ((band_left + band_right) / 2.0, 190.0), // off the card
+        ];
+        for (x, y) in probes {
+            assert_eq!(
+                model.close_zone_at(x, y, 1),
+                model.close_zone_at(x * 2.0, y * 2.0, 2),
+                "logical ({x}, {y}) must name one zone at both scales"
+            );
+        }
+    }
+
+    #[test]
+    fn the_close_zone_refuses_headers_and_continuations() {
+        // A group header closes nothing from its band — "close an app"
+        // is not this module — and a continuation affordance has no
+        // window to close. Children are window rows like leaves.
+        let mut model = hit_model(3);
+        model.rows[0].kind = RowKind::Parent;
+        model.rows[2].handle = None;
+        let band_mid = |model: &OverlayModel, row: usize| {
+            let y = PAD_Y as f64 + row as f64 * (ROW_H + ROW_GAP) as f64 + ROW_H as f64 / 2.0;
+            let x = (model.width - PAD_X) as f64 - (HINT_COLS * TEXT_W) as f64 / 2.0;
+            (x, y)
+        };
+        let (x, y) = band_mid(&model, 0);
+        assert_eq!(
+            model.close_zone_at(x, y, 1),
+            None,
+            "a header never offers its band"
+        );
+        let (x, y) = band_mid(&model, 1);
+        assert_eq!(
+            model.close_zone_at(x, y, 1),
+            Some(1),
+            "a child is a window row"
+        );
+        let (x, y) = band_mid(&model, 2);
+        assert_eq!(
+            model.close_zone_at(x, y, 1),
+            None,
+            "a continuation row has no window"
+        );
+    }
+
+    #[test]
+    fn the_close_zone_is_the_vertical_cards_affordance() {
+        // The horizontal band keeps click-to-activate: its tiles are
+        // not rows, and Alt+minus already closes everywhere. The zone
+        // resolves nothing on a horizontal model.
+        let mut model = hit_model(3);
+        model.horizontal = true;
+        let y = PAD_Y as f64 + ROW_H as f64 / 2.0;
+        for x in [0.5f64, model.width as f64 / 2.0, model.width as f64 - 0.5] {
+            assert_eq!(
+                model.close_zone_at(x, y, 1),
+                None,
+                "the band card has no close zone at x={x}"
+            );
+        }
+    }
+
+    #[test]
+    fn hover_presence_paints_the_close_glyph_on_window_rows_only() {
+        // Pointer presence is what reveals the ×: a hovered leaf's band
+        // paints text-colored ink it did not carry without the hover,
+        // while a header hovered the same way paints byte-identically
+        // to the pointerless card — the reveal never leaks onto rows
+        // that must not offer a close.
+        let palette = Palette::dark();
+        let mut model = hit_model(3);
+        let base = rendered(&model, 2);
+        // The leaf reveal: row 1's band gains the ×'s ink.
+        model.hovered = Some(1);
+        let revealed = rendered(&model, 2);
+        assert_ne!(revealed.0, base.0, "the hovered leaf paints the ×");
+        let mut inked = false;
+        for (x, y) in hint_band_points(1, model.width) {
+            if pixel(&revealed.0, revealed.1, x, y) == palette.text {
+                inked = true;
+                break;
+            }
+        }
+        assert!(inked, "the × paints in the full text color");
+        // Other rows' bands are untouched by row 1's hover.
+        for row in [0usize, 2] {
+            for (x, y) in hint_band_points(row, model.width) {
+                assert_eq!(
+                    pixel(&revealed.0, revealed.1, x, y),
+                    pixel(&base.0, base.1, x, y),
+                    "row {row}'s band changed under row 1's hover"
+                );
+            }
+        }
+        // The refusal: a hovered header paints nothing over the
+        // pointerless card, and neither does a hovered continuation.
+        let mut header_model = hit_model(3);
+        header_model.rows[0].kind = RowKind::Parent;
+        let header_base = rendered(&header_model, 2);
+        header_model.hovered = Some(0);
+        assert_eq!(
+            rendered(&header_model, 2).0,
+            header_base.0,
+            "a hovered header is byte-identical to no hover"
+        );
+        let mut dots_model = hit_model(3);
+        dots_model.rows[2].handle = None;
+        dots_model.rows[2].title = String::new();
+        let dots_base = rendered(&dots_model, 2);
+        dots_model.hovered = Some(2);
+        assert_eq!(
+            rendered(&dots_model, 2).0,
+            dots_base.0,
+            "a hovered continuation is byte-identical to no hover"
+        );
+        // The pointerless regression floor: no band on the card carries
+        // the ×'s text-colored ink when no row is hovered — the reveal
+        // is pointer presence, never keyboard selection or nothing at
+        // all.
+        for row in 0..3 {
+            for (x, y) in hint_band_points(row, model.width) {
+                assert_ne!(
+                    pixel(&base.0, base.1, x, y),
+                    palette.text,
+                    "row {row}'s band painted × ink without a hover"
+                );
+            }
+        }
     }
 
     #[test]
@@ -6405,6 +6663,7 @@ mod tests {
             profile: StyleProfile::default(),
             horizontal: false,
             query: None,
+            hovered: None,
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -6443,6 +6702,7 @@ mod tests {
             profile: StyleProfile::default(),
             horizontal: false,
             query: None,
+            hovered: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let glyph_x = (PAD_X + (ICON - GLYPH_W * GLYPH_SCALE) / 2) * 2;
@@ -6716,6 +6976,7 @@ mod tests {
                 profile: StyleProfile::default(),
                 horizontal: false,
                 query: None,
+                hovered: None,
             };
             let (canvas, stride) = rendered(&model, 2);
             // A probe column inside the band's horizontal extent, in the
@@ -6778,6 +7039,7 @@ mod tests {
             profile: StyleProfile::default(),
             horizontal: false,
             query: None,
+            hovered: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -6811,6 +7073,7 @@ mod tests {
             profile: StyleProfile::default(),
             horizontal: false,
             query: None,
+            hovered: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -6858,6 +7121,7 @@ mod tests {
             profile: StyleProfile::default(),
             horizontal: false,
             query: None,
+            hovered: None,
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -6897,6 +7161,7 @@ mod tests {
             profile: StyleProfile::default(),
             horizontal: false,
             query: None,
+            hovered: None,
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -6952,6 +7217,7 @@ mod tests {
             profile: StyleProfile::default(),
             horizontal: false,
             query: None,
+            hovered: None,
         };
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4;

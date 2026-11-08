@@ -647,11 +647,16 @@ impl PointerHandler for App {
                 }
                 // A press carries the seat's last-known position, so the
                 // click lands where the cursor is, addressing the handle
-                // captured at the press. Non-left buttons, presses not
-                // on any row, and presses on continuation rows (no
-                // handle) mean nothing to the switcher.
+                // captured at the press. The `close-window` split comes
+                // first: a press inside the hovered row's × zone closes
+                // that row's window; any other press on a content row
+                // activates. Non-left buttons, presses not on any row,
+                // and presses on continuation rows (no handle) mean
+                // nothing to the switcher.
                 PointerEventKind::Press { button, .. } if button == BTN_LEFT => {
-                    if let (_, Some(handle)) = self.overlay_row_handle_at(event.position) {
+                    if let Some(handle) = self.overlay_close_target_at(event.position) {
+                        self.pointer_inputs.push(PointerInput::Close { handle });
+                    } else if let (_, Some(handle)) = self.overlay_row_handle_at(event.position) {
                         self.pointer_inputs.push(PointerInput::Click { handle });
                     }
                 }
@@ -860,6 +865,23 @@ impl App {
         self.overlay
             .as_ref()
             .and_then(|overlay| overlay.model().rows.get(row)?.handle)
+    }
+
+    /// The window a press at `position` closes (`close-window`): the
+    /// ×-zone hit-test evaluated against the live model at event
+    /// receipt — the same (x, y, scale) the row hit-test uses, so the
+    /// zone is exactly the band the user saw — resolved to the row's
+    /// own handle. `None` off the zone, on a header or continuation
+    /// row, on the horizontal band, or with no overlay mapped: the
+    /// press activates as today.
+    fn overlay_close_target_at(&self, position: (f64, f64)) -> Option<Handle> {
+        let overlay = self.overlay.as_ref()?;
+        let (x, y) = position;
+        let scale = overlay.scale as f64;
+        let row = overlay
+            .model()
+            .close_zone_at(x * scale, y * scale, overlay.scale)?;
+        self.overlay_row_handle(row)
     }
 
     /// The window the live model's Nth *level-1* entry (0-based)

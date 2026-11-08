@@ -497,6 +497,7 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
             profile: ui::StyleProfile::default(),
             horizontal: true,
             query: None,
+            hovered: None,
         }
     };
     // The 48-column clamp input: the tile's own budget (eleven columns
@@ -606,6 +607,7 @@ fn windowed(
         profile,
         horizontal: false,
         query: None,
+        hovered: None,
     }
 }
 
@@ -721,6 +723,49 @@ fn scenarios(
     sheet.push(Scenario {
         model: ui::no_matches_model("zzz", ui::StyleProfile::default())
             .expect("the verdict card renders"),
+        palette: base,
+    });
+    // The close family (`close-window`, CW2): the × revealed under the
+    // pointer — a hovered leaf (a hinted row: its band yields to the
+    // ×), a hovered child under its unhovered parent, and the hovered
+    // header that never reveals. Judged like every scenario on both
+    // polarities.
+    let mut close_leaf = sized(OverlayModel {
+        rows: vec![
+            row("MRU first", icons[3].clone(), false),
+            entry_row("Middle - selection", icons[4].clone(), true, 2),
+            row("Fallback glyph row", None, false),
+        ],
+        ..single()
+    });
+    close_leaf.hovered = Some(1);
+    sheet.push(Scenario {
+        model: close_leaf,
+        palette: base,
+    });
+    let mut close_child = tree_card(
+        vec![
+            parent_row("firefox", 3, icons[0].clone(), false, true, Some(1)),
+            child_row("firefox — docs", icons[1].clone(), true),
+            child_row("firefox — mail", icons[2].clone(), false),
+        ],
+        1,
+    );
+    close_child.hovered = Some(1);
+    sheet.push(Scenario {
+        model: close_child,
+        palette: base,
+    });
+    let mut close_header = tree_card(
+        vec![
+            parent_row("firefox", 3, icons[0].clone(), true, true, Some(1)),
+            child_row("firefox — docs", icons[1].clone(), false),
+        ],
+        0,
+    );
+    close_header.hovered = Some(0);
+    sheet.push(Scenario {
+        model: close_header,
         palette: base,
     });
     // The long-list family (list-viewport), each windowed and sized by

@@ -155,6 +155,15 @@ pub struct Switch {
     /// same-app view's. The query narrows exactly this list, never a
     /// re-derived one (the freeze philosophy).
     frozen: Vec<Handle>,
+    /// The pointer's resting place (`close-window`'s × reveal): the row
+    /// and its window as the last hover observation carried them —
+    /// presence, not crossing intent, so the × reveals even on the
+    /// seeding contact the crossing policy ignores. `None` on leave,
+    /// gap, continuation rows, and after every close (the card
+    /// recomposes; the pair is stale the moment rows shift). Paint-time
+    /// validation against the freshly built rows keeps a stale index
+    /// from ever offering a wrong window's close.
+    hovered: Option<(usize, Handle)>,
     /// The tree rows the card is showing right now, recomputed on every
     /// show from the frozen tree, the expansion state, and liveness —
     /// the exact sequence the model rendered, so pointer rows map back
@@ -380,6 +389,7 @@ pub fn ring_step(
             query: String::new(),
             filtered: None,
             frozen: eligible,
+            hovered: None,
             visible: Vec::new(),
             viewport: None,
         });
@@ -740,6 +750,14 @@ fn advance_off_doomed(
     expanded: &std::collections::HashSet<String>,
     doomed: Handle,
 ) -> bool {
+    // A close that does not sit under the selection moves nothing: the
+    // pointer path (the ×) closes any hovered window while the
+    // keyboard's selection stays on its own. The key path always
+    // passes the selection's own handle, so the rule changes nothing
+    // there.
+    if session.selected_handle() != Some(doomed) {
+        return true;
+    }
     // The querying walk: the narrowed ring's handles.
     let sequence: Vec<Handle> = if let Some(filtered) = &session.filtered {
         filtered.handles().to_vec()
@@ -796,24 +814,39 @@ fn select_fresh(
     session.ring.select(handle).is_some()
 }
 
-/// Closes the selected row's window (`close-window`'s key path):
-/// resolve the selection's handle, advance off it, send the request,
-/// repaint. The session survives for repeated closes; a card with
-/// nothing left dismisses.
-fn close_selected(
+/// The session-side half of a close (`close-window`), pure over the
+/// open session: forget the pointer's hovered row (the card
+/// recomposes; the × returns on the next motion), move the selection
+/// off the doomed window when it rests there, and report whether
+/// anything eligible remains — the caller dismisses a card that does
+/// not.
+fn prepare_close(
+    session: &mut Switch,
+    snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
+    doomed: Handle,
+) -> bool {
+    session.hovered = None;
+    advance_off_doomed(session, snapshot, expanded, doomed)
+}
+
+/// Closes one window of the open card (`close-window`'s shared path —
+/// the Alt+minus key and the pointer's ×): prepare the session
+/// (advance off the doomed selection, forget the hover), send the
+/// request, repaint what survives. The session survives for repeated
+/// closes; a card with nothing left dismisses.
+fn close_window(
     session: &mut wayland::Session,
     gesture: &mut Gesture,
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
     expanded: &std::collections::HashSet<String>,
     icons: &mut crate::icons::Cache,
+    doomed: Handle,
 ) -> Result<(), RunError> {
-    let Some(doomed) = open.as_ref().and_then(Switch::selected_handle) else {
-        return Ok(());
-    };
     let holds = open
         .as_mut()
-        .is_some_and(|current| advance_off_doomed(current, snapshot, expanded, doomed));
+        .is_some_and(|current| prepare_close(current, snapshot, expanded, doomed));
     if !holds {
         session.overlay_hide("nothing left to close");
         gesture.close();
@@ -827,6 +860,41 @@ fn close_selected(
         show_selection(session, gesture, open, snapshot, expanded, icons);
     }
     Ok(())
+}
+
+/// Closes the selected row's window (`close-window`'s key path):
+/// resolve the selection's handle and hand it to the shared
+/// close.
+fn close_selected(
+    session: &mut wayland::Session,
+    gesture: &mut Gesture,
+    open: &mut Option<Switch>,
+    snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
+    icons: &mut crate::icons::Cache,
+) -> Result<(), RunError> {
+    let Some(doomed) = open.as_ref().and_then(Switch::selected_handle) else {
+        return Ok(());
+    };
+    close_window(session, gesture, open, snapshot, expanded, icons, doomed)
+}
+
+/// The row a hover observation reveals the × on (`close-window`): the
+/// pointer's pair (row, handle), confirmed against the rows the model
+/// just built — a stale index (the card recomposed under a resting
+/// pointer) never offers a wrong window's close.
+fn hovered_row(
+    model: &crate::ui::OverlayModel,
+    observed: Option<(usize, Handle)>,
+) -> Option<usize> {
+    observed
+        .filter(|&(row, handle)| {
+            model
+                .rows
+                .get(row)
+                .is_some_and(|row| row.handle == Some(handle))
+        })
+        .map(|(row, _)| row)
 }
 
 /// The type-to-filter query cap: input past it is ignored, so the
@@ -1181,7 +1249,33 @@ pub fn run() -> Result<(), RunError> {
                 PointerInput::Click { handle } => {
                     activate_row(&mut session, &mut gesture, &mut open, &snapshot, handle)?;
                 }
+                PointerInput::Close { handle } => {
+                    // The × (`close-window`): the press-time capture
+                    // closes the hovered row's window through the
+                    // shared close path — the selection and query stay
+                    // wherever the gesture left them unless the doomed
+                    // window sits under the selection.
+                    close_window(
+                        &mut session,
+                        &mut gesture,
+                        &mut open,
+                        &snapshot,
+                        &expanded,
+                        &mut icons,
+                        handle,
+                    )?;
+                }
                 PointerInput::Hover { row, handle } => {
+                    // Presence tracking (`close-window`): the pointer's
+                    // pair rides the session beside the crossing policy
+                    // — the × reveals wherever the pointer rests, even
+                    // on the seeding contact the policy ignores, and
+                    // hides the moment it leaves the row.
+                    let hovered = row.zip(handle);
+                    let revealed = open.as_ref().is_some_and(|open| open.hovered != hovered);
+                    if let Some(open) = open.as_mut() {
+                        open.hovered = hovered;
+                    }
                     // A crossing selects by the event-time target — the
                     // row and handle captured against the model the user
                     // saw — and only a row the session still shows moves
@@ -1202,6 +1296,18 @@ pub fn run() -> Result<(), RunError> {
                             .as_mut()
                             .is_some_and(|open| open.select_pointer_row(content_row, handle))
                     {
+                        show_selection(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            &expanded,
+                            &mut icons,
+                        );
+                    } else if revealed {
+                        // The pointer moved rows without a selecting
+                        // crossing (seeding contact, a gap, a header):
+                        // the × moved, and the card says so.
                         show_selection(
                             &mut session,
                             &mut gesture,
@@ -1739,6 +1845,14 @@ fn show_selection(
             if let Some(session) = open.as_mut() {
                 session.viewport = Some(model.viewport);
             }
+            // The × reveal (`close-window`): the pointer's presence
+            // paints the close glyph on the hovered row — the pair the
+            // last hover observation carried, validated against the
+            // rows this model just built, so a stale index reveals
+            // nothing.
+            let observed = open.as_ref().and_then(|session| session.hovered);
+            let mut model = model;
+            model.hovered = hovered_row(&model, observed);
             // The key map rides the shown card: Tab/→/← mean tree
             // walks exactly when the card paints the tree. The text
             // decision rides it too — the overlay freezes what it
@@ -3738,6 +3852,7 @@ mod tests {
             query: String::new(),
             filtered: None,
             frozen: Vec::new(),
+            hovered: None,
             visible: Vec::new(),
             profile: StyleProfile::default(),
             text: crate::text::TextDecision::Bitmap,
@@ -5212,6 +5327,85 @@ mod tests {
             Some(Handle(3)),
             "the second match, never the editor"
         );
+    }
+
+    #[test]
+    fn closing_a_window_the_selection_is_not_on_moves_nothing() {
+        // The pointer path: the × closes the hovered row's window while
+        // the keyboard's selection rests elsewhere — a close that does
+        // not sit under the selection never moves it.
+        let snap = snapshot(
+            vec![
+                titled(1, "a", "app.a", 30),
+                titled(2, "b", "app.b", 20),
+                titled(3, "c", "app.c", 10),
+            ],
+            Some(1),
+        );
+        let (mut open, expanded) = flat_session(&snap);
+        open.as_mut().expect("open").ring.select(Handle(3));
+        assert!(prepare_close(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Handle(1)
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").selected_handle(),
+            Some(Handle(3)),
+            "the selection stays on its own window"
+        );
+    }
+
+    #[test]
+    fn a_close_forgets_the_pointer_s_hovered_row() {
+        // The card recomposes around a close, so the pointer's resting
+        // row is stale the moment rows shift: the hover is forgotten,
+        // and the × returns only when the pointer moves again.
+        let snap = snapshot(
+            vec![titled(1, "a", "app.a", 30), titled(2, "b", "app.b", 20)],
+            Some(1),
+        );
+        let (mut open, expanded) = flat_session(&snap);
+        open.as_mut().expect("open").hovered = Some((1, Handle(2)));
+        assert!(prepare_close(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Handle(2)
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").hovered,
+            None,
+            "the recomposed card reveals no × until the pointer moves"
+        );
+    }
+
+    #[test]
+    fn hovered_row_validates_against_the_built_model() {
+        // The × paints only where the pointer's pair (row, handle)
+        // still matches the rows the card just built: a row past the
+        // end, or a row whose window is no longer there, reveals
+        // nothing — a stale index never offers a wrong window's close.
+        let model = OverlayModel {
+            rows: vec![RowModel {
+                handle: Some(Handle(1)),
+                ..RowModel::default()
+            }],
+            ..OverlayModel::default()
+        };
+        assert_eq!(hovered_row(&model, Some((0, Handle(1)))), Some(0));
+        assert_eq!(
+            hovered_row(&model, Some((1, Handle(1)))),
+            None,
+            "a row past the model's end"
+        );
+        assert_eq!(
+            hovered_row(&model, Some((0, Handle(2)))),
+            None,
+            "the row no longer carries that window"
+        );
+        assert_eq!(hovered_row(&model, None), None);
     }
 
     #[test]
