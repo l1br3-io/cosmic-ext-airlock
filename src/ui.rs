@@ -369,11 +369,47 @@ impl Palette {
         }
     }
 
-    /// The card `setting` paints: a pinned value wins regardless of the
-    /// system; `Auto` follows the system's dark/light answer, and an
-    /// unreadable one (`None`) paints dark — today's look, never a
-    /// broken switch.
-    pub fn resolve(setting: ThemeSetting, system_prefers_dark: Option<bool>) -> Palette {
+    /// The custom card from the paired `card`/`text` keys: the two
+    /// chosen colors as given, the three computed colors by the same
+    /// blend system as the built-ins (band 20 %, muted 55 %, the border
+    /// one step off the band per polarity — 18 % on a dark card, 22 %
+    /// on a light one), and the icon-tint polarity from the card's own
+    /// relative luminance (dark under 0.5). The alpha bytes are owned
+    /// here — background `0xFA`, text `0xFF` — so the near-opaque
+    /// contract holds whatever the pair. Infallible by construction:
+    /// the contrast floor already rejected any pair that parses, and
+    /// alpha is unreachable through the keys.
+    pub fn custom(card: u32, text: u32) -> Palette {
+        let background = 0xFA00_0000 | (card & 0x00FF_FFFF);
+        let text = 0xFF00_0000 | (text & 0x00FF_FFFF);
+        let is_dark = relative_luminance(background) < 0.5;
+        let border = if is_dark { 18 } else { 22 };
+        let palette = Palette {
+            background,
+            text,
+            selected_bg: blend_over(background, text, 20),
+            border: blend_over(background, text, border),
+            muted: blend_over(background, text, 55),
+            is_dark,
+        };
+        debug_assert!(palette.background >> 24 >= 0xFA);
+        debug_assert!(palette.selected_bg >> 24 >= 0xFA);
+        palette
+    }
+
+    /// The card the keys paint: a present pair wins over every
+    /// [`ThemeSetting`] — the user's own card, polarity and all.
+    /// Otherwise a pinned value wins regardless of the system; `Auto`
+    /// follows the system's dark/light answer, and an unreadable one
+    /// (`None`) paints dark — today's look, never a broken switch.
+    pub fn resolve(
+        setting: ThemeSetting,
+        system_prefers_dark: Option<bool>,
+        pair: Option<(u32, u32)>,
+    ) -> Palette {
+        if let Some((card, text)) = pair {
+            return Palette::custom(card, text);
+        }
         let dark = match setting {
             ThemeSetting::Dark => true,
             ThemeSetting::Light => false,
@@ -3769,18 +3805,136 @@ mod tests {
     fn resolve_honors_pinned_values_and_auto_follows_the_system() {
         // Pinned values ignore the system answer entirely; Auto follows
         // it, and an unreadable answer (None) paints dark — today's look.
+        // No pair (the PA3 pin: no keys, byte-identical paint).
         let dark = Palette::dark();
         let light = Palette::light();
         for system in [Some(true), Some(false), None] {
-            assert_eq!(Palette::resolve(ThemeSetting::Dark, system), dark);
-            assert_eq!(Palette::resolve(ThemeSetting::Light, system), light);
+            assert_eq!(Palette::resolve(ThemeSetting::Dark, system, None), dark);
+            assert_eq!(Palette::resolve(ThemeSetting::Light, system, None), light);
         }
-        assert_eq!(Palette::resolve(ThemeSetting::Auto, Some(true)), dark);
-        assert_eq!(Palette::resolve(ThemeSetting::Auto, Some(false)), light);
+        assert_eq!(Palette::resolve(ThemeSetting::Auto, Some(true), None), dark);
         assert_eq!(
-            Palette::resolve(ThemeSetting::Auto, None),
+            Palette::resolve(ThemeSetting::Auto, Some(false), None),
+            light
+        );
+        assert_eq!(
+            Palette::resolve(ThemeSetting::Auto, None, None),
             dark,
             "auto + unreadable system paints today's card"
+        );
+    }
+
+    #[test]
+    fn custom_reproduces_the_builtins_from_their_own_colors() {
+        // The built-ins are customs with the shipped colors: the same
+        // two chosen colors in, byte-identical card out — proof the
+        // custom path adds no derivation of its own.
+        assert_eq!(
+            Palette::custom(0x00_1E_21_26, 0x00_F2_F4_F8),
+            Palette::dark()
+        );
+        assert_eq!(
+            Palette::custom(0x00_F7_F4_F0, 0x00_1E_21_26),
+            Palette::light()
+        );
+    }
+
+    #[test]
+    fn custom_derives_by_the_blend_system_per_polarity() {
+        // 20/55 everywhere; the border rides one step off the band per
+        // polarity — 18 before it on a dark card, 22 past it on a light
+        // one (the built-ins' rule, mirrored).
+        let dark = Palette::custom(0x00_2A_1E_30, 0x00_E8_E6_E0);
+        assert_eq!(
+            dark.background, 0xFA_2A_1E_30,
+            "the card as given, alpha owned"
+        );
+        assert_eq!(dark.text, 0xFF_E8_E6_E0);
+        assert!(dark.is_dark, "this card's luminance sits under 0.5");
+        assert_eq!(dark.selected_bg, blend_over(dark.background, dark.text, 20));
+        assert_eq!(dark.border, blend_over(dark.background, dark.text, 18));
+        assert_eq!(dark.muted, blend_over(dark.background, dark.text, 55));
+
+        let light = Palette::custom(0x00_E8_E6_E0, 0x00_2A_1E_30);
+        assert!(!light.is_dark);
+        assert_eq!(
+            light.selected_bg,
+            blend_over(light.background, light.text, 20)
+        );
+        assert_eq!(light.border, blend_over(light.background, light.text, 22));
+        assert_eq!(light.muted, blend_over(light.background, light.text, 55));
+    }
+
+    #[test]
+    fn custom_polarity_flips_at_the_luminance_threshold() {
+        // The ratified 0.5 threshold: #BBBBBB sits just under (≈ 0.497),
+        // #BCBCBC just over (≈ 0.503) — the icon tint follows the card
+        // the user chose, not the system's.
+        assert!(Palette::custom(0x00_BB_BB_BB, 0x00_00_00_00).is_dark);
+        assert!(!Palette::custom(0x00_BC_BC_BC, 0x00_00_00_00).is_dark);
+    }
+
+    #[test]
+    fn custom_stays_near_opaque_for_any_pair() {
+        // The constructor owns the alpha bytes — background 0xFA, text
+        // 0xFF — and blend_over keeps the card's, so every derived
+        // color clears the near-opaque bar whatever the pair.
+        for (card, text) in [
+            (0x00_1E_21_26u32, 0x00_F2_F4_F8u32),
+            (0x00_F7_F4_F0, 0x00_1E_21_26),
+            (0x00_BB_BB_BB, 0x00_00_00_00),
+            (0x00_FF_FF_FF, 0x00_76_76_76),
+        ] {
+            let palette = Palette::custom(card, text);
+            assert_eq!(palette.background >> 24, 0xFA, "card {card:06x}");
+            assert_eq!(palette.text >> 24, 0xFF);
+            assert!(palette.selected_bg >> 24 >= 0xFA);
+            assert!(palette.border >> 24 >= 0xFA);
+            assert!(palette.muted >> 24 >= 0xFA);
+        }
+    }
+
+    #[test]
+    fn resolve_lets_a_present_pair_win_over_every_theme_setting() {
+        // A present pair pins the card: the setting and the system
+        // answer — present or not — change nothing.
+        let pair = Some((0x00_2A_1E_30, 0x00_E8_E6_E0));
+        let expected = Palette::custom(0x00_2A_1E_30, 0x00_E8_E6_E0);
+        for setting in [ThemeSetting::Auto, ThemeSetting::Dark, ThemeSetting::Light] {
+            for system in [Some(true), Some(false), None] {
+                assert_eq!(Palette::resolve(setting, system, pair), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn a_custom_palette_renders_its_own_band_and_card() {
+        // The render pin: the selected row's band is exactly this
+        // card's own text@20 blend, the gaps are this card as given —
+        // nothing in the renderer reaches for a built-in color.
+        let mut model = hit_model(3);
+        model.rows[1].selected = true;
+        let palette = Palette::custom(0x00_2A_1E_30, 0x00_E8_E6_E0);
+        let (w, h) = (model.width * 2, model.height * 2);
+        let stride = w * 4;
+        let mut canvas = vec![0u8; (stride * h) as usize];
+        render(&model, &mut canvas, w, h, stride, 2, &palette);
+        assert_eq!(
+            palette.selected_bg,
+            blend_over(palette.background, palette.text, 20)
+        );
+        let band_top = (PAD_Y + ROW_H + ROW_GAP) * 2;
+        let band_x = SELECT_INSET * 2;
+        assert_eq!(
+            pixel(&canvas, stride, band_x + BAND_RADIUS * 2, band_top),
+            palette.selected_bg,
+            "the band is text@20 over this card, byte for byte"
+        );
+        let gap_y = (PAD_Y + ROW_H + ROW_GAP / 2) * 2;
+        assert_eq!(
+            pixel(&canvas, stride, w / 2, gap_y),
+            palette.background,
+            "the card fill is the card as given"
         );
     }
 

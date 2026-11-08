@@ -1244,15 +1244,23 @@ fn step_and_show(
         None => {
             settings.refresh();
             // `auto` asks the system once per open — two small file reads
-            // at most, and pinned values never touch the disk at all.
-            // `None` (unreadable preference) paints dark, never a broken
+            // at most — and pinned values never touch the disk at all; a
+            // present `card`/`text` pair pins the card over every
+            // `theme` value, so it skips the read too (its polarity is
+            // its own, the constructor's luminance rule). `None`
+            // (unreadable preference) paints dark, never a broken
             // switch.
-            let system_prefers_dark = (settings.settings.theme == crate::ui::ThemeSetting::Auto)
-                .then(crate::theme::system_prefers_dark)
-                .flatten();
+            let system_prefers_dark = (settings.settings.theme == crate::ui::ThemeSetting::Auto
+                && settings.settings.pair.is_none())
+            .then(crate::theme::system_prefers_dark)
+            .flatten();
             (
                 resolve_scope(snapshot, &settings.settings),
-                crate::ui::Palette::resolve(settings.settings.theme, system_prefers_dark),
+                crate::ui::Palette::resolve(
+                    settings.settings.theme,
+                    system_prefers_dark,
+                    settings.settings.pair,
+                ),
                 settings.settings.rows,
                 settings.settings.grouping,
                 settings.settings.scoped_cycling,
@@ -3356,6 +3364,28 @@ mod tests {
         std::fs::write(&path, b"theme = \"light\"\n").expect("rewrite");
         live.refresh();
         assert_eq!(live.settings.theme, crate::ui::ThemeSetting::Light);
+    }
+
+    #[test]
+    fn refresh_adopts_a_pair_change_with_last_good() {
+        // The custom-palette twin of the theme flip: a present pair
+        // lands on the refresh a next invocation performs — no daemon
+        // restart — and a below-floor rewrite keeps the last-good pair
+        // (the floor rejects the whole file).
+        let dir = TempDir::new("pair-flip");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, b"card = \"#2A1E30\"\ntext = \"#E8E6E0\"\n").expect("write");
+        let mut live = live_at(path.clone());
+        live.refresh();
+        assert_eq!(live.settings.pair, Some((0x00_2A_1E_30, 0x00_E8_E6_E0)));
+
+        std::fs::write(&path, b"card = \"#FFFFFF\"\ntext = \"#ADADAD\"\n").expect("rewrite bad");
+        live.refresh();
+        assert_eq!(
+            live.settings.pair,
+            Some((0x00_2A_1E_30, 0x00_E8_E6_E0)),
+            "a below-floor pair must not apply"
+        );
     }
 
     #[test]
