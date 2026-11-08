@@ -724,6 +724,111 @@ fn refilter(session: &mut Switch, snapshot: &Snapshot) {
     }
 }
 
+/// Advance-then-close (`close-window`): move the selection off the
+/// doomed window *before* the compositor request — `session_holds`
+/// must never observe a dead selection, and the card recomposes around
+/// a selection already past the closing row. The next *live* row of
+/// the card's current sequence (the querying ring, the tree's visible
+/// rows, or the flat ring), wrapping, rows carrying the doomed window
+/// excluded (a group's header and its front child are one window).
+/// Returns whether the session holds anything left; the caller sends
+/// the close request only for a session that does, and dismisses one
+/// that does not.
+fn advance_off_doomed(
+    session: &mut Switch,
+    snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
+    doomed: Handle,
+) -> bool {
+    // The querying walk: the narrowed ring's handles.
+    let sequence: Vec<Handle> = if let Some(filtered) = &session.filtered {
+        filtered.handles().to_vec()
+    } else if let Some(tree) = &session.tree {
+        grouped_visible(session, snapshot, expanded)
+            .into_iter()
+            .map(|index| tree.rows()[index].handle)
+            .collect()
+    } else {
+        session.ring.handles().to_vec()
+    };
+    // The doomed row's own position — the scan starts one past it and
+    // wraps, so the selection moves to the walk's NEXT live row, not
+    // the list's first (repeated handles — a header and its front
+    // child — sit before or on the position and never resurface).
+    let Some(position) = sequence.iter().position(|&handle| handle == doomed) else {
+        return session.selected_handle().is_some();
+    };
+    let len = sequence.len();
+    for step in 1..=len {
+        let handle = sequence[(position + step) % len];
+        if handle != doomed
+            && switcher::switchable(snapshot, handle, session.scope)
+            && select_fresh(session, snapshot, expanded, handle)
+        {
+            return true;
+        }
+    }
+    false // nothing eligible remains: the caller dismisses
+}
+
+/// Selects `handle` against freshly computed sequences — the advance
+/// rule's twin of [`Switch::select_handle`], which addresses the stored
+/// `visible` the last show built. The advance must not trust stale
+/// geometry: it selects whatever the card would show now.
+fn select_fresh(
+    session: &mut Switch,
+    snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
+    handle: Handle,
+) -> bool {
+    if let Some(filtered) = &mut session.filtered {
+        return filtered.select(handle).is_some();
+    }
+    if let Some(tree) = &session.tree {
+        let target = grouped_visible(session, snapshot, expanded)
+            .into_iter()
+            .find(|&index| tree.rows()[index].handle == handle);
+        return target.is_some_and(|index| {
+            session.tree_sel = index;
+            true
+        });
+    }
+    session.ring.select(handle).is_some()
+}
+
+/// Closes the selected row's window (`close-window`'s key path):
+/// resolve the selection's handle, advance off it, send the request,
+/// repaint. The session survives for repeated closes; a card with
+/// nothing left dismisses.
+fn close_selected(
+    session: &mut wayland::Session,
+    gesture: &mut Gesture,
+    open: &mut Option<Switch>,
+    snapshot: &Snapshot,
+    expanded: &std::collections::HashSet<String>,
+    icons: &mut crate::icons::Cache,
+) -> Result<(), RunError> {
+    let Some(doomed) = open.as_ref().and_then(Switch::selected_handle) else {
+        return Ok(());
+    };
+    let holds = open
+        .as_mut()
+        .is_some_and(|current| advance_off_doomed(current, snapshot, expanded, doomed));
+    if !holds {
+        session.overlay_hide("nothing left to close");
+        gesture.close();
+        *open = None;
+    }
+    // The request rides whatever the compositor does with it: honored,
+    // the closed event drops the row off the card on the next poll;
+    // refused, the card keeps the window and the walk continues.
+    session.close(doomed).map_err(RunError::Session)?;
+    if holds {
+        show_selection(session, gesture, open, snapshot, expanded, icons);
+    }
+    Ok(())
+}
+
 /// The type-to-filter query cap: input past it is ignored, so the
 /// session's state stays bounded whatever holds the key down. The strip
 /// shows the query's tail (TF3).
@@ -1016,6 +1121,20 @@ pub fn run() -> Result<(), RunError> {
                         session.overlay_hide("dismissed");
                         open = None;
                     }
+                }
+                GestureOutput::CloseSelected => {
+                    // Alt+minus: the selection's window closes; the
+                    // advance-then-close ordering keeps the session's
+                    // premise alive and the session itself open for
+                    // repeated closes.
+                    close_selected(
+                        &mut session,
+                        &mut gesture,
+                        &mut open,
+                        &snapshot,
+                        &expanded,
+                        &mut icons,
+                    )?;
                 }
                 GestureOutput::Commit => {
                     // The ring was built when the session opened; the
@@ -4992,6 +5111,107 @@ mod tests {
             "standing query: clear"
         );
         assert!(open.as_ref().expect("open").query.is_empty());
+    }
+
+    #[test]
+    fn closing_advances_to_the_next_live_row() {
+        // Flat session over a, b, c (MRU): closing the selected b moves
+        // the selection to c — the walk's next live row, the doomed one
+        // excluded — and closing the last row wraps to the front.
+        let snap = snapshot(
+            vec![
+                titled(1, "a", "app.a", 30),
+                titled(2, "b", "app.b", 20),
+                titled(3, "c", "app.c", 10),
+            ],
+            Some(1),
+        );
+        let (mut open, expanded) = flat_session(&snap);
+        open.as_mut().expect("open").ring.select(Handle(2));
+        assert!(advance_off_doomed(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Handle(2)
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").selected_handle(),
+            Some(Handle(3))
+        );
+        // The wrap: closing c (now selected) falls to a.
+        assert!(advance_off_doomed(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Handle(3)
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").selected_handle(),
+            Some(Handle(1))
+        );
+    }
+
+    #[test]
+    fn closing_the_sole_window_reports_nothing_left() {
+        let snap = snapshot(vec![titled(1, "solo", "app", 1)], Some(1));
+        let (mut open, expanded) = flat_session(&snap);
+        assert!(!advance_off_doomed(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Handle(1)
+        ));
+    }
+
+    #[test]
+    fn closing_a_group_header_advances_past_its_whole_window() {
+        // The header and its front child are one window: closing the
+        // selected header advances to the *other* app's entry, never
+        // onto the front child that carries the same doomed handle.
+        let snap = grouped_two_apps();
+        let (mut open, expanded) = grouped_session(&snap);
+        // The opening press left the selection on b's entry (row 3);
+        // walk home to a's header first.
+        open.as_mut().expect("open").tree_sel = 0;
+        assert!(advance_off_doomed(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Handle(1)
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").selected_handle(),
+            Some(Handle(3)),
+            "lands on b's entry — a's own child a2 is not next in sequence"
+        );
+    }
+
+    #[test]
+    fn closing_within_a_query_stays_inside_the_matches() {
+        // A querying session closes in its narrowed sequence: the
+        // doomed match's successor is another match, not the unfiltered
+        // list's next row.
+        let snap = snapshot(
+            vec![
+                titled(1, "firefox — docs", "firefox", 40),
+                titled(2, "editor", "code", 30),
+                titled(3, "firefox — mail", "firefox", 20),
+            ],
+            Some(1),
+        );
+        let (mut open, expanded) = flat_session(&snap);
+        assert!(type_into(&mut open, &snap, 'f'));
+        assert!(advance_off_doomed(
+            open.as_mut().expect("open"),
+            &snap,
+            &expanded,
+            Handle(1)
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").selected_handle(),
+            Some(Handle(3)),
+            "the second match, never the editor"
+        );
     }
 
     #[test]

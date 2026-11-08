@@ -1458,6 +1458,26 @@ impl Session {
         Ok(true)
     }
 
+    /// Asks the compositor to close `handle` — the polite `close`
+    /// request on the toplevel manager (the window decides whether and
+    /// how it closes; a refused close leaves the card as it was).
+    ///
+    /// Returns `false` when `handle` is not in the current snapshot (a
+    /// window that already closed) — nothing to ask.
+    ///
+    /// # Errors
+    ///
+    /// Fails with [`SessionError::Connection`] when the request cannot
+    /// be flushed.
+    pub fn close(&self, handle: Handle) -> Result<bool, SessionError> {
+        let Some(toplevel) = self.activatable.get(&handle) else {
+            return Ok(false);
+        };
+        self.app.toplevel_manager_state.manager.close(toplevel);
+        self.conn.flush().map_err(SessionError::Connection)?;
+        Ok(true)
+    }
+
     /// The render scale for overlays hosted on the first output:
     /// `max(2, output scale)` — HiDPI outputs get native pixels
     /// instead of an upscaled blur. The floor comes from the 12-px

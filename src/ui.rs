@@ -2883,6 +2883,11 @@ pub enum GestureKey {
     /// Backspace: erase the query's last character. Never dismisses —
     /// on an empty query it is a no-op.
     Backspace,
+    /// Alt+minus (top row or keypad, `close-window`): close the
+    /// selected row's window — the row's resolved handle, a group
+    /// header's front window included. The daemon advances the
+    /// selection before the request and keeps the session open.
+    Close,
     Escape,
     Other,
 }
@@ -2987,6 +2992,11 @@ pub enum GestureOutput {
     /// Backspace erases the query's last character (a no-op on an empty
     /// query); the daemon rebuilds the card.
     Erase,
+    /// Close the selected row's window (`close-window`): the daemon
+    /// resolves the row's handle, advances the selection off it, sends
+    /// the compositor request, and keeps the session open for repeated
+    /// closes — dismissing when nothing eligible remains.
+    CloseSelected,
     /// Activate the selection and unmap the overlay.
     Commit,
     /// Select and activate the captured window in one motion — the
@@ -3055,6 +3065,10 @@ impl Gesture {
                 // row address — forwarded for the daemon to apply.
                 GestureKey::Type(ch) => GestureOutput::Type(ch),
                 GestureKey::Backspace => GestureOutput::Erase,
+                // The close key (`close-window`): the daemon resolves
+                // the selection's window and owns the advance-then-close
+                // ordering.
+                GestureKey::Close => GestureOutput::CloseSelected,
                 // Select-and-activate in one motion, addressing the
                 // event-time handle; the session stays open — the daemon
                 // closes it via `close()` only when the activation
@@ -3144,9 +3158,9 @@ pub fn key_input(
     keysym: Keysym,
     shift_held: bool,
     ctrl_held: bool,
-    // Rev 5 dropped Alt's last classification (W, the digit row); the
-    // close-window key re-uses it. Callers keep passing the seat state.
-    _alt_held: bool,
+    // Alt classifies the close key (minus); typing deliberately ignores
+    // it — Alt is held the whole gesture.
+    alt_held: bool,
     grouped: bool,
 ) -> GestureInput {
     let (key, shift) = match keysym {
@@ -3173,6 +3187,10 @@ pub fn key_input(
         // Backspace edits the query; never dismisses (the daemon treats
         // it as a no-op on an empty query).
         Keysym::BackSpace => (GestureKey::Backspace, shift_held),
+        // Alt+minus closes the selected row's window (`close-window`),
+        // top row or keypad. Shift+minus — the underscore keysym — is a
+        // printable, not the key.
+        Keysym::minus | Keysym::KP_Subtract if alt_held => (GestureKey::Close, shift_held),
         // Ctrl+digits map with or without shift held; without Ctrl the
         // number row stays Other — it must never surprise-activate. In
         // grouped mode the chord addresses level-1 entries, not rows.
@@ -4012,6 +4030,64 @@ mod tests {
         assert_eq!((TEXT_W, TEXT_H), (12, 12));
         assert_eq!(TEXT_W * 2 / GLYPH_W, 3);
         assert_eq!((TEXT_W * 2) % GLYPH_W, 0);
+    }
+
+    #[test]
+    fn alt_minus_closes_the_selected_window() {
+        // The close key (`close-window`): Alt+minus, top row or keypad,
+        // both modes alike — Alt is the gesture's own modifier.
+        for grouped in [true, false] {
+            for keysym in [Keysym::minus, Keysym::KP_Subtract] {
+                assert_eq!(
+                    key_input(keysym, false, false, true, grouped),
+                    GestureInput::Press {
+                        key: GestureKey::Close,
+                        shift: false
+                    },
+                    "Alt+{keysym:?} grouped={grouped} closes"
+                );
+            }
+        }
+        // Shift+minus is the underscore keysym — a printable, not the
+        // key; a plain minus types a hyphen (the gesture always holds
+        // Alt, but the pure map answers honestly without it).
+        assert_eq!(
+            key_input(Keysym::underscore, false, false, true, true),
+            GestureInput::Press {
+                key: GestureKey::Type('_'),
+                shift: false
+            }
+        );
+        assert_eq!(
+            key_input(Keysym::minus, false, false, false, true),
+            GestureInput::Press {
+                key: GestureKey::Type('-'),
+                shift: false
+            }
+        );
+    }
+
+    #[test]
+    fn the_close_key_forwards_to_the_daemon() {
+        let mut gesture = Gesture::default();
+        gesture.feed(GestureInput::Invoke(Direction::Next));
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Close,
+                shift: false
+            }),
+            GestureOutput::CloseSelected
+        );
+        assert!(gesture.showing(), "the session survives the close");
+        // Between sessions nothing forwards.
+        let mut gesture = Gesture::default();
+        assert_eq!(
+            gesture.feed(GestureInput::Press {
+                key: GestureKey::Close,
+                shift: false
+            }),
+            GestureOutput::Nothing
+        );
     }
 
     #[test]
