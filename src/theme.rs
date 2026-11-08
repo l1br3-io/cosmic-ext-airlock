@@ -95,23 +95,18 @@ fn parse_preference(bytes: &[u8]) -> Option<bool> {
 // directories cosmic-config's `Config::new` does as a side effect.
 
 /// The system-wide COSMIC store root (xdg data prefix `cosmic`).
-#[allow(dead_code)] // wired by the accent follow's daemon read (PA4)
 const SYSTEM_COSMIC_ROOT: &str = "/usr/share/cosmic";
 
 /// The per-polarity theme store ids (`cosmic-theme`'s `DARK_THEME_ID` /
 /// `LIGHT_THEME_ID`) — accents are real per-polarity values, not one
 /// color the theme recolors.
-#[cfg_attr(not(test), allow(dead_code))]
 const THEME_DARK_ID: &str = "com.system76.CosmicTheme.Dark";
-#[cfg_attr(not(test), allow(dead_code))]
 const THEME_LIGHT_ID: &str = "com.system76.CosmicTheme.Light";
 
 /// The accent key and its store version: `Theme` is a v2 store, with
 /// the v1 fallback below it — where this machine's live accent
 /// actually sits (the store record's §2 rule).
-#[cfg_attr(not(test), allow(dead_code))]
 const ACCENT_KEY: &str = "accent";
-#[cfg_attr(not(test), allow(dead_code))]
 const ACCENT_VERSION: u32 = 2;
 
 /// The COSMIC accent's `base` color for one polarity (`true` = dark),
@@ -122,7 +117,6 @@ const ACCENT_VERSION: u32 = 2;
 /// opaque). `None` on any miss — never a broken switch — with one
 /// aggregated diagnostic naming every rung that missed; the caller
 /// falls back to the neutral lift.
-#[allow(dead_code)] // the daemon calls it from the accent follow (PA4)
 pub fn accent_base(dark: bool) -> Option<u32> {
     let (value, missed) = accent_base_at(
         user_cosmic_root().as_deref(),
@@ -142,7 +136,6 @@ pub fn accent_base(dark: bool) -> Option<u32> {
 /// [`accent_base`]: `(value, missed)`. `missed` is empty on a hit; on a
 /// total miss it labels every rung tried, `"{origin} {id}/v{v}/{key}"`,
 /// for the caller's one aggregated diagnostic line.
-#[cfg_attr(not(test), allow(dead_code))]
 fn accent_base_at(
     user_root: Option<&Path>,
     system_root: &Path,
@@ -166,7 +159,6 @@ fn accent_base_at(
 /// ever created. A rung whose text does not parse is a miss and the
 /// ladder continues; the answer is the first value, or `None` with
 /// every rung labeled — never a panic.
-#[cfg_attr(not(test), allow(dead_code))]
 fn ladder_at<T>(
     user_root: Option<&Path>,
     system_root: &Path,
@@ -204,7 +196,6 @@ fn ladder_at<T>(
 /// followed colors are forced opaque, the store's translucency never
 /// reaches the card. Any miss (no `base` field, wrong shape, non-hex,
 /// non-finite) is `None`, never a panic.
-#[cfg_attr(not(test), allow(dead_code))]
 fn parse_accent_base(text: &str) -> Option<u32> {
     let value = base_field(text)?;
     if let Some(hex) = value
@@ -220,7 +211,6 @@ fn parse_accent_base(text: &str) -> Option<u32> {
 /// The `base` field's value text: the remainder of its line after
 /// `base:`, surrounding space and a trailing comma removed. The one
 /// field both serializations share; the other eleven are ignored.
-#[cfg_attr(not(test), allow(dead_code))]
 fn base_field(text: &str) -> Option<&str> {
     text.lines().find_map(|line| {
         line.trim()
@@ -231,7 +221,6 @@ fn base_field(text: &str) -> Option<&str> {
 
 /// Hex `#RRGGBBAA` (or `#RRGGBB`) to straight `0xRRGGBB`: the alpha
 /// byte parsed then dropped.
-#[cfg_attr(not(test), allow(dead_code))]
 fn hex_accent(hex: &str) -> Option<u32> {
     let digits = hex.strip_prefix('#').unwrap_or(hex);
     match digits.len() {
@@ -244,7 +233,6 @@ fn hex_accent(hex: &str) -> Option<u32> {
 /// The v1 tuple `(red: …, green: …, blue: …, alpha: …)` to straight
 /// `0xRRGGBB`: each channel f32-to-u8, clamped to `0..=1`, rounded to
 /// the nearest of 255, non-finite rejected; `alpha` ignored.
-#[cfg_attr(not(test), allow(dead_code))]
 fn f32_accent(group: &str) -> Option<u32> {
     let group = group.strip_prefix('(')?;
     let channel = |name: &str| -> Option<u8> {

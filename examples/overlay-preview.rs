@@ -6,7 +6,9 @@
 //! row carries the structural `Ctrl+N` hint band (number-select rev 2);
 //! long lists keep `rows` windows in view with `…` continuation rows at the
 //! truncated edges (list-viewport), built here exactly as `overlay_model`
-//! builds them.
+//! builds them. The closing scenarios judge the accent-following
+//! selection band (palette) over both polarities and a custom card — the
+//! plain scenarios are the `selection = "neutral"` side of the comparison.
 //!
 //! ```sh
 //! cargo run --example overlay-preview -- preview.png [--scale 2] [--light]
@@ -38,6 +40,15 @@ const APP_IDS: &[&str] = &[
     "no.such.app.Exists",
 ];
 
+/// One sheet entry: the card and the palette it paints with. The band
+/// scenarios carry their own palettes, so the sheet judges cards of
+/// both polarities side by side whatever `--light` chose for the plain
+/// family.
+struct Scenario {
+    model: OverlayModel,
+    palette: ui::Palette,
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let Some(path) = args.next().map(std::path::PathBuf::from) else {
@@ -63,28 +74,31 @@ fn main() {
         }
     }
 
-    // The card being judged: the dark card the daemon paints today, or
-    // the light palette's card under review.
-    let palette = if light {
+    // The card the plain scenarios judge: the dark card the daemon
+    // paints today, or the light palette's card under review. Icons
+    // tint per polarity and the band scenarios show both, so both tint
+    // sets are prepared.
+    let base = if light {
         ui::Palette::light()
     } else {
         ui::Palette::dark()
     };
-    let icons = ui_icons(scale, &palette);
-    let scenarios = scenarios(&icons);
+    let dark_icons = ui_icons(scale, &ui::Palette::dark());
+    let light_icons = ui_icons(scale, &ui::Palette::light());
+    let scenarios = scenarios(base, &dark_icons, &light_icons);
 
     // Sheet: every scenario twice (dark backdrop, light backdrop), stacked
     // vertically with gutters.
     let gutter = 32 * scale;
     let backdrop_w = scenarios
         .iter()
-        .map(|model| model.width * scale)
+        .map(|scenario| scenario.model.width * scale)
         .max()
         .unwrap_or(0)
         + 2 * gutter;
     let backdrop_h: u32 = scenarios
         .iter()
-        .map(|model| model.height * scale + gutter)
+        .map(|scenario| scenario.model.height * scale + gutter)
         .sum();
     let (width, height) = (backdrop_w * 2 + gutter, backdrop_h + gutter);
 
@@ -96,10 +110,11 @@ fn main() {
         pixel.copy_from_slice(&[26, 26, 28, 255]);
     }
     let mut y = gutter;
-    for model in &scenarios {
+    for scenario in &scenarios {
+        let model = &scenario.model;
         let mut card = vec![0u8; (model.width * model.height * 4 * scale * scale) as usize];
         let (cw, ch) = (model.width * scale, model.height * scale);
-        ui::render(model, &mut card, cw, ch, cw * 4, scale, &palette);
+        ui::render(model, &mut card, cw, ch, cw * 4, scale, &scenario.palette);
         for (dx, backdrop) in [(0, [46u8, 46, 50]), (backdrop_w as i64, [235, 235, 235])] {
             composite(
                 &mut sheet,
@@ -240,7 +255,14 @@ fn windowed(
     }
 }
 
-fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
+fn scenarios(
+    base: ui::Palette,
+    dark: &[Option<Rc<IconBitmap>>],
+    light: &[Option<Rc<IconBitmap>>],
+) -> Vec<Scenario> {
+    // The plain family judges one polarity — the base card; icons tint
+    // to match it.
+    let icons = if base.is_dark { dark } else { light };
     // A long title that elides at MAX_COLS.
     let elided = format!("{}…", "W".repeat(ui::MAX_COLS as usize - 1));
     let mut sheet = vec![
@@ -289,24 +311,10 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
         },
     ]
     .into_iter()
-    .map(|mut model| {
-        // Width/height from the widest title, mirroring overlay_model —
-        // hint band included (rev 2).
-        let cols = model
-            .rows
-            .iter()
-            .map(|row| row.title.chars().count() as u32)
-            .max()
-            .unwrap_or(1);
-        let count = model.rows.len() as u32;
-        model.width = 2 * ui::PAD_X
-            + ui::ICON
-            + ui::ICON_GAP
-            + cols * ui::TEXT_W
-            + ui::HINT_GAP
-            + ui::HINT_COLS * ui::TEXT_W;
-        model.height = 2 * ui::PAD_Y + count * ui::ROW_H + (count - 1) * ui::ROW_GAP;
-        model
+    .map(sized)
+    .map(|model| Scenario {
+        model,
+        palette: base,
     })
     .collect::<Vec<_>>();
     // The long-list family (list-viewport), each windowed and sized by
@@ -321,12 +329,19 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
     let head = windowed(15, 0, rows, None, icons);
     let interior = windowed(15, 7, rows, Some(head.viewport), icons);
     let bottom = windowed(15, 14, rows, Some(interior.viewport), icons);
-    sheet.push(head);
-    sheet.push(interior);
-    sheet.push(bottom);
-    sheet.push(windowed(30, 15, rows, None, icons));
-    sheet.push(windowed(30, 15, ui::ROWS_MIN, None, icons));
-    sheet.push(windowed(30, 15, ui::ROWS_MAX, None, icons));
+    for model in [
+        head,
+        interior,
+        bottom,
+        windowed(30, 15, rows, None, icons),
+        windowed(30, 15, ui::ROWS_MIN, None, icons),
+        windowed(30, 15, ui::ROWS_MAX, None, icons),
+    ] {
+        sheet.push(Scenario {
+            model,
+            palette: base,
+        });
+    }
     // The grouped family (grouping): a mixed tree with the selection on
     // its parent, the same tree with the selection on a child, and the
     // tree pushed past the `rows` budget so the `…` windowing rides the
@@ -334,103 +349,171 @@ fn scenarios(icons: &[Option<Rc<IconBitmap>>]) -> Vec<OverlayModel> {
     // the GR4 sheet freezes them.
     // Collapsed, the default: level-1 entries only, every group's
     // chevron pointing at its closed children.
-    sheet.push(tree_card(
-        vec![
-            parent_row("firefox", 3, icons[0].clone(), true, false, Some(1)),
-            parent_row(
-                "org.gnome.TextEditor",
-                2,
-                icons[2].clone(),
-                false,
-                false,
-                Some(2),
-            ),
-            entry_row("kitty — solo window", icons[4].clone(), false, 3),
-            entry_row("un-attributable", None, false, 4),
-        ],
-        0,
-    ));
-    // Expanded: the selected group's whole window set below it, front
-    // window first, Alt-numbered; the other group stays collapsed.
-    sheet.push(tree_card(
-        vec![
-            parent_row("firefox", 3, icons[0].clone(), false, true, Some(1)),
-            child_row("twitter.com/home", icons[0].clone(), true, 1),
-            child_row("github.com — PR 42", icons[0].clone(), false, 2),
-            parent_row(
-                "org.gnome.TextEditor",
-                2,
-                icons[2].clone(),
-                false,
-                false,
-                Some(2),
-            ),
-            entry_row("kitty — solo window", icons[4].clone(), false, 3),
-            entry_row("un-attributable", None, false, 4),
-        ],
-        1,
-    ));
-    // Open cycling (`scoped_cycling = false`, the default): the same
-    // expanded tree, but the expanded entry is a divider — unhinted,
-    // never holding the selection — while the collapsed entry keeps
-    // its Ctrl chord (it is how Tab reaches that app). The selection
-    // lives among the windows; Tab crosses groups.
-    sheet.push(tree_card(
-        vec![
-            parent_row("firefox", 3, icons[0].clone(), false, true, None),
-            child_row("twitter.com/home", icons[0].clone(), false, 1),
-            child_row("github.com — PR 42", icons[0].clone(), true, 2),
-            parent_row(
-                "org.gnome.TextEditor",
-                2,
-                icons[2].clone(),
-                false,
-                false,
-                Some(2),
-            ),
-            entry_row("kitty — solo window", icons[4].clone(), false, 3),
-            entry_row("un-attributable", None, false, 4),
-        ],
-        2,
-    ));
-    sheet.push(tree_card(
-        {
-            // The budget window over the flattened sequence, hand-rolled
-            // exactly as `overlay_model` windows it: a 12-row tree at the
-            // default budget keeps 10 slots, the `…` rows replacing the
-            // outermost slots at each truncated edge.
-            let long = vec![
-                parent_row("firefox", 5, icons[0].clone(), false, true, Some(1)),
-                child_row("window one", icons[0].clone(), false, 1),
-                child_row("window two", icons[0].clone(), false, 2),
-                child_row("window three", icons[0].clone(), false, 3),
-                child_row("window four", icons[0].clone(), false, 4),
-                parent_row("org.gnome.Files", 4, icons[1].clone(), true, true, Some(2)),
-                child_row("home dir", icons[1].clone(), false, 1),
-                child_row("downloads", icons[1].clone(), false, 2),
-                child_row("media", icons[1].clone(), false, 3),
+    for model in [
+        tree_card(
+            vec![
+                parent_row("firefox", 3, icons[0].clone(), true, false, Some(1)),
+                parent_row(
+                    "org.gnome.TextEditor",
+                    2,
+                    icons[2].clone(),
+                    false,
+                    false,
+                    Some(2),
+                ),
                 entry_row("kitty — solo window", icons[4].clone(), false, 3),
-                entry_row("code — airlock", icons[5].clone(), false, 4),
-                entry_row("un-attributable", None, false, 5),
-            ];
-            let vp = ui::visible_window(long.len(), 5, ui::DEFAULT_ROWS, None);
-            let mut windowed_rows = Vec::new();
-            if vp.top {
-                windowed_rows.push(dots_row());
-            }
-            windowed_rows.extend(
-                long.into_iter()
-                    .skip(vp.start + vp.top as usize)
-                    .take(vp.content),
-            );
-            if vp.bottom {
-                windowed_rows.push(dots_row());
-            }
-            windowed_rows
-        },
-        5,
+                entry_row("un-attributable", None, false, 4),
+            ],
+            0,
+        ),
+        // Expanded: the selected group's whole window set below it, front
+        // window first, Alt-numbered; the other group stays collapsed.
+        tree_card(
+            vec![
+                parent_row("firefox", 3, icons[0].clone(), false, true, Some(1)),
+                child_row("twitter.com/home", icons[0].clone(), true, 1),
+                child_row("github.com — PR 42", icons[0].clone(), false, 2),
+                parent_row(
+                    "org.gnome.TextEditor",
+                    2,
+                    icons[2].clone(),
+                    false,
+                    false,
+                    Some(2),
+                ),
+                entry_row("kitty — solo window", icons[4].clone(), false, 3),
+                entry_row("un-attributable", None, false, 4),
+            ],
+            1,
+        ),
+        // Open cycling (`scoped_cycling = false`, the default): the same
+        // expanded tree, but the expanded entry is a divider — unhinted,
+        // never holding the selection — while the collapsed entry keeps
+        // its Ctrl chord (it is how Tab reaches that app). The selection
+        // lives among the windows; Tab crosses groups.
+        tree_card(
+            vec![
+                parent_row("firefox", 3, icons[0].clone(), false, true, None),
+                child_row("twitter.com/home", icons[0].clone(), false, 1),
+                child_row("github.com — PR 42", icons[0].clone(), true, 2),
+                parent_row(
+                    "org.gnome.TextEditor",
+                    2,
+                    icons[2].clone(),
+                    false,
+                    false,
+                    Some(2),
+                ),
+                entry_row("kitty — solo window", icons[4].clone(), false, 3),
+                entry_row("un-attributable", None, false, 4),
+            ],
+            2,
+        ),
+        tree_card(
+            {
+                // The budget window over the flattened sequence, hand-rolled
+                // exactly as `overlay_model` windows it: a 12-row tree at the
+                // default budget keeps 10 slots, the `…` rows replacing the
+                // outermost slots at each truncated edge.
+                let long = vec![
+                    parent_row("firefox", 5, icons[0].clone(), false, true, Some(1)),
+                    child_row("window one", icons[0].clone(), false, 1),
+                    child_row("window two", icons[0].clone(), false, 2),
+                    child_row("window three", icons[0].clone(), false, 3),
+                    child_row("window four", icons[0].clone(), false, 4),
+                    parent_row("org.gnome.Files", 4, icons[1].clone(), true, true, Some(2)),
+                    child_row("home dir", icons[1].clone(), false, 1),
+                    child_row("downloads", icons[1].clone(), false, 2),
+                    child_row("media", icons[1].clone(), false, 3),
+                    entry_row("kitty — solo window", icons[4].clone(), false, 3),
+                    entry_row("code — airlock", icons[5].clone(), false, 4),
+                    entry_row("un-attributable", None, false, 5),
+                ];
+                let vp = ui::visible_window(long.len(), 5, ui::DEFAULT_ROWS, None);
+                let mut windowed_rows = Vec::new();
+                if vp.top {
+                    windowed_rows.push(dots_row());
+                }
+                windowed_rows.extend(
+                    long.into_iter()
+                        .skip(vp.start + vp.top as usize)
+                        .take(vp.content),
+                );
+                if vp.bottom {
+                    windowed_rows.push(dots_row());
+                }
+                windowed_rows
+            },
+            5,
+        ),
+    ] {
+        sheet.push(Scenario {
+            model,
+            palette: base,
+        });
+    }
+    // The accent follow (palette rev 2): the band is the followed
+    // accent's `base` at 20 % over the effective card — pinned to the
+    // store record's live fixtures so the sheet is reproducible: the
+    // dark side's v1 purple and the light side's v2 dark-teal, plus the
+    // purple over a custom card whose own luminance picks the dark
+    // side. The plain scenarios above are the `selection = "neutral"`
+    // side of the comparison, byte-identical to every card shipped
+    // before the follow.
+    const DARK_SIDE_ACCENT: u32 = 0xE7_9C_FE;
+    const LIGHT_SIDE_ACCENT: u32 = 0x00_52_5A;
+    let follow = |rows: Vec<RowModel>, card: ui::Palette, accent: u32| Scenario {
+        model: sized(OverlayModel { rows, ..single() }),
+        palette: card.with_selection(ui::SelectionSetting::Accent, Some(accent)),
+    };
+    sheet.push(follow(
+        vec![
+            row("Accent band — dark side", dark[0].clone(), false),
+            row("purple, followed from COSMIC", dark[1].clone(), true),
+            row("the desktop's own accent", dark[2].clone(), false),
+        ],
+        ui::Palette::dark(),
+        DARK_SIDE_ACCENT,
+    ));
+    sheet.push(follow(
+        vec![
+            row("Accent band — light side", light[0].clone(), false),
+            row("dark-teal, followed from COSMIC", light[1].clone(), true),
+            row("per-polarity accents are real", light[2].clone(), false),
+        ],
+        ui::Palette::light(),
+        LIGHT_SIDE_ACCENT,
+    ));
+    sheet.push(follow(
+        vec![
+            row("Custom card, accent band", dark[0].clone(), false),
+            row("the band blends over any card", dark[2].clone(), true),
+            row("polarity from the card's luminance", dark[4].clone(), false),
+        ],
+        ui::Palette::custom(0x00_2A_1E_30, 0x00_E8_E6_E0),
+        DARK_SIDE_ACCENT,
     ));
     sheet
+}
+
+/// Width/height from the widest title, mirroring `overlay_model` — hint
+/// band included (number-select rev 2).
+fn sized(mut model: OverlayModel) -> OverlayModel {
+    let cols = model
+        .rows
+        .iter()
+        .map(|row| row.title.chars().count() as u32)
+        .max()
+        .unwrap_or(1);
+    let count = model.rows.len() as u32;
+    model.width = 2 * ui::PAD_X
+        + ui::ICON
+        + ui::ICON_GAP
+        + cols * ui::TEXT_W
+        + ui::HINT_GAP
+        + ui::HINT_COLS * ui::TEXT_W;
+    model.height = 2 * ui::PAD_Y + count * ui::ROW_H + (count - 1) * ui::ROW_GAP;
+    model
 }
 
 /// A parent row as `overlay_model_grouped` builds one: labeled by its

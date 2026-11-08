@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::switcher::{Scope, Workspace, WorkspaceId};
-use crate::ui::{self, ThemeSetting};
+use crate::ui::{self, SelectionSetting, ThemeSetting};
 
 /// Cap on config size: reloads run at session open, on the gesture path,
 /// so a pathological file must never stall switching.
@@ -68,6 +68,10 @@ pub struct Settings {
     /// `None` when neither key is set; a present pair pins the card
     /// over any `theme` value.
     pub pair: Option<(u32, u32)>,
+    /// What the selection band is made of; missing key =
+    /// [`SelectionSetting::Accent`] — the follow, the desktop's accent
+    /// at 20 % over the effective card. `Neutral` is the shipped band.
+    pub selection: SelectionSetting,
     pub workspaces: Vec<WorkspaceRule>,
 }
 
@@ -79,6 +83,7 @@ impl Default for Settings {
             grouping: false,
             scoped_cycling: false,
             pair: None,
+            selection: SelectionSetting::Accent,
             workspaces: Vec::new(),
         }
     }
@@ -229,6 +234,23 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             });
         }
     };
+    let selection = match root.get("selection") {
+        None => SelectionSetting::Accent,
+        Some(value) => match value.as_str() {
+            Some("accent") => SelectionSetting::Accent,
+            Some("neutral") => SelectionSetting::Neutral,
+            Some(_) => {
+                return Err(SettingsError::InvalidFile {
+                    problem: "`selection` must be \"accent\" or \"neutral\"",
+                });
+            }
+            None => {
+                return Err(SettingsError::InvalidFile {
+                    problem: "`selection` must be a string",
+                });
+            }
+        },
+    };
     let Some(entries) = root.get("workspace") else {
         return Ok(Settings {
             theme,
@@ -236,6 +258,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             grouping,
             scoped_cycling,
             pair,
+            selection,
             ..Settings::default()
         });
     };
@@ -255,6 +278,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         grouping,
         scoped_cycling,
         pair,
+        selection,
         workspaces,
     })
 }
@@ -575,6 +599,7 @@ isolated = false
                 grouping: false,
                 scoped_cycling: false,
                 pair: None,
+                selection: SelectionSetting::Accent,
                 workspaces: vec![
                     WorkspaceRule {
                         reference: WorkspaceRef::Name("code".to_owned()),
@@ -1133,6 +1158,57 @@ isolated = false
         assert!(Settings::parse(config).is_err());
     }
 
+    // --- Selection band ---------------------------------------------------
+
+    #[test]
+    fn parse_reads_the_selection_key() {
+        for (config, selection) in [
+            (&b"selection = \"accent\"\n"[..], SelectionSetting::Accent),
+            (b"selection = \"neutral\"\n", SelectionSetting::Neutral),
+        ] {
+            let settings = Settings::parse(config).expect("valid selection value");
+            assert_eq!(settings.selection, selection);
+        }
+    }
+
+    #[test]
+    fn parse_without_a_selection_key_defaults_to_accent() {
+        // The follow is the default: no key, the band carries the
+        // desktop's accent. An empty file and a rules-only file alike.
+        assert_eq!(
+            Settings::parse(b"").expect("empty").selection,
+            SelectionSetting::Accent
+        );
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert_eq!(rules_only.selection, SelectionSetting::Accent);
+        assert_eq!(Settings::default().selection, SelectionSetting::Accent);
+    }
+
+    #[test]
+    fn parse_rejects_an_unknown_selection_value() {
+        assert_eq!(
+            Settings::parse(b"selection = \"blue\"\n"),
+            Err(SettingsError::InvalidFile {
+                problem: "`selection` must be \"accent\" or \"neutral\""
+            })
+        );
+        assert_eq!(
+            Settings::parse(b"selection = 3\n"),
+            Err(SettingsError::InvalidFile {
+                problem: "`selection` must be a string"
+            })
+        );
+    }
+
+    #[test]
+    fn parse_coexists_selection_with_the_pair_and_theme() {
+        let config =
+            b"theme = \"dark\"\ncard = \"#2A1E30\"\ntext = \"#E8E6E0\"\nselection = \"neutral\"\n";
+        let settings = Settings::parse(config).expect("valid config");
+        assert_eq!(settings.selection, SelectionSetting::Neutral);
+        assert_eq!(settings.pair, Some((0x00_2A_1E_30, 0x00_E8_E6_E0)));
+    }
+
     // --- Resolution ------------------------------------------------------
 
     fn rule(reference: WorkspaceRef, isolated: bool) -> WorkspaceRule {
@@ -1150,6 +1226,7 @@ isolated = false
             grouping: false,
             scoped_cycling: false,
             pair: None,
+            selection: SelectionSetting::Accent,
             workspaces: vec![rule(WorkspaceRef::Name("browse".to_owned()), false)],
         };
         let scope = scope_for(
@@ -1170,6 +1247,7 @@ isolated = false
             grouping: false,
             scoped_cycling: false,
             pair: None,
+            selection: SelectionSetting::Accent,
             workspaces: vec![rule(WorkspaceRef::Position(2), false)],
         };
         let scope = scope_for(
@@ -1191,6 +1269,7 @@ isolated = false
             grouping: false,
             scoped_cycling: false,
             pair: None,
+            selection: SelectionSetting::Accent,
             workspaces: vec![
                 rule(WorkspaceRef::Position(1), true),
                 rule(WorkspaceRef::Name("code".to_owned()), false),
@@ -1214,6 +1293,7 @@ isolated = false
             grouping: false,
             scoped_cycling: false,
             pair: None,
+            selection: SelectionSetting::Accent,
             workspaces: vec![rule(WorkspaceRef::Position(1), false)],
         };
         let scope = scope_for(
@@ -1234,6 +1314,7 @@ isolated = false
             grouping: false,
             scoped_cycling: false,
             pair: None,
+            selection: SelectionSetting::Accent,
             workspaces: vec![rule(WorkspaceRef::Position(9), false)],
         };
         let scope = scope_for(
@@ -1254,6 +1335,7 @@ isolated = false
             grouping: false,
             scoped_cycling: false,
             pair: None,
+            selection: SelectionSetting::Accent,
             workspaces: vec![
                 rule(WorkspaceRef::Name("browse".to_owned()), false),
                 rule(WorkspaceRef::Name("browse".to_owned()), true),
@@ -1277,6 +1359,7 @@ isolated = false
             grouping: false,
             scoped_cycling: false,
             pair: None,
+            selection: SelectionSetting::Accent,
             workspaces: vec![rule(WorkspaceRef::Name("elsewhere".to_owned()), false)],
         };
         let scope = scope_for(
@@ -1450,6 +1533,7 @@ isolated = false
                 grouping: false,
                 scoped_cycling: false,
                 pair: None,
+                selection: SelectionSetting::Accent,
                 workspaces: vec![rule(WorkspaceRef::Name("code".to_owned()), false)]
             }
         );

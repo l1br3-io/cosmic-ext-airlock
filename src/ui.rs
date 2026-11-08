@@ -369,6 +369,28 @@ impl Palette {
         }
     }
 
+    /// Points the selection band at its source, resolved once at open
+    /// beside the card: [`SelectionSetting::Accent`] blends the
+    /// followed accent's `base` at 20 % over this card — a `None` read
+    /// is the neutral lift, the band is never absent — and
+    /// [`SelectionSetting::Neutral`] keeps the constructor's own
+    /// text-at-20 % band, byte-identical to every card shipped before
+    /// the follow. Followed alpha cannot leak: the accent arrives as
+    /// straight `0xRRGGBB` and [`blend_over`] keeps the card's own
+    /// near-opaque byte.
+    pub fn with_selection(
+        mut self,
+        selection: SelectionSetting,
+        accent_base: Option<u32>,
+    ) -> Palette {
+        let band_source = match selection {
+            SelectionSetting::Neutral => self.text,
+            SelectionSetting::Accent => accent_base.unwrap_or(self.text),
+        };
+        self.selected_bg = blend_over(self.background, band_source, 20);
+        self
+    }
+
     /// The custom card from the paired `card`/`text` keys: the two
     /// chosen colors as given, the three computed colors by the same
     /// blend system as the built-ins (band 20 %, muted 55 %, the border
@@ -438,6 +460,23 @@ pub enum ThemeSetting {
     Dark,
     /// The light card, pinned regardless of the system preference.
     Light,
+}
+
+/// What the selection band is made of. `Accent` (the default) follows
+/// the COSMIC system accent — its `base` color at 20 % over the
+/// effective card, the desktop's personality in the one place a glance
+/// tracks it. `Neutral` is the 2026-11-04 lift it replaces: the text
+/// color at 20 %, byte-identical to every card shipped before the
+/// follow. Parsed by `settings` from the `selection` key, resolved once
+/// at open beside the palette (the `ThemeSetting` arrangement).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SelectionSetting {
+    /// Follow the system accent (default). A store miss falls back to
+    /// the neutral lift, so the band is never absent.
+    #[default]
+    Accent,
+    /// The text color at 20 % over the card — the shipped band.
+    Neutral,
 }
 
 // Geometry pins. The 8-grid holds for every stepped metric; the row is
@@ -3936,6 +3975,95 @@ mod tests {
             palette.background,
             "the card fill is the card as given"
         );
+    }
+
+    #[test]
+    fn neutral_selection_reproduces_the_shipped_band_on_every_card() {
+        // The escape hatch, byte-exact: `selection = "neutral"` paints
+        // the band every card shipped before the follow — even when an
+        // accent was available to borrow.
+        let accent = Some(0x63_D0_DF);
+        for card in [
+            Palette::dark(),
+            Palette::light(),
+            Palette::custom(0x00_2A_1E_30, 0x00_E8_E6_E0),
+        ] {
+            let band = card
+                .with_selection(SelectionSetting::Neutral, accent)
+                .selected_bg;
+            assert_eq!(
+                band, card.selected_bg,
+                "neutral keeps the constructor's own band on every card"
+            );
+        }
+    }
+
+    #[test]
+    fn the_band_blends_the_followed_accent_over_every_card() {
+        // The record's fixture teal at 20 % over each card, pinned as
+        // u32s: dark 0xFA2B444B, light 0xFAD9ECEC, custom 0xFA354153.
+        let teal = Some(0x63_D0_DF);
+        let dark = Palette::dark().with_selection(SelectionSetting::Accent, teal);
+        assert_eq!(dark.selected_bg, 0xFA_2B_44_4B);
+        let light = Palette::light().with_selection(SelectionSetting::Accent, teal);
+        assert_eq!(light.selected_bg, 0xFA_D9_EC_EC);
+        let custom = Palette::custom(0x00_2A_1E_30, 0x00_E8_E6_E0)
+            .with_selection(SelectionSetting::Accent, teal);
+        assert_eq!(custom.selected_bg, 0xFA_35_41_53);
+        for palette in [dark, light, custom] {
+            assert_eq!(
+                palette.selected_bg,
+                blend_over(palette.background, 0x00_63_D0_DF, 20),
+                "the band is the accent's base at 20 % over this card"
+            );
+        }
+    }
+
+    #[test]
+    fn a_ladder_miss_is_the_neutral_lift() {
+        // The band is never absent: a store that misses everywhere
+        // leaves the constructor's text-at-20 % band in place.
+        for card in [
+            Palette::dark(),
+            Palette::custom(0x00_2A_1E_30, 0x00_E8_E6_E0),
+        ] {
+            let miss = card.with_selection(SelectionSetting::Accent, None);
+            assert_eq!(miss.selected_bg, card.selected_bg);
+        }
+    }
+
+    #[test]
+    fn followed_alpha_never_leaks_into_the_band() {
+        // SC 10: even a source color carrying its own alpha byte blends
+        // opaquely — blend_over keeps the card's alpha, and the accent
+        // arrives straight anyway.
+        let card = Palette::dark();
+        let opaque = card.with_selection(SelectionSetting::Accent, Some(0x63_D0_DF));
+        let leaky = card.with_selection(SelectionSetting::Accent, Some(0x63_D0_DF | 0x1100_0000));
+        assert_eq!(opaque.selected_bg, leaky.selected_bg);
+        assert_eq!(
+            leaky.selected_bg >> 24,
+            0xFA,
+            "the card's near-opaque byte survives"
+        );
+    }
+
+    #[test]
+    fn the_bands_accent_side_follows_the_cards_polarity() {
+        // The daemon's composition pinned: the accent read for the band
+        // is `accent_base(card.is_dark)` — the side matching the card
+        // the keys just chose. Auto theme + system flip flips the card
+        // and with it the accent side (the store record's live pair:
+        // purple on dark, dark-teal on light).
+        for (system, side) in [(Some(true), 0xE7_9C_FE), (Some(false), 0x00_52_5A)] {
+            let card = Palette::resolve(ThemeSetting::Auto, system, None);
+            let band = card.with_selection(SelectionSetting::Accent, Some(side));
+            assert_eq!(
+                band.selected_bg,
+                blend_over(card.background, side, 20),
+                "the followed side rides the flipped card"
+            );
+        }
     }
 
     #[test]

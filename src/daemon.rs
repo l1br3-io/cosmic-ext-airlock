@@ -1254,13 +1254,25 @@ fn step_and_show(
                 && settings.settings.pair.is_none())
             .then(crate::theme::system_prefers_dark)
             .flatten();
+            // The card first, then its band: the accent side follows the
+            // effective card's polarity — the resolved card's own
+            // `is_dark` — through the store ladder, read only when the
+            // band follows (`neutral` never touches the accent store).
+            // A ladder miss is the neutral lift (with the one aggregated
+            // diagnostic the reader prints), and the whole answer
+            // freezes onto the session with everything else.
+            let mut palette = crate::ui::Palette::resolve(
+                settings.settings.theme,
+                system_prefers_dark,
+                settings.settings.pair,
+            );
+            let accent_base = (settings.settings.selection == crate::ui::SelectionSetting::Accent)
+                .then(|| crate::theme::accent_base(palette.is_dark))
+                .flatten();
+            palette = palette.with_selection(settings.settings.selection, accent_base);
             (
                 resolve_scope(snapshot, &settings.settings),
-                crate::ui::Palette::resolve(
-                    settings.settings.theme,
-                    system_prefers_dark,
-                    settings.settings.pair,
-                ),
+                palette,
                 settings.settings.rows,
                 settings.settings.grouping,
                 settings.settings.scoped_cycling,
@@ -3250,6 +3262,7 @@ mod tests {
             grouping: false,
             scoped_cycling: false,
             pair: None,
+            selection: crate::ui::SelectionSetting::Accent,
             workspaces: vec![crate::settings::WorkspaceRule {
                 reference: crate::settings::WorkspaceRef::Name("browse".to_owned()),
                 isolated: false,
@@ -3385,6 +3398,30 @@ mod tests {
             live.settings.pair,
             Some((0x00_2A_1E_30, 0x00_E8_E6_E0)),
             "a below-floor pair must not apply"
+        );
+    }
+
+    #[test]
+    fn refresh_adopts_a_selection_change_with_last_good() {
+        // The selection twin of the theme flip: `neutral` lands on the
+        // refresh a next invocation performs, and an unknown value
+        // keeps the last-good selection (the whole file fails).
+        let dir = TempDir::new("selection-flip");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, b"selection = \"neutral\"\n").expect("write");
+        let mut live = live_at(path.clone());
+        live.refresh();
+        assert_eq!(
+            live.settings.selection,
+            crate::ui::SelectionSetting::Neutral
+        );
+
+        std::fs::write(&path, b"selection = \"blue\"\n").expect("rewrite bad");
+        live.refresh();
+        assert_eq!(
+            live.settings.selection,
+            crate::ui::SelectionSetting::Neutral,
+            "an unknown selection value must not apply"
         );
     }
 
