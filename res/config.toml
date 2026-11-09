@@ -37,6 +37,9 @@
                         # on top of the budget, never inside it)
 # grouping = false      # true: group the list by app — a two-level tree,
                         # collapsed by default
+# show_workspace = false # true: label the card with the workspace you
+                        # pressed on — its name (or "Workspace N" when it
+                        # has none), small, at the card's top right
 
 # --- Type -------------------------------------------------------------
 

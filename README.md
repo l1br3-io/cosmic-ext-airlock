@@ -77,6 +77,11 @@ pipeline the COSMIC launcher uses) beside its title.
 - **Type to filter**: while the card is up, typing narrows it — title or
   app name, case-insensitive, first match selected; Backspace edits,
   Escape clears before it dismisses. Works in every mode
+- **Workspace label** (`show_workspace = true`): the card names the
+  workspace you pressed on — its name (or "Workspace N" when it has
+  none), small, at the card's top right. The anchor for workspaces
+  opted out of isolation, where the list crosses workspaces — see
+  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#show-workspace)
 - **Close windows from the card**: Alt+minus closes the selected row's
   window and the card stays up for the next; hovering a window row or
   horizontal window tile reveals a small × badge on its icon's top-right

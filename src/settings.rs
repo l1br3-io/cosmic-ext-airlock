@@ -67,6 +67,11 @@ pub struct Settings {
     /// missing key = `false`, the flat list, so the no-config card is
     /// unchanged.
     pub grouping: bool,
+    /// Whether the card labels itself with the invoking workspace's
+    /// name (workspace-label, 2026-11-09) — a small right-aligned line
+    /// on every card. Missing key = `false`, no label, so the
+    /// no-config card is unchanged.
+    pub show_workspace: bool,
     /// Which way the card lays its list out; missing key =
     /// [`LayoutSetting::Vertical`], today's card, so the no-config
     /// card is unchanged.
@@ -113,6 +118,7 @@ impl Default for Settings {
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            show_workspace: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -240,6 +246,12 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             problem: "`grouping` must be a boolean",
         })?,
     };
+    let show_workspace = match root.get("show_workspace") {
+        None => false,
+        Some(value) => value.as_bool().ok_or(SettingsError::InvalidFile {
+            problem: "`show_workspace` must be a boolean",
+        })?,
+    };
     let layout = match root.get("layout") {
         None => LayoutSetting::Vertical,
         Some(value) => match value.as_str() {
@@ -354,6 +366,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             theme,
             rows,
             grouping,
+            show_workspace,
             layout,
             columns,
             width,
@@ -379,6 +392,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         theme,
         rows,
         grouping,
+        show_workspace,
         layout,
         columns,
         width,
@@ -766,6 +780,7 @@ isolated = false
                 theme: ThemeSetting::Auto,
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
+                show_workspace: false,
                 layout: LayoutSetting::Vertical,
                 columns: ColumnsSetting::Auto,
                 width: WidthSetting::Auto,
@@ -1297,6 +1312,38 @@ isolated = false
         assert_eq!(settings.workspaces.len(), 1);
     }
 
+    // --- The show_workspace key (workspace-label W1) ----------------------
+
+    #[test]
+    fn parse_without_a_show_workspace_key_defaults_to_false() {
+        // No key, the label stays off: the no-config card is unchanged.
+        assert!(!Settings::parse(b"").expect("empty").show_workspace);
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert!(!rules_only.show_workspace);
+        assert!(!Settings::default().show_workspace);
+    }
+
+    #[test]
+    fn parse_reads_the_show_workspace_key() {
+        let settings = Settings::parse(b"show_workspace = true\n").expect("valid");
+        assert!(settings.show_workspace);
+    }
+
+    #[test]
+    fn parse_rejects_a_non_boolean_show_workspace() {
+        for config in [&b"show_workspace = 1\n"[..], b"show_workspace = \"yes\"\n"] {
+            let error = Settings::parse(config).expect_err("non-boolean show_workspace");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: "`show_workspace` must be a boolean"
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
     // --- Scoped cycling (removed rev 5) -----------------------------------
 
     #[test]
@@ -1797,6 +1844,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            show_workspace: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -1823,6 +1871,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            show_workspace: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -1850,6 +1899,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            show_workspace: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -1879,6 +1929,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            show_workspace: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -1905,6 +1956,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            show_workspace: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -1931,6 +1983,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            show_workspace: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -1960,6 +2013,7 @@ isolated = false
             theme: ThemeSetting::Auto,
             rows: ui::DEFAULT_ROWS,
             grouping: false,
+            show_workspace: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -2158,6 +2212,7 @@ isolated = false
                 theme: ThemeSetting::Auto,
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
+                show_workspace: false,
                 layout: LayoutSetting::Vertical,
                 columns: ColumnsSetting::Auto,
                 width: WidthSetting::Auto,

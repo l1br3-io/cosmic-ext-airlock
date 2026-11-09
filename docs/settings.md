@@ -41,6 +41,7 @@ layout = "vertical"    # the tall card; "horizontal" lays it out as a band of ti
 # width = "auto"       # the card's width floor; "100%" fills the screen, or a pixel count (the default: "auto")
 # min-width = "auto"   # the card's never-below width; same values as width (the default: "auto")
 grouping = false       # the flat list (the default); true groups it by app
+# show_workspace = false # label the card with the workspace you pressed on (the default: false)
 
 [[workspace]]
 name = "code"          # matches a workspace COSMIC reports as named "code"
@@ -70,7 +71,8 @@ size (see [Font](#font) and [Font size](#font-size)); `rows` picks how
 many windows it keeps in view (see [Rows](#rows)); `layout` picks the
 card's axis and `columns` the horizontal band's width (see
 [Layout](#layout)); `grouping` picks the list's shape (see
-[Grouping](#grouping)).
+[Grouping](#grouping)); `show_workspace` labels the card with the
+workspace you pressed on (see [Show workspace](#show-workspace)).
 
 ## Referencing workspaces
 
@@ -380,6 +382,26 @@ a gesture starts like every setting: a session keeps the window list
 it opened with until Alt is released. A non-boolean value
 (`grouping = 1`, `grouping = "yes"`) is named in a diagnostic and the
 last-good settings apply.
+
+## Show workspace
+
+`show_workspace = true` labels the card with the workspace you pressed
+on: its name, small, right-aligned at the card's top. A workspace
+COSMIC reports with no name gets the synthesized **"Workspace N"** —
+the same 1-based position `index` rules count, so the label and the
+config name the same workspace the same way. A long name truncates
+with `…`; the label never widens the card.
+
+The label answers one question at a glance — *which workspace is this
+card anchored to* — which matters most where `isolated = false` makes
+the list cross workspaces. The card's other lines are unchanged: the
+caption still names the window Enter would switch to.
+
+The default is `false`: no label, and the card renders exactly as
+before. The label is read when a gesture starts like every setting and
+freezes with the session. A non-boolean value
+(`show_workspace = 1`, `show_workspace = "yes"`) is named in a
+diagnostic and the last-good settings apply.
 
 ## What `isolated = false` changes
 

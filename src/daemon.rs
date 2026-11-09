@@ -4511,6 +4511,7 @@ mod tests {
             theme: crate::ui::ThemeSetting::Auto,
             rows: DEFAULT_ROWS,
             grouping: false,
+            show_workspace: false,
             layout: crate::ui::LayoutSetting::Vertical,
             columns: crate::ui::ColumnsSetting::Auto,
             width: crate::ui::WidthSetting::Auto,
