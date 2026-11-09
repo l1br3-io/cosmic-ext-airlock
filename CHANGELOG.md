@@ -7,15 +7,12 @@ observe, not internal mechanics.
 
 ### Changed
 
-- **The key above Tab toggles a group** — in either grouped card,
-  pressing ` on an app whose group is open now collapses it back to the
-  app's entry instead of opening it again: from a window row or tile
-  the selection returns to the entry, and on the entry itself the group
-  collapses in place. A closed entry still opens on the most recently
-  used window, **Shift+`** on the last. The key's within-app
-  next/previous walk is gone; ↑/↓ and ←/→ still step inside an open
-  group, and the separate Alt+grave overlay still cycles one app's
-  windows.
+- **The key above Tab collapses an open group** — pressing ` on an app
+  entry that is already expanded now collapses the group in place
+  instead of opening it again; a collapsed entry still opens on the
+  most recently used window, **Shift+`** on the last. Inside a group
+  the key is unchanged: ` cycles to the app's next window and
+  **Shift+`** to the previous one, wrapping within the app.
 
 ## [0.4.0] — 2026-11-09
 
