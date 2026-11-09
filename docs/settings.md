@@ -343,14 +343,15 @@ The keys re-bind to the tree:
   on an expanded entry it collapses the group; elsewhere it does
   nothing.
 - **Ctrl+1..9** activates the Nth level-1 entry's window instantly.
-- **`** (the key above Tab) steps the selected app's windows — but only
-  when grouping combines with `layout = "horizontal"`, the grouped
-  strip. From an app tile, ` opens that app's windows on their most
-  recently used one and **Shift+`** on the last; from a window tile it
-  steps within the same app, wrapping, never crossing into another.
-  Everywhere else the key keeps its filter meaning: it types into the
-  query — in the flat and vertical-grouped card always, and in the
-  grouped strip while a query stands (a querying session is flat).
+- **`** (the key above Tab) steps the selected app's windows in either
+  grouped card — the vertical tree and the horizontal strip alike.
+  From an app entry or tile, ` opens that app's windows on their most
+  recently used one and **Shift+`** on the last — in the vertical tree
+  the group expands for it, the state → shares — and from a window row
+  or tile it steps within the same app, wrapping, never crossing into
+  another. Everywhere else the key keeps its filter meaning: it types
+  into the query — in the flat card always, and in either grouped card
+  while a query stands (a querying session is flat).
 - Flat mode (`grouping = false`, the default) is unchanged: Tab steps
   rows and ←/→ ride with ↑/↓ as step aliases.
 

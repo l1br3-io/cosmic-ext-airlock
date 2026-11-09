@@ -294,6 +294,13 @@ binary.
       you just left when it is your own app — and the caret turns
       down; ← on a child returns to the entry with the group still
       expanded; ← on the expanded entry collapses it
+- [ ] ` (the key above Tab) on an app entry opens that app's windows —
+      plain ` on their most recently used one, Shift+` on the last —
+      and the group expands for it exactly as → does, the state
+      persisting; on a window row it steps within the same app,
+      wrapping, never crossing into another; on a single-window app it
+      holds without dead ends; the grouped strip obeys the same walk
+      from its tiles, and with a query standing the key types instead
 - [ ] Nothing descends into a collapsed group: a workspace holding a
       single collapsed entry keeps the selection under repeated Tab
 - [ ] Ctrl+N activates the Nth app entry's window instantly; expanded
