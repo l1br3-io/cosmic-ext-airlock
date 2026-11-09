@@ -3832,8 +3832,10 @@ pub enum GestureKey {
     /// exactly as [`GestureKey::Select`] resolves a flat row.
     SelectApp(usize),
     /// Tab in the grouped-horizontal card: step the next/previous app
-    /// (band 1) from anywhere — the spec's "Tab steps apps from
-    /// anywhere". Distinct from [`GestureKey::Arrow`], which steps
+    /// (band 1) from an app tile — the spec's "Tab steps apps". Inside
+    /// an open run the daemon joins the linear walk instead, so the
+    /// run stays open while Tab walks its windows (the vertical Tab's
+    /// behavior). Distinct from [`GestureKey::Arrow`], which steps
     /// *within* the focused band in that mode. The daemon resolves it
     /// against the frozen tree.
     StepApp(Direction),
@@ -3979,8 +3981,9 @@ pub enum GestureOutput {
     /// exit is the W3C no-op.
     ExitParent,
     /// Tab in the grouped-horizontal card: step the next/previous app
-    /// tile (band 1) from anywhere. The daemon resolves it against the
-    /// frozen tree.
+    /// tile (band 1) — from inside an open run the daemon joins the
+    /// linear walk instead, keeping the run open. The daemon resolves
+    /// it against the frozen tree.
     StepApp(Direction),
     /// The key above Tab in either grouped card: toggle the selected
     /// app's group from a closed entry — opening on its MRU-front
@@ -4208,7 +4211,8 @@ pub enum KeyMode {
 /// Grouped-horizontal (the combination): ←/→ step the focused band's
 /// tiles, ↓ enters band 2 from an app tile ([`GestureKey::EnterChild`]),
 /// ↑ exits band 2 to its app tile ([`GestureKey::ExitParent`]), Tab
-/// steps apps from anywhere ([`GestureKey::StepApp`]), the key above
+/// steps apps from an app tile and joins the linear walk inside an
+/// open run ([`GestureKey::StepApp`]), the key above
 /// Tab works the focused app's group ([`GestureKey::ToggleOrCycle`],
 /// grave alone — every other keysym still types), and Ctrl+N
 /// addresses the visible tiles in reading order ([`GestureKey::Select`]
@@ -10809,7 +10813,8 @@ mod tests {
     fn combined_key_input_swaps_the_tree_axes() {
         // The W3C horizontal-tree axis swap: ←/→ are the step axis
         // (within the focused band), ↓/↑ the level axis (enter band 2 /
-        // exit to the app tile), Tab steps apps from anywhere, and
+        // exit to the app tile), Tab steps apps (joining the linear
+        // walk inside an open run at the daemon), and
         // Ctrl+N addresses rows — the card's rows are already band 1
         // then band 2 in reading order.
         let combined = key_input(Keysym::Tab, false, false, false, KeyMode::GroupedHorizontal);

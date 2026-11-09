@@ -7,6 +7,13 @@ observe, not internal mechanics.
 
 ### Changed
 
+- **Tab keeps an open run open on the strip** — in the grouped
+  horizontal card, pressing Alt+Tab from inside an app's open window
+  run used to jump straight to the next app tile and close the run.
+  It now steps the run's windows one at a time, like the arrows and
+  like the vertical tree's Tab through an expanded group, and the run
+  closes only when the walk steps off its edge. From an app tile, Tab
+  still steps app tiles.
 - **The key above Tab collapses an open group** — pressing ` on an app
   entry that is already expanded now collapses the group in place
   instead of opening it again; a collapsed entry still opens on the
