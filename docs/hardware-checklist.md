@@ -319,11 +319,12 @@ binary.
 - [ ] ` (the key above Tab) on a collapsed app entry opens that app's
       windows — plain ` on their most recently used one, Shift+` on the
       last — and the group expands for it exactly as → does, the state
-      persisting; on an open group it collapses back to the entry, from
-      a window row or in place on the entry; on a single-window app it
-      holds without dead ends; the grouped strip toggles its run from
-      its tiles the same way, and with a query standing the key types
-      instead
+      persisting; on the expanded entry it collapses in place; from a
+      window row it cycles the same app's windows, wrapping, never
+      crossing into another, and the group stays open while it cycles;
+      on a single-window app it holds without dead ends; the grouped
+      strip obeys the same key from its tiles, and with a query
+      standing the key types instead
 - [ ] Nothing descends into a collapsed group: a workspace holding a
       single collapsed entry keeps the selection under repeated Tab
 - [ ] Ctrl+N activates the Nth app entry's window instantly; expanded

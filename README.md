@@ -69,12 +69,13 @@ pipeline the COSMIC launcher uses) beside its title.
   holds a run only while it has two live windows (the caption names the
   app's most recently used window while its tile is selected). Tab
   steps apps;
-  Left/Right step the visible tiles; **`** (the key above Tab) toggles
-  the selected app's group — a closed tile opens the app's windows on
-  their most recently used one (**Shift+`** on the last), an open run
-  closes back to its tile. The vertical tree toggles the same way, in
-  place on an entry or from a window row. In every other session the
-  key types into the filter
+  Left/Right step the visible tiles; **`** (the key above Tab) works
+  the selected app's group — a tile press opens the app's windows on
+  their most recently used one (**Shift+`** on the last), and from
+  inside the run the key cycles those windows, wrapping within the
+  app. The vertical tree behaves the same from its entries, where an
+  expanded entry collapses in place. In every other session the key
+  types into the filter
 - **Type to filter**: while the card is up, typing narrows it — title or
   app name, case-insensitive, first match selected; Backspace edits,
   Escape clears before it dismisses. Works in every mode
