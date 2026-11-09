@@ -369,10 +369,14 @@ one width across the two. An app holds a run only while it has at
 least two live windows: **↓** on anything else does nothing, and
 committing that tile activates its one window. **Left/Right** step the
 visible tiles linearly, wrapping — stepping off a run closes it —
-**Tab/Shift+Tab** step app tiles from anywhere, **Ctrl+1..9** address
-the visible tiles in reading order, and Alt+minus keeps the parent
-rule (an app tile closes its front window). The expansion state above
-plays no part here: the strip's shape follows the selection alone.
+**Tab/Shift+Tab** step app tiles from an app tile, and from inside an
+open run they step the run's windows like the arrows do, the run
+staying open until the walk steps off its edge (the vertical tree's
+Tab walks an expanded group's children the same way), **Ctrl+1..9**
+address the visible tiles in reading order, and Alt+minus keeps the
+parent rule (an app tile closes its front window). The expansion state
+above plays no part here: the strip's shape follows the selection
+alone.
 
 **The quick tap** — one Tab press with Alt released before the card can
 be read — is the first step of the same walk: your own app's next

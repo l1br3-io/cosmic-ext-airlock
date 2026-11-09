@@ -68,8 +68,10 @@ pipeline the COSMIC launcher uses) beside its title.
   and ↑ closes it — the card keeps its width across the two, and an app
   holds a run only while it has two live windows (the caption names the
   app's most recently used window while its tile is selected). Tab
-  steps apps;
-  Left/Right step the visible tiles; **`** (the key above Tab) works
+  steps apps from a tile and, inside an open run, steps the run's
+  windows with Left/Right — the run staying open until the walk leaves
+  it, as the vertical tree's Tab walks an expanded group;
+  **`** (the key above Tab) works
   the selected app's group — a tile press opens the app's windows on
   their most recently used one (**Shift+`** on the last), and from
   inside the run the key cycles those windows, wrapping within the

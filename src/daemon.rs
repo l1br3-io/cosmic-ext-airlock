@@ -861,31 +861,32 @@ fn step_band(session: &mut Switch, snapshot: &Snapshot, direction: Direction) {
     session.tree_sel = step_in(&sequence, session.tree_sel, direction);
 }
 
-/// Tab / Shift+Tab: step the **app tiles only**, from anywhere — from
-/// inside a run, from the run's parent to the next app tile after it
-/// (the run closes by derivation).
+/// Tab / Shift+Tab: step the **app tiles** — but from inside an open
+/// run, join the linear walk instead: the run's windows step one at a
+/// time and the run stays open until the walk steps off its edge, the
+/// strip's twin of the vertical Tab, which walks an expanded group's
+/// children row by row and never slams the group shut (←/→'s sequence
+/// walk, so every step key agrees inside a run).
 fn step_apps(session: &mut Switch, snapshot: &Snapshot, direction: Direction) {
     if !session.is_combined() {
+        return;
+    }
+    // Inside a run the selection is a child: step the visible tiles,
+    // keeping the run open while the walk stays inside it.
+    let in_run = session.tree.as_ref().is_some_and(|tree| {
+        tree.rows()
+            .get(session.tree_sel)
+            .is_some_and(|row| row.kind == switcher::RowKind::Child)
+    });
+    if in_run {
+        step_band(session, snapshot, direction);
         return;
     }
     let apps = strip_level1(session, snapshot);
     if apps.is_empty() {
         return;
     }
-    let Some(tree) = session.tree.as_ref() else {
-        return;
-    };
-    // From inside a run, the walk continues from the run's parent.
-    let current = if tree
-        .rows()
-        .get(session.tree_sel)
-        .is_some_and(|row| row.kind == switcher::RowKind::Child)
-    {
-        tree.parent_of(session.tree_sel).unwrap_or(session.tree_sel)
-    } else {
-        session.tree_sel
-    };
-    session.tree_sel = step_in(&apps, current, direction);
+    session.tree_sel = step_in(&apps, session.tree_sel, direction);
 }
 
 /// ↓: open the selected app tile's run on its MRU-front window — under
@@ -1592,7 +1593,8 @@ pub fn run() -> Result<(), RunError> {
                 }
                 GestureOutput::StepApp(direction) => {
                     // Tab in the combined card steps the app list from
-                    // app tiles only, from anywhere.
+                    // app tiles; inside an open run it joins the linear
+                    // walk, keeping the run open while it walks.
                     if let Some(current) = open.as_mut()
                         && current.is_combined()
                     {
@@ -6625,20 +6627,30 @@ mod tests {
     }
 
     #[test]
-    fn combined_tab_steps_apps_from_anywhere() {
-        // Tab steps the app tiles only, from anywhere: from inside a
-        // run it lands on the next app tile after the run's parent (the
-        // run closes by derivation); Shift+Tab wraps.
+    fn combined_tab_walks_the_run_before_stepping_apps() {
+        // Tab steps the app tiles from an app tile; from inside an open
+        // run it joins the linear walk — the run's windows step one at
+        // a time and the run stays open until the walk steps off its
+        // edge (the vertical Tab's row-by-row walk through an expanded
+        // group, the run closing by derivation only when the selection
+        // leaves it). Shift+Tab mirrors at the run's front edge.
         let snap = grouped_two_apps();
         let (mut open, _expanded) = combined_session(&snap);
         let session = open.as_mut().expect("open");
         session.tree_sel = 1; // a's front child, inside the run
         step_apps(session, &snap, Direction::Next);
-        assert_eq!(session.tree_sel, 3, "the next app after a");
+        assert_eq!(session.tree_sel, 2, "the run's second window, run open");
         step_apps(session, &snap, Direction::Next);
-        assert_eq!(session.tree_sel, 0, "wraps to a");
+        assert_eq!(session.tree_sel, 3, "off the edge onto b's tile");
+        step_apps(session, &snap, Direction::Next);
+        assert_eq!(session.tree_sel, 0, "app tiles step and wrap as before");
         step_apps(session, &snap, Direction::Previous);
         assert_eq!(session.tree_sel, 3, "wraps back");
+        // Shift+Tab from the run's front edge lands on the app tile
+        // before the run's parent.
+        session.tree_sel = 1; // a's front child again
+        step_apps(session, &snap, Direction::Previous);
+        assert_eq!(session.tree_sel, 3, "off the front edge onto b's tile");
     }
 
     #[test]

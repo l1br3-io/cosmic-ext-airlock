@@ -303,6 +303,10 @@ binary.
       on a single-window app it holds without dead ends; the grouped
       strip obeys the same key from its tiles, and with a query
       standing the key types instead
+- [ ] The strip (`grouping = true` with `layout = "horizontal"`): Tab
+      from an app tile steps app tiles; from inside an open run it
+      steps the run's windows like ←/→ — the run staying open until
+      the walk steps off its edge, never closing on the first press
 - [ ] Nothing descends into a collapsed group: a workspace holding a
       single collapsed entry keeps the selection under repeated Tab
 - [ ] Ctrl+N activates the Nth app entry's window instantly; expanded
