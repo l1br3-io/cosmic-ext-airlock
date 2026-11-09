@@ -383,16 +383,16 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
     <section id="show-workspace">
       <h2>Show workspace</h2>
       <p><code>show_workspace = true</code> labels the card with the
-      workspace you pressed on: its name, small, right-aligned at the
-      card's top &#8212; used verbatim when it is real words. A
+      workspace you pressed on: its name, small &#8212; used verbatim
+      when it is real words. A
       workspace whose name is itself just digits (COSMIC's numeric
       default) or that has no name gets the synthesized
-      <strong>&#128421;&#65039; Workspace&#160;N</strong> &#8212; the
-      digits, or the same 1-based position <code>index</code> rules
-      count, so the label and the config name the same workspace the
-      same way. The emoji paints on the system font face; on a desktop
-      with no loadable fonts the label reads &#8220;Workspace&#160;N&#8221;
-      without it. A long name truncates with
+      <strong># Workspace&#160;N</strong> &#8212; the digits, or the
+      same 1-based position <code>index</code> rules count, so the
+      label and the config name the same workspace the same way; the
+      <code>#</code> mark is the one glyph every text face paints. The
+      line sits at the top left of a vertical card and the bottom
+      center of a horizontal one. A long name truncates with
       <code>&#8230;</code>; the label never widens the card.</p>
       <p>The label answers one question at a glance &#8212; <em>which
       workspace is this card anchored to</em> &#8212; which matters most

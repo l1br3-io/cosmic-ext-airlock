@@ -1200,16 +1200,15 @@ fn scenarios(
         ),
         palette: base,
     });
-    // The numbered form (workspace-label W6): the emoji-prefixed
-    // synthesized string as the System face paints it — on the bitmap
-    // floor the same string shows the documented '?' degradation.
+    // The numbered form (workspace-label W7): the `#`-marked
+    // synthesized string, the one glyph vocabulary both faces paint.
     sheet.push(Scenario {
         model: ui::with_workspace(
             sized(OverlayModel {
                 rows: vec![row("Numbered workspace", icons[4].clone(), true)],
                 ..single()
             }),
-            "\u{1f5a5}\u{fe0f} Workspace 3",
+            "# Workspace 3",
             &mut bitmap,
             2,
         ),

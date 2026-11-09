@@ -117,19 +117,21 @@ binary.
 
 - [ ] With `show_workspace = true`
       ([settings](settings.md)), the card names the workspace you pressed
-      on — small, right-aligned at the card's top — on the vertical card,
-      the horizontal band, and the grouped strip
-- [ ] An unnamed workspace shows the synthesized "🖥️ Workspace N" at
+      on — small, top-left on the vertical cards, bottom-center on the
+      horizontal band and the grouped strip
+- [ ] An unnamed workspace shows the synthesized "# Workspace N" at
       the same position an `index = N` rule matches; a workspace whose
       name is just digits (COSMIC's numeric default) shows the same
       form carrying its digits, and a named workspace shows its name
-      verbatim
+      verbatim — the `#` mark paints on both text faces
 - [ ] A workspace name long enough to hit its cap truncates with `…` and
       never widens the card; on the horizontal cards a full-length caption
       keeps clear of the label
 - [ ] Typing a filter with the label showing keeps both lines (label
-      above the query strip); the no-matches card keeps the label line
-      too, so the card never jumps when the list empties
+      above the query strip on a vertical card); the no-matches card
+      keeps the label line too, so the card never jumps when the list
+      empties. On a horizontal card a click on the label line addresses
+      no tile
 - [ ] Editing the setting mid-gesture never repaints the open card; the
       next press applies it
 - [ ] With the setting off (or removed), every card renders exactly as

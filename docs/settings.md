@@ -391,14 +391,14 @@ last-good settings apply.
 ## Show workspace
 
 `show_workspace = true` labels the card with the workspace you pressed
-on: its name, small, right-aligned at the card's top — used verbatim
-when it is real words. A workspace whose name is itself just digits
-(COSMIC's numeric default) or that has no name gets the synthesized
-**"🖥️ Workspace N"** — the digits, or the same 1-based position
-`index` rules count, so the label and the config name the same
-workspace the same way. The emoji paints on the system font face; on a
-desktop with no loadable fonts the label reads "Workspace N" without
-it. A long name truncates with `…`; the label never widens the card.
+on: its name, small — used verbatim when it is real words. A workspace
+whose name is itself just digits (COSMIC's numeric default) or that has
+no name gets the synthesized **"# Workspace N"** — the digits, or the
+same 1-based position `index` rules count, so the label and the config
+name the same workspace the same way; the `#` mark is the one glyph
+every text face paints. The line sits at the top left of a vertical
+card and the bottom center of a horizontal one. A long name truncates
+with `…`; the label never widens the card.
 
 The label answers one question at a glance — *which workspace is this
 card anchored to* — which matters most where `isolated = false` makes

@@ -404,12 +404,13 @@ pub const WS_LABEL_STEP: u32 = 2;
 /// prefix): a name longer than the cap truncates with the real `…`,
 /// and the label never widens the card — it loses to the width the
 /// shapes already chose. Fourteen cells hold the longest synthesized
-/// form, "\u{1f5a5}\u{fe0f} Workspace 12", with room; working value,
-/// the preview sheet freezes it.
+/// form, "# Workspace 12", with room; working value, the preview sheet
+/// freezes it.
 pub const WS_LABEL_MAX_COLS: u32 = 14;
-/// Clearing between the caption's ink zone and the label's, the
-/// caption gap's own double 8-grid step (workspace-label W2,
-/// 2026-11-09) — on the shared line the two never touch.
+/// Clearing around the label's line (workspace-label W2, 2026-11-09;
+/// its own line since W7): below the tiles on the horizontal cards,
+/// above the first row on the vertical ones — the caption gap's own
+/// double 8-grid step.
 pub const WS_LABEL_GAP: u32 = 16;
 /// The workspace label's text cell at one text size — the resolved
 /// cell minus [`WS_LABEL_STEP`], floored at [`FONT_SIZE_MIN`].
@@ -1360,12 +1361,12 @@ pub struct OverlayModel {
     /// nothing of it).
     pub caption: String,
     /// The workspace label (workspace-label W2, 2026-11-09): the
-    /// invoking workspace's name — or its synthesized "Workspace N" —
-    /// truncated to [`WS_LABEL_MAX_COLS`] with the real `…`. Empty on
-    /// every default-off card; when it stands, the vertical cards
-    /// reserve its line above the first row and the horizontal caption
-    /// composes against the budget its zone takes. Written once at
-    /// open, through [`with_workspace`], and frozen with the session.
+    /// invoking workspace's name — or its synthesized "# Workspace N"
+    /// — truncated to [`WS_LABEL_MAX_COLS`] with the real `…`. Empty on
+    /// every default-off card; when it stands, each card reserves its
+    /// line — above the first row on the vertical ones, below the
+    /// tiles on the horizontal ones. Written once at open, through
+    /// [`with_workspace`], and frozen with the session.
     pub workspace: String,
 }
 
@@ -1422,11 +1423,25 @@ impl OverlayModel {
         if !in_card {
             return None;
         }
-        if y < band_strip_top_at(self.profile.text.cell()) as f64 * scale as f64 {
-            return None; // the reserved caption line and its gap
+        let cell = self.profile.text.cell();
+        let strip_top = band_strip_top_at(cell) as f64 * scale as f64;
+        // The label's own bottom line (workspace-label W7) bounds the
+        // band from below: tiles live in [strip_top, strip_top + cell),
+        // and the clearing and the label line under it address nothing —
+        // like the caption line above, no tile from there.
+        let strip_bottom = strip_top
+            + (tile_cell_h_at(cell)
+                + if self.workspace.is_empty() {
+                    0
+                } else {
+                    WS_LABEL_GAP
+                }) as f64
+                * scale as f64;
+        if y < strip_top || y >= strip_bottom {
+            return None; // the caption line, the clearing, or the label line
         }
-        // The single band admits every y below the caption (its height
-        // is exactly the cell plus padding); x alone picks the tile.
+        // The single band admits every y inside the tile cell; x alone
+        // picks the tile.
         let x_px = x / scale as f64 - TILE_PAD_X as f64;
         let pitch = (TILE_W + TILE_GAP) as f64;
         if x_px < 0.0 || x_px >= self.rows.len() as f64 * pitch {
@@ -2276,21 +2291,8 @@ pub fn compose_caption_at(
     scale: u32,
     text_profile: TextProfile,
 ) -> String {
-    compose_caption_budgeted(label, width - 2 * TILE_PAD_X, text, scale, text_profile)
-}
-
-/// [`compose_caption_at`] against a caller-set ink budget — the
-/// workspace label's seam recomposes the caption against the budget its
-/// zone leaves (workspace-label W2, 2026-11-09); every other caller
-/// derives the budget from the card's width.
-fn compose_caption_budgeted(
-    label: &str,
-    budget: u32,
-    text: &mut TextBackend<'_>,
-    scale: u32,
-    text_profile: TextProfile,
-) -> String {
     let cell = text_profile.cell();
+    let budget = width - 2 * TILE_PAD_X;
     match text {
         TextBackend::Bitmap => truncate_cols(fold_title(label), budget / cell),
         TextBackend::System { system, query } => {
@@ -2304,25 +2306,21 @@ fn compose_caption_budgeted(
 /// The workspace label's composition (workspace-label W2, 2026-11-09):
 /// the invoking workspace's name truncated to [`WS_LABEL_MAX_COLS`] with
 /// the real `…` — the caption composer's own vocabulary at the label's
-/// smaller cell — returned with its measured ink width, the zone the
-/// caption's budget loses.
+/// smaller cell.
 fn compose_workspace(
     name: &str,
     text: &mut TextBackend<'_>,
     scale: u32,
     text_profile: TextProfile,
-) -> (String, u32) {
+) -> String {
     let cell = ws_label_cell_at(text_profile.cell());
     match text {
-        TextBackend::Bitmap => {
-            let folded = truncate_cols(fold_title(name), WS_LABEL_MAX_COLS);
-            let width = folded.chars().count() as u32 * cell;
-            (folded, width)
-        }
+        TextBackend::Bitmap => truncate_cols(fold_title(name), WS_LABEL_MAX_COLS),
         TextBackend::System { system, query } => {
             let budget = WS_LABEL_MAX_COLS as f32 * cell as f32;
-            let (display, run) = system.shape_budgeted(name, *query, scale, budget, cell as f32);
-            (display, run.width_px.ceil() as u32)
+            system
+                .shape_budgeted(name, *query, scale, budget, cell as f32)
+                .0
         }
     }
 }
@@ -2502,22 +2500,15 @@ pub fn with_workspace(
     if name.is_empty() {
         return model;
     }
-    let (label, width) = compose_workspace(name, text, scale, model.profile.text);
-    model.workspace = label;
+    model.workspace = compose_workspace(name, text, scale, model.profile.text);
+    let cell = model.profile.text.cell();
     if model.horizontal {
-        let budget = model
-            .width
-            .saturating_sub(2 * TILE_PAD_X)
-            .saturating_sub(width + WS_LABEL_GAP);
-        // Recomposition, not re-derivation: the caption string is the
-        // commit target's already-composed title, and the truncation is
-        // prefix-budgeted in both backends — re-truncating it against
-        // the smaller budget is the same compose the builder would have
-        // made had it known the zone.
-        model.caption =
-            compose_caption_budgeted(&model.caption, budget, text, scale, model.profile.text);
+        // The bottom line (W7): below the tiles, centered — the card
+        // grows by the clearing and the label's own smaller cell, the
+        // caption's line untouched above.
+        model.height += WS_LABEL_GAP + ws_label_cell_at(cell);
     } else {
-        model.height += ws_label_height_at(model.profile.rhythm, model.profile.text.cell());
+        model.height += ws_label_height_at(model.profile.rhythm, cell);
     }
     model
 }
@@ -2616,38 +2607,18 @@ pub fn render(
     if model.horizontal {
         // The one caption (glance-tiles G3, 2026-11-09): the commit
         // target's title, fixed top-center in the full text color —
-        // the line the card always reserves, empty or not. When the
-        // session carries a workspace label it rides the same line
-        // (workspace-label W3, 2026-11-09): the caption centers in the
-        // zone the label leaves — the composer's budget, mirrored here
-        // — and the label right-aligns into the card's own padding
-        // edge at its smaller cell, centered on the line. The paint
-        // loop's edge is the zone's end, defense in depth behind the
-        // composer's budget.
-        let label_cell = ws_label_cell_at(cell);
-        let zone = if model.workspace.is_empty() {
-            0
-        } else {
-            (match &mut text {
-                TextBackend::Bitmap => model.workspace.chars().count() as u32 * label_cell,
-                TextBackend::System { system, query } => system
-                    .shape(&model.workspace, *query, scale, label_cell as f32)
-                    .width_px
-                    .ceil() as u32,
-            }) + WS_LABEL_GAP
-        };
-        let span_end = lw.saturating_sub(TILE_PAD_X + zone);
-        // The centering span is the full width less the zone — `lw - zone`
-        // — so zone 0 reproduces the label-less paint exactly (the
-        // byte-identity pin); the composer's budget keeps the ink inside
-        // the card's padding within it.
-        let center_span = lw.saturating_sub(zone);
+        // the line the card always reserves, empty or not. Centered
+        // ink; the paint loop's edge is the card's own padding,
+        // defense in depth behind the composer's budget. The workspace
+        // label no longer shares this line (W7): it takes its own at
+        // the card's bottom, and the caption's budget is whole again.
         match &mut text {
             TextBackend::Bitmap => {
                 let ink = model.caption.chars().count() as u32 * cell;
-                let mut lx = center_span.saturating_sub(ink) / 2;
+                let edge = lw.saturating_sub(TILE_PAD_X);
+                let mut lx = lw.saturating_sub(ink) / 2;
                 for ch in model.caption.chars() {
-                    if lx + cell > span_end {
+                    if lx + cell > edge {
                         break;
                     }
                     draw_glyph(
@@ -2674,22 +2645,24 @@ pub fn render(
                     stride,
                     scale,
                     palette.text,
-                    center_span.saturating_sub(ink) / 2,
+                    lw.saturating_sub(ink) / 2,
                     baseline,
-                    span_end,
+                    lw.saturating_sub(TILE_PAD_X),
                 );
             }
         }
-        // The label itself: one text color, the smaller cell, the
-        // right edge — the caption's quiet companion, never moving
-        // with the selection.
+        // The workspace label's own line (workspace-label W7,
+        // 2026-11-09): below the tiles, centered on the card — one text
+        // color, the smaller cell, the caption's quiet counterpart at
+        // the other end. The line exists only when the label stands;
+        // the seam grew the card for it.
         if !model.workspace.is_empty() {
-            let right = lw.saturating_sub(TILE_PAD_X);
-            let y = TILE_PAD_Y + (cell - label_cell) / 2;
+            let label_cell = ws_label_cell_at(cell);
+            let y = band_card_height_at(cell) + WS_LABEL_GAP;
             match &mut text {
                 TextBackend::Bitmap => {
                     let ink = model.workspace.chars().count() as u32 * label_cell;
-                    let mut lx = right - ink;
+                    let mut lx = lw.saturating_sub(ink) / 2;
                     for ch in model.workspace.chars() {
                         draw_glyph(
                             canvas,
@@ -2715,9 +2688,9 @@ pub fn render(
                         stride,
                         scale,
                         palette.text,
-                        right - ink,
+                        lw.saturating_sub(ink) / 2,
                         baseline,
-                        right,
+                        lw.saturating_sub(TILE_PAD_X),
                     );
                 }
             }
@@ -2749,21 +2722,21 @@ pub fn render(
         );
         return;
     }
-    // The workspace label's line (workspace-label W3, 2026-11-09): the
-    // reserved twin above the query strip — the name right-aligned at
-    // the card's own padding edge, its smaller cell at the line's top,
-    // the row gap below it the separator. Every strip and row below
-    // shifts by its height, the same height `row_at` subtracts.
+    // The workspace label's line (workspace-label W3, 2026-11-09; the
+    // left edge W7): the reserved twin above the query strip — the
+    // name left-aligned at the text column's spine (the strip's own
+    // x), its smaller cell at the line's top, the row gap below it the
+    // separator. Every strip and row below shifts by its height, the
+    // same height `row_at` subtracts.
     let label_line = if model.workspace.is_empty() {
         0
     } else {
         let label_cell = ws_label_cell_at(cell);
-        let right = lw.saturating_sub(PAD_X);
+        let left = PAD_X + ICON + ICON_GAP;
         let y = rhythm.pad_y;
         match &mut text {
             TextBackend::Bitmap => {
-                let ink = model.workspace.chars().count() as u32 * label_cell;
-                let mut lx = right - ink;
+                let mut lx = left;
                 for ch in model.workspace.chars() {
                     draw_glyph(
                         canvas,
@@ -2779,7 +2752,6 @@ pub fn render(
             }
             TextBackend::System { system, query } => {
                 let run = system.shape(&model.workspace, *query, scale, label_cell as f32);
-                let ink = run.width_px.ceil() as u32;
                 let baseline =
                     y + crate::text::centering(run.ascent_px, run.descent_px, label_cell);
                 paint_run(
@@ -2789,9 +2761,9 @@ pub fn render(
                     stride,
                     scale,
                     palette.text,
-                    right - ink,
+                    left,
                     baseline,
-                    right,
+                    lw.saturating_sub(PAD_X),
                 );
             }
         }
@@ -5633,37 +5605,25 @@ mod tests {
     }
 
     #[test]
-    fn with_workspace_shrinks_the_horizontal_caption_budget() {
-        // A full-length caption must lose the label's zone: the seam
-        // recomposes it against the reduced budget, so the two never
-        // collide on the caption line.
-        let long_title: String = "chapter".chars().cycle().take(80).collect();
-        let snap = Snapshot {
-            toplevels: vec![
-                toplevel(1, &long_title, "app.1", &[1], switcher::State::ACTIVATED, 3),
-                toplevel(2, "W02", "app.2", &[1], switcher::State::default(), 2),
-                toplevel(3, "W03", "app.3", &[1], switcher::State::default(), 1),
-            ],
-            workspaces: Default::default(),
-            active: Some(switcher::WorkspaceId(1)),
-        };
-        let model = build_band(&snap, Handle(1), 3, None).expect("eligible windows exist");
-        let plain = model.caption.chars().count();
-        assert!(plain > 12, "the fixture's caption is at full length");
+    fn with_workspace_grows_the_horizontal_card_at_the_bottom() {
+        // The label's own line (W7): the horizontal card grows by the
+        // clearing and the label's cell below the tiles — and the
+        // caption above is untouched, its budget whole again.
+        let snap = band_snapshot(4);
+        let model = build_band(&snap, Handle(1), 4, None).expect("builds");
+        let height = model.height;
+        let caption = model.caption.clone();
         let mut text = TextBackend::Bitmap;
         let labeled = with_workspace(model, "code", &mut text, 2);
-        let zone = 4 * ws_label_cell_at(TEXT_H) + WS_LABEL_GAP; // "code" at its cell
-        let budget = (CAPTION_FLOOR_W - 2 * TILE_PAD_X - zone) / TEXT_H;
         assert_eq!(
-            labeled.caption.chars().count() as u32,
-            budget,
-            "the caption recomposes against the zone-reduced budget"
+            labeled.height,
+            height + WS_LABEL_GAP + ws_label_cell_at(TEXT_H),
+            "the bottom line costs its clearing plus the smaller cell"
         );
-        assert!(
-            labeled.caption.chars().count() < plain,
-            "the zone costs the caption columns"
+        assert_eq!(
+            labeled.caption, caption,
+            "the caption keeps its whole budget"
         );
-        assert!(labeled.caption.ends_with('\u{2026}'));
     }
 
     #[test]
@@ -6969,11 +6929,11 @@ mod tests {
     // --- The workspace label's paint (workspace-label W3) ------------------
 
     #[test]
-    fn the_workspace_label_paints_right_on_the_caption_line() {
-        // Right-aligned into the card's own right padding's edge, on the
-        // caption line's lower half — the smaller cell centers on the
-        // line the caption fills. Proven on the bitmap floor; the System
-        // face paints the same zone by the shaped twin.
+    fn the_workspace_label_paints_bottom_center_on_the_horizontal_card() {
+        // Centered on the card below the tiles, at its smaller cell —
+        // the caption's quiet counterpart at the other end. Proven on
+        // the bitmap floor; the System face paints the same line by
+        // the shaped twin.
         let snap = band_snapshot(4);
         let model = build_band(&snap, Handle(1), 4, None).expect("builds");
         let mut text = TextBackend::Bitmap;
@@ -6982,28 +6942,36 @@ mod tests {
         let text_color = Palette::dark().text;
         let label_cell = ws_label_cell_at(TEXT_H);
         let ink = 4 * label_cell;
-        let y = TILE_PAD_Y + (TEXT_H - label_cell) / 2 + label_cell / 2;
-        let right = labeled.width - TILE_PAD_X;
+        let y = band_card_height() + WS_LABEL_GAP + label_cell / 2;
+        let left = (labeled.width - ink) / 2;
         let mut found = 0;
-        for lx in right - ink..right {
+        for lx in left..left + ink {
             found += u32::from(probe(&canvas, labeled.width, lx, y) == text_color);
         }
-        assert!(found > 0, "the label's ink paints in its zone");
-        // The clearing between the caption's zone and the label's holds
-        // nothing.
-        let zone_start = right - ink - WS_LABEL_GAP;
+        assert!(found > 0, "the label's ink paints centered on its line");
+        // The clearing between the tiles and the line holds nothing.
         let mut stray = 0;
-        for lx in zone_start..zone_start + WS_LABEL_GAP {
-            stray += u32::from(probe(&canvas, labeled.width, lx, y) != Palette::dark().background);
+        for lx in (labeled.width / 4)..(labeled.width * 3 / 4) {
+            stray += u32::from(
+                probe(
+                    &canvas,
+                    labeled.width,
+                    lx,
+                    band_card_height() + WS_LABEL_GAP / 2,
+                ) != Palette::dark().background,
+            );
         }
-        assert_eq!(stray, 0, "the gap between caption zone and label is clean");
+        assert_eq!(stray, 0, "the gap between tiles and label line is clean");
+        // And the line addresses no tile: cell_at over it picks nothing.
+        assert_eq!(labeled.cell_at((left + 2) as f64, (y + 1) as f64, 1), None);
     }
 
     #[test]
     fn the_vertical_card_paints_the_label_above_its_rows() {
         // The reserved line above the first row carries the name,
-        // right-aligned at the card's own right padding; without the
-        // label the same line is bare — the default-off identity.
+        // left-aligned at the text column's spine — the query strip's
+        // own x; without the label the same line is bare — the
+        // default-off identity.
         let plain = hit_model(2);
         let mut text = TextBackend::Bitmap;
         let labeled = with_workspace(plain.clone(), "ab", &mut text, 2);
@@ -7011,56 +6979,19 @@ mod tests {
         let text_color = Palette::dark().text;
         let label_cell = ws_label_cell_at(TEXT_H);
         let ink = 2 * label_cell;
-        let right = labeled.width - PAD_X;
+        let left = PAD_X + ICON + ICON_GAP;
         let y = labeled.profile.rhythm.pad_y + label_cell / 2;
         let mut found = 0;
-        for lx in right - ink..right {
+        for lx in left..left + ink {
             found += u32::from(probe(&canvas, labeled.width, lx, y) == text_color);
         }
         assert!(found > 0, "the label paints on its reserved line");
         let bare = render_bitmap(&plain);
         let mut none = 0;
-        for lx in right - ink..right {
+        for lx in left..left + ink {
             none += u32::from(probe(&bare, plain.width, lx, y) == text_color);
         }
         assert_eq!(none, 0, "the default-off card paints nothing there");
-    }
-
-    #[test]
-    fn the_caption_centers_in_the_zone_the_label_leaves() {
-        // A full-length caption recomposes into the zone left of the
-        // label: its ink never crosses the clearing. The scan is the
-        // assertion — the rightmost ink on the caption's line stays
-        // left of the zone's start.
-        let long_title: String = "chapter".chars().cycle().take(80).collect();
-        let snap = Snapshot {
-            toplevels: vec![
-                toplevel(1, &long_title, "app.1", &[1], switcher::State::ACTIVATED, 3),
-                toplevel(2, "W02", "app.2", &[1], switcher::State::default(), 2),
-                toplevel(3, "W03", "app.3", &[1], switcher::State::default(), 1),
-            ],
-            workspaces: Default::default(),
-            active: Some(switcher::WorkspaceId(1)),
-        };
-        let model = build_band(&snap, Handle(1), 3, None).expect("builds");
-        let mut text = TextBackend::Bitmap;
-        let labeled = with_workspace(model, "code", &mut text, 2);
-        let canvas = render_bitmap(&labeled);
-        let text_color = Palette::dark().text;
-        let label_cell = ws_label_cell_at(TEXT_H);
-        let zone_start = labeled.width - TILE_PAD_X - 4 * label_cell - WS_LABEL_GAP;
-        let y = TILE_PAD_Y + TEXT_H / 2;
-        let mut rightmost = 0;
-        for lx in TILE_PAD_X..zone_start {
-            if probe(&canvas, labeled.width, lx, y) == text_color {
-                rightmost = lx;
-            }
-        }
-        assert!(rightmost > 0, "the caption paints at full length");
-        assert!(
-            rightmost < zone_start,
-            "the caption's ink stops at the clearing, never crossing it"
-        );
     }
 
     #[test]

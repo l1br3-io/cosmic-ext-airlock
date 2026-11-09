@@ -38,9 +38,10 @@
 # grouping = false      # true: group the list by app — a two-level tree,
                         # collapsed by default
 # show_workspace = false # true: label the card with the workspace you
-                        # pressed on — its name, or "🖥️ Workspace N" when
-                        # the name is just a number or absent, small, at
-                        # the card's top right
+                        # pressed on — its name, or "# Workspace N" when
+                        # the name is just a number or absent, small:
+                        # top-left on the vertical card, bottom-center on
+                        # the horizontal one
 
 # --- Type -------------------------------------------------------------
 

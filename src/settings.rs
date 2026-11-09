@@ -68,9 +68,10 @@ pub struct Settings {
     /// unchanged.
     pub grouping: bool,
     /// Whether the card labels itself with the invoking workspace's
-    /// name (workspace-label, 2026-11-09) — a small right-aligned line
-    /// on every card. Missing key = `false`, no label, so the
-    /// no-config card is unchanged.
+    /// name (workspace-label, 2026-11-09) — a small line on every card,
+    /// top-left on the vertical ones, bottom-center on the horizontal
+    /// ones. Missing key = `false`, no label, so the no-config card is
+    /// unchanged.
     pub show_workspace: bool,
     /// Which way the card lays its list out; missing key =
     /// [`LayoutSetting::Vertical`], today's card, so the no-config
