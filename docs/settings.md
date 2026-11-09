@@ -246,7 +246,7 @@ whole number from 3 to 12. The vertical card ignores it.
   for the session — auto is responsive per monitor, not mid-gesture.
 - **`columns = N`** — a pinned budget: exactly N tiles, whatever the
   output. Three is the shortest strip that still reads as one; twelve
-  spans 912 logical pixels.
+  spans 904 logical pixels.
 
 Whatever the budget, the card keeps a caption-width floor: a short
 strip renders left-aligned inside a card wide enough that the caption

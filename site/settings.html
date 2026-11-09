@@ -246,17 +246,19 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       <code>"auto"</code> (the default) or a whole number from 3 to 12.
       The vertical card ignores it.</p>
       <ul>
-        <li><strong><code>"auto"</code></strong>: the band holds as many
+        <li><strong><code>"auto"</code></strong>: the strip holds as many
         tiles as two-thirds of the invoking output's logical width fits,
-        never fewer than three. A 1920-logical output opens eight tiles, a
-        2560 one ten. The share is read from the output the gesture starts
-        on and frozen for the session, so auto is per monitor, not
-        mid-gesture.</li>
+        never fewer than three. A 1920-logical output opens seventeen
+        tiles, a 2560 one twenty-three. The share is read from the output
+        the gesture starts on and frozen for the session, so auto is per
+        monitor, not mid-gesture.</li>
         <li><strong>A whole number</strong>: a pinned budget of exactly that
-        many tiles, whatever the output. Three is the shortest band that
-        still reads as a strip; twelve spans 1960 logical pixels, past the
-        full logical width of a 4K panel at 200%.</li>
+        many tiles, whatever the output. Three is the shortest strip that
+        still reads as one; twelve spans 904 logical pixels.</li>
       </ul>
+      <p>Whatever the budget, the card keeps a caption-width floor: a short
+      strip renders left-aligned inside a card wide enough that the caption
+      always reads, so the card never narrows below it.</p>
       <p><code>columns</code> is read with <code>layout</code> when a
       gesture starts and frozen for the session; a pinned value applies on
       the next press.</p>
