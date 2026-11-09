@@ -3,7 +3,7 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
-## [Unreleased]
+## [0.4.0] — 2026-11-09
 
 ### Added
 
@@ -19,6 +19,17 @@ observe, not internal mechanics.
   the daemon log names the density, text size, and clamp. The 8×8
   bitmap floor scales too. Read when a gesture starts; a value outside
   8–24 is named in a diagnostic and the last-good settings apply.
+- **The key above Tab walks the vertical tree too** — the ` carve-out
+  that steps the selected app's windows no longer belongs to the
+  horizontal strip alone: a vertical grouped card steps as well,
+  where it used to type a backtick into the query. From an app entry,
+  ` opens that app's windows on their most recently used one
+  (Shift+` on the last), and the group expands for it — the same
+  persistent expansion state the → key writes; from a window row it
+  steps within the same app, wrapping, never crossing into another,
+  and a single-window app holds without dead ends. With a query
+  standing the key types its own character as before, and the flat
+  card keeps typing it outright. See docs/settings.md — Grouping.
 
 ## [0.3.0] — 2026-11-09
 

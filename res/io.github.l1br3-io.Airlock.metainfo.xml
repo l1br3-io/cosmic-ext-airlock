@@ -23,6 +23,21 @@
   <url type="homepage">https://github.com/l1br3-io/cosmic-ext-airlock</url>
   <url type="bugtracker">https://github.com/l1br3-io/cosmic-ext-airlock/issues</url>
   <releases>
+    <release version="0.4.0" date="2026-11-09">
+      <description>
+        <ul>
+          <li>New: the `font_size` setting — set the card's text size in
+              logical pixels (8–24, default 12); titles, the query
+              strip, hint digits, and the band's caption and badges all
+              follow, and the rows, lines, and bitmap floor holding
+              them scale too. A larger size elides long titles sooner
+              rather than widening the title band, and the `rows`
+              budget clamps as fewer rows fit the panel. Read when a
+              gesture starts; a value outside 8–24 is named in a
+              diagnostic and the last-good settings apply.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-11-09">
       <description>
         <ul>
