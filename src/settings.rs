@@ -98,6 +98,12 @@ pub struct Settings {
     /// family. Any string is valid syntax; resolution (and its
     /// diagnostics) happen at open, never at parse.
     pub font: crate::text::FontSetting,
+    /// The card's text size in logical pixels; missing key =
+    /// [`ui::DEFAULT_FONT_SIZE`], accepted
+    /// `ui::FONT_SIZE_MIN..=ui::FONT_SIZE_MAX`. Every text-derived
+    /// metric — title band, query strip, caption line, band height —
+    /// resolves from it at open.
+    pub font_size: u32,
     pub workspaces: Vec<WorkspaceRule>,
 }
 
@@ -114,6 +120,7 @@ impl Default for Settings {
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
+            font_size: ui::DEFAULT_FONT_SIZE,
             workspaces: Vec::new(),
         }
     }
@@ -328,6 +335,20 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
                 .to_owned(),
         ),
     };
+    let font_size = match root.get("font_size") {
+        None => ui::DEFAULT_FONT_SIZE,
+        Some(value) => {
+            let size = value.as_integer().ok_or(SettingsError::InvalidFile {
+                problem: "`font_size` must be a whole number",
+            })?;
+            u32::try_from(size)
+                .ok()
+                .filter(|size| (ui::FONT_SIZE_MIN..=ui::FONT_SIZE_MAX).contains(size))
+                .ok_or(SettingsError::InvalidFile {
+                    problem: "`font_size` must be between 8 and 24",
+                })?
+        }
+    };
     let Some(entries) = root.get("workspace") else {
         return Ok(Settings {
             theme,
@@ -340,6 +361,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             pair,
             selection,
             font,
+            font_size,
             ..Settings::default()
         });
     };
@@ -364,6 +386,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         pair,
         selection,
         font,
+        font_size,
         workspaces,
     })
 }
@@ -750,6 +773,7 @@ isolated = false
                 pair: None,
                 selection: SelectionSetting::Accent,
                 font: crate::text::FontSetting::Default,
+                font_size: ui::DEFAULT_FONT_SIZE,
                 workspaces: vec![
                     WorkspaceRule {
                         reference: WorkspaceRef::Name("code".to_owned()),
@@ -839,6 +863,111 @@ isolated = false
         let error = Settings::parse(b"theme = \"dark\"\nrows = 6\nfont = true\n")
             .expect_err("the file fails whole");
         assert!(matches!(error, SettingsError::InvalidFile { .. }));
+    }
+
+    // --- The font_size key ----------------------------------------------
+
+    #[test]
+    fn parse_defaults_font_size_to_the_twelve_px_pin() {
+        assert_eq!(
+            Settings::parse(b"").expect("empty").font_size,
+            ui::DEFAULT_FONT_SIZE
+        );
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert_eq!(rules_only.font_size, ui::DEFAULT_FONT_SIZE);
+        assert_eq!(Settings::default().font_size, 12);
+    }
+
+    #[test]
+    fn parse_reads_font_size_across_the_accepted_range() {
+        for (config, size) in [
+            (&b"font_size = 8\n"[..], 8),
+            (b"font_size = 12\n", 12),
+            (b"font_size = 16\n", 16),
+            (b"font_size = 24\n", 24),
+        ] {
+            let settings = Settings::parse(config).expect("valid font size");
+            assert_eq!(
+                settings.font_size,
+                size,
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_rejects_font_size_out_of_range() {
+        // Below the floor, above the ceiling, zero, negative, and
+        // absurd alike: named, never clamped.
+        for config in [
+            &b"font_size = 7\n"[..],
+            b"font_size = 25\n",
+            b"font_size = 0\n",
+            b"font_size = -1\n",
+            b"font_size = 99999999999\n",
+        ] {
+            let error = Settings::parse(config).expect_err("out-of-range font size");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: "`font_size` must be between 8 and 24"
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_rejects_a_non_integer_font_size() {
+        for config in [
+            &b"font_size = 12.5\n"[..],
+            b"font_size = \"12\"\n",
+            b"font_size = true\n",
+        ] {
+            let error = Settings::parse(config).expect_err("non-integer font size");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: "`font_size` must be a whole number"
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn the_font_size_diagnostic_names_the_accepted_range() {
+        // The literals in the parser must track the constants: a re-pin
+        // of either bound touches this test.
+        assert_eq!((ui::FONT_SIZE_MIN, ui::FONT_SIZE_MAX), (8, 24));
+        let error = Settings::parse(b"font_size = 7\n").expect_err("below the floor");
+        assert_eq!(
+            error.to_string(),
+            "settings: `font_size` must be between 8 and 24"
+        );
+    }
+
+    #[test]
+    fn a_bad_font_size_fails_the_whole_file() {
+        // The last-good contract: a bad `font_size` beside valid keys
+        // yields no settings at all, never a partial set.
+        let config = b"theme = \"dark\"\nfont_size = 40\n\n[[workspace]]\nname = \"code\"\n";
+        assert!(Settings::parse(config).is_err());
+    }
+
+    #[test]
+    fn parse_coexists_font_size_with_font_and_other_keys() {
+        let config = b"font = \"Fira Sans\"\nfont_size = 18\ntheme = \"light\"\n";
+        let settings = Settings::parse(config).expect("valid config");
+        assert_eq!(
+            settings.font,
+            crate::text::FontSetting::Family("Fira Sans".to_owned())
+        );
+        assert_eq!(settings.font_size, 18);
+        assert_eq!(settings.theme, ThemeSetting::Light);
     }
 
     #[test]
@@ -1675,6 +1804,7 @@ isolated = false
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
+            font_size: ui::DEFAULT_FONT_SIZE,
             workspaces: vec![rule(WorkspaceRef::Name("browse".to_owned()), false)],
         };
         let scope = scope_for(
@@ -1700,6 +1830,7 @@ isolated = false
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
+            font_size: ui::DEFAULT_FONT_SIZE,
             workspaces: vec![rule(WorkspaceRef::Position(2), false)],
         };
         let scope = scope_for(
@@ -1726,6 +1857,7 @@ isolated = false
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
+            font_size: ui::DEFAULT_FONT_SIZE,
             workspaces: vec![
                 rule(WorkspaceRef::Position(1), true),
                 rule(WorkspaceRef::Name("code".to_owned()), false),
@@ -1754,6 +1886,7 @@ isolated = false
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
+            font_size: ui::DEFAULT_FONT_SIZE,
             workspaces: vec![rule(WorkspaceRef::Position(1), false)],
         };
         let scope = scope_for(
@@ -1779,6 +1912,7 @@ isolated = false
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
+            font_size: ui::DEFAULT_FONT_SIZE,
             workspaces: vec![rule(WorkspaceRef::Position(9), false)],
         };
         let scope = scope_for(
@@ -1804,6 +1938,7 @@ isolated = false
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
+            font_size: ui::DEFAULT_FONT_SIZE,
             workspaces: vec![
                 rule(WorkspaceRef::Name("browse".to_owned()), false),
                 rule(WorkspaceRef::Name("browse".to_owned()), true),
@@ -1832,6 +1967,7 @@ isolated = false
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
+            font_size: ui::DEFAULT_FONT_SIZE,
             workspaces: vec![rule(WorkspaceRef::Name("elsewhere".to_owned()), false)],
         };
         let scope = scope_for(
@@ -2029,6 +2165,7 @@ isolated = false
                 pair: None,
                 selection: SelectionSetting::Accent,
                 font: crate::text::FontSetting::Default,
+                font_size: ui::DEFAULT_FONT_SIZE,
                 workspaces: vec![rule(WorkspaceRef::Name("code".to_owned()), false)]
             }
         );

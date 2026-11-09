@@ -50,10 +50,15 @@ Re-decided 2026-11-07 (the owner's note that day: "we should be able to
 update the font style through settings"): the *face* is no longer part of
 the austerity — titles paint the desktop's interface font by default (a
 `font` key overrides the family), real glyphs and fallback chains at the
-pinned 12 px, and the one-font line above described the bitmap floor that
-remains the zero-fonts paint of last resort. What the line still pins,
-undented: one text color, no size or weight knobs, one glyph vocabulary —
-the room stays unfurnished even though its tenant now owns the typeface.
+default 12 px, and the one-font line above described the bitmap floor that
+remains the zero-fonts paint of last resort. The size followed on
+2026-11-09 (`font_size`, 8–24 logical px, default 12): the card keeps its
+physical title band by fitting fewer columns, and every text-derived line
+and height — the query strip, the band's caption row, the band card —
+reads the resolved cell. What the line still pins, undented: one text
+color, Regular weight (no weight knob), one glyph vocabulary — the room
+stays unfurnished even though its tenant now owns the typeface and its
+scale.
 
 ## Tokens before values
 
@@ -69,11 +74,13 @@ the room stays unfurnished even though its tenant now owns the typeface.
   (`geometry`), the grid follows the desktop's density.** Compact
   steps at 4 px (COSMIC's own `space_xxs`, the one deliberate
   half-grid exception, row pad/gap only), Comfortable holds today's
-  8-grid, Spacious breathes at 12; rows stay icon-driven (40/48/56)
-  and the card's width never moves with density. Titles paint the
-  desktop's interface font through cosmic-text at the pinned 12 logical
-  px (the `typography` follow, 2026-11-07: grayscale AA, real `…`,
-  fallback chains; a `font` key overrides the family). The 8×8 bitmap
+  8-grid, Spacious breathes at 12; at the default text size rows stay
+  icon-driven (40/48/56), growing with `font_size` above 12, and the
+  card's width never moves with density. Titles paint the
+  desktop's interface font through cosmic-text at 12 logical px by
+  default (the `typography` follow, 2026-11-07: grayscale AA, real `…`,
+  fallback chains; a `font` key overrides the family, `font_size` the
+  size). The 8×8 bitmap
   font is the zero-fonts floor — one face, whole-pixel, no AA — drawn
   at a 3/2 font scale when no fonts load.
   The history matters: on 2026-11-02 the owner re-pinned 8 px twice in

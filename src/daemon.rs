@@ -2014,9 +2014,10 @@ fn step_and_show(
             // and clamp when it binds, and the setting keeps its value.
             let style = crate::theme::style().unwrap_or_default();
             let density = crate::theme::density().unwrap_or_default();
-            let profile = crate::ui::StyleProfile::resolve(style, density);
+            let profile = crate::ui::StyleProfile::resolve(style, density)
+                .with_text(crate::ui::TextProfile::new(settings.settings.font_size));
             let configured_rows = settings.settings.rows;
-            let rows = crate::ui::effective_rows(density, configured_rows);
+            let rows = crate::ui::effective_rows_rhythm(profile.rhythm, configured_rows);
             // The band's budget resolves once, here: `auto` reads
             // the invoking output's logical width (a 1080p
             // fallback when no output has reported one) and
@@ -2034,7 +2035,8 @@ fn step_and_show(
             );
             if rows < configured_rows {
                 eprintln!(
-                    "airlock daemon: {density:?} density: rows {configured_rows} clamps to {rows} to keep the card inside {} px; the setting keeps its value",
+                    "airlock daemon: {density:?} density at {} px text: rows {configured_rows} clamps to {rows} to keep the card inside {} px; the setting keeps its value",
+                    profile.text.size_px,
                     crate::ui::CARD_FIT_PX
                 );
             }
@@ -4500,6 +4502,7 @@ mod tests {
             pair: None,
             selection: crate::ui::SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
+            font_size: crate::ui::DEFAULT_FONT_SIZE,
             workspaces: vec![crate::settings::WorkspaceRule {
                 reference: crate::settings::WorkspaceRef::Name("browse".to_owned()),
                 isolated: false,

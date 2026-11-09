@@ -5,7 +5,8 @@
 //! life — created at daemon start (OQ 1: the font scan is tens-of-
 //! milliseconds-class and is paid at login, never on the first gesture;
 //! fonts installed after startup stay unseen until the daemon restarts,
-//! a documented limitation). Shaping runs per title at the pinned 12 px
+//! a documented limitation). Shaping runs per title at the session's
+//! resolved `font_size` ([`TEXT_PX`] is the default, 12 logical px)
 //! through cosmic-text's fallback chains (`Shaping::Advanced`), so
 //! CJK, emoji, and accented runs resolve their real glyphs — folding is
 //! the bitmap floor's behavior, not this backend's.
@@ -26,10 +27,11 @@ use cosmic_text::{
     SwashCache, SwashContent, SwashImage, Weight, Wrap,
 };
 
-/// The one face size this backend paints, logical px — the 11-07 12-px
-/// pin, unchanged by `typography` (the COSMIC store carries no size to
-/// follow; family-only is the honest reading). The bitmap side pins the
-/// same height through `ui::FONT_SCALE_NUM/DEN`; the assert keeps the
+/// The default face size this backend paints, logical px — the 11-07
+/// 12-px pin, still the `font_size` key's default. A configured size
+/// arrives per shape call from the session's frozen
+/// [`crate::ui::TextProfile`]; the bitmap side pins the same default
+/// height through `ui::FONT_SCALE_NUM/DEN`, and the assert keeps the
 /// two pins one value.
 pub const TEXT_PX: f32 = 12.0;
 
@@ -235,6 +237,11 @@ pub struct TextSystem {
     swash: SwashCache,
     cache: GlyphCache,
     family: ResolvedFamily,
+    /// The logical size the mask cache is warm for; a size change clears
+    /// it exactly like a family change. `CacheKey` already carries the
+    /// device size, so the clear is about keeping one session's masks,
+    /// not correctness.
+    px: u32,
 }
 
 impl TextSystem {
@@ -306,14 +313,16 @@ impl TextSystem {
         self.cache.get(key)
     }
 
-    /// Shapes `text` at [`TEXT_PX`] × `scale` device px in `query`'s
-    /// family, with fallback chains. Positions are whole device pixels
-    /// relative to a pen at the origin on the baseline; a family change
-    /// clears the mask cache first. An empty or unshapable text yields
-    /// an empty run — the caller's `(untitled)` path already owns that
-    /// case.
-    pub fn shape(&mut self, text: &str, query: FontQuery<'_>, scale: u32) -> GlyphRun {
-        self.shape_with_clusters(text, query, scale).0
+    /// Shapes `text` at `px` logical px × `scale` device px in `query`'s
+    /// family, with fallback chains. `px` is the session's resolved
+    /// `font_size` (the daemon passes the frozen [`crate::ui::TextProfile`]
+    /// cell; [`TEXT_PX`] is the default profile's value). Positions are
+    /// whole device pixels relative to a pen at the origin on the
+    /// baseline; a family or size change clears the mask cache first. An
+    /// empty or unshapable text yields an empty run — the caller's
+    /// `(untitled)` path already owns that case.
+    pub fn shape(&mut self, text: &str, query: FontQuery<'_>, scale: u32, px: f32) -> GlyphRun {
+        self.shape_with_clusters(text, query, scale, px).0
     }
 
     /// [`shape`] plus the per-cluster facts truncation needs: each
@@ -326,14 +335,17 @@ impl TextSystem {
         text: &str,
         query: FontQuery<'_>,
         scale: u32,
+        px: f32,
     ) -> (GlyphRun, Vec<Cluster>) {
         let resolved = match query {
             FontQuery::SansSerif => ResolvedFamily::SansSerif,
             FontQuery::Named(name) => ResolvedFamily::Named(name.to_owned()),
         };
-        if self.family != resolved {
+        let size = px.round() as u32;
+        if self.family != resolved || self.px != size {
             self.cache.clear();
             self.family = resolved;
+            self.px = size;
         }
         if text.is_empty() {
             return (GlyphRun::default(), Vec::new());
@@ -343,11 +355,11 @@ impl TextSystem {
             FontQuery::Named(name) => Family::Name(name),
         };
         let attrs = Attrs::new().family(family).weight(Weight::NORMAL);
-        // One line, no wrap, at the pinned logical size: `physical`
+        // One line, no wrap, at the requested logical size: `physical`
         // scales to `scale` device px per glyph below. The line height
         // never matters — titles are single-line and the card's math
         // reads ascent/descent, not the line box.
-        let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(TEXT_PX, TEXT_PX));
+        let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(px, px));
         buffer.set_wrap(Wrap::None);
         buffer.set_text(text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut self.fonts, false);
@@ -397,7 +409,7 @@ impl TextSystem {
             .get_mut(line_i)
             .map(|line| {
                 line.shape(&mut self.fonts, 8).layout(
-                    TEXT_PX,
+                    px,
                     None,
                     Wrap::None,
                     None,
@@ -436,12 +448,13 @@ impl TextSystem {
         query: FontQuery<'_>,
         scale: u32,
         budget_px: f32,
+        px: f32,
     ) -> (String, GlyphRun) {
-        let (run, clusters) = self.shape_with_clusters(title, query, scale);
+        let (run, clusters) = self.shape_with_clusters(title, query, scale, px);
         if run.width_px <= budget_px || clusters.is_empty() {
             return (title.to_owned(), run);
         }
-        let ellipsis_px = self.shape_with_clusters("…", query, scale).0.width_px;
+        let ellipsis_px = self.shape_with_clusters("…", query, scale, px).0.width_px;
         let advances: Vec<f32> = clusters.iter().map(|c| c.advance_px).collect();
         let kept = truncate_to_budget(&advances, ellipsis_px, budget_px);
         // The cut at zero clusters is the degenerate budget (an
@@ -453,7 +466,7 @@ impl TextSystem {
             clusters[kept - 1].end_byte
         };
         let display = format!("{}…", &title[..cut]);
-        let run = self.shape_with_clusters(&display, query, scale).0;
+        let run = self.shape_with_clusters(&display, query, scale, px).0;
         (display, run)
     }
 
@@ -464,6 +477,7 @@ impl TextSystem {
             swash: SwashCache::new(),
             cache: GlyphCache::default(),
             family: ResolvedFamily::SansSerif,
+            px: TEXT_PX as u32,
         }
     }
 }
@@ -547,8 +561,8 @@ mod tests {
         let mut second = TextSystem::from_dir(&fixture_dir());
         assert!(first.face_count() >= 1, "the fixture db holds its face");
 
-        let run_a = first.shape("Airlock", FontQuery::SansSerif, 2);
-        let run_b = second.shape("Airlock", FontQuery::SansSerif, 2);
+        let run_a = first.shape("Airlock", FontQuery::SansSerif, 2, TEXT_PX);
+        let run_b = second.shape("Airlock", FontQuery::SansSerif, 2, TEXT_PX);
 
         assert!(
             !run_a.glyphs.is_empty(),
@@ -563,12 +577,36 @@ mod tests {
     }
 
     #[test]
+    fn a_larger_font_size_shapes_proportionally_larger_ink() {
+        // `font_size` reaches shaping as the logical size; the same face
+        // at 24 px must carry more advance and ascent than at 12. The
+        // card's geometry reads these metrics, so the test pins the
+        // seam rather than a pixel value.
+        let mut system = TextSystem::from_dir(&fixture_dir());
+        let small = system.shape("Airlock", FontQuery::SansSerif, 2, TEXT_PX);
+        let large = system.shape(
+            "Airlock",
+            FontQuery::SansSerif,
+            2,
+            crate::ui::FONT_SIZE_MAX as f32,
+        );
+        assert!(
+            large.width_px > small.width_px,
+            "the larger size advances further"
+        );
+        assert!(
+            large.ascent_px > small.ascent_px,
+            "the larger size rises higher"
+        );
+    }
+
+    #[test]
     fn empty_directory_is_the_zero_fonts_floor_marker() {
         let mut system = TextSystem::from_dir(Path::new("/nonexistent-airlock-test-fonts"));
         assert_eq!(system.face_count(), 0);
         // Shaping against an empty db still answers: an empty run, not
         // a panic — switching never breaks on font I/O.
-        let run = system.shape("", FontQuery::SansSerif, 2);
+        let run = system.shape("", FontQuery::SansSerif, 2, TEXT_PX);
         assert!(run.glyphs.is_empty());
     }
 
@@ -695,7 +733,7 @@ mod tests {
     #[test]
     fn centering_lands_whole_px_inside_every_rhythm_row() {
         let mut system = TextSystem::from_dir(&fixture_dir());
-        let run = system.shape("Airlock", FontQuery::SansSerif, 2);
+        let run = system.shape("Airlock", FontQuery::SansSerif, 2, TEXT_PX);
         assert!(run.ascent_px > 0.0 && run.descent_px > 0.0);
         // The geometry ladders' three row heights: 40/48/56.
         for row_h in [40u32, 48, 56] {
@@ -727,12 +765,13 @@ mod tests {
         let title = "W".repeat(64);
         // Precondition: the full title genuinely overflows the band at
         // the pinned 12 px (W is one of Open Sans's widest advances).
-        let full = system.shape(&title, FontQuery::SansSerif, 2);
+        let full = system.shape(&title, FontQuery::SansSerif, 2, TEXT_PX);
         assert!(
             full.width_px > band_px(),
             "the fixture's 64 Ws overflow the band"
         );
-        let (display, run) = system.shape_budgeted(&title, FontQuery::SansSerif, 2, band_px());
+        let (display, run) =
+            system.shape_budgeted(&title, FontQuery::SansSerif, 2, band_px(), TEXT_PX);
         assert!(
             display.ends_with('…'),
             "the truncation marker is the font's own ellipsis character"
@@ -749,7 +788,8 @@ mod tests {
     #[test]
     fn budget_passes_short_titles_through_untouched() {
         let mut system = TextSystem::from_dir(&fixture_dir());
-        let (display, run) = system.shape_budgeted("Airlock", FontQuery::SansSerif, 2, band_px());
+        let (display, run) =
+            system.shape_budgeted("Airlock", FontQuery::SansSerif, 2, band_px(), TEXT_PX);
         assert_eq!(display, "Airlock");
         assert!(run.width_px <= band_px());
     }
@@ -778,7 +818,7 @@ mod tests {
     #[test]
     fn mask_rasterizes_real_coverage_from_the_fixture_face() {
         let mut system = TextSystem::from_dir(&fixture_dir());
-        let run = system.shape("A", FontQuery::SansSerif, 2);
+        let run = system.shape("A", FontQuery::SansSerif, 2, TEXT_PX);
         let key = run.glyphs[0].cache_key;
         let mask = system
             .mask(&key)

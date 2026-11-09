@@ -51,6 +51,7 @@
 
 theme = "auto"         # match the desktop's dark/light mode (the default)
 # font = "Fira Sans"   # absent (the default): the COSMIC interface font
+# font_size = 12       # card text size, logical px: 8–24 (the default: 12)
 rows = 8               # windows the card keeps in view (the default)
 layout = "vertical"    # the tall card; "horizontal" lays it out as tiles
 # columns = "auto"     # the band's tile budget; or a whole number 3–12
@@ -148,10 +149,13 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       eight windows mid-list, nine at either end, and a list of ten or
       fewer shows every window with no <code>…</code> at all.</p>
       <p>The card grows by two rows once the list outgrows <code>rows</code>
-      (the <code>…</code> slots). At the default that is 584 logical pixels
-      tall, which fits any 100%-scaled display and a 1440p screen at 200%.
-      A 1080p panel at 200% (a 540-logical screen) is the exception:
-      <code>rows = 7</code> keeps the card inside that height.</p>
+      (the <code>…</code> slots). At the default text size that is 584
+      logical pixels tall, which fits any 100%-scaled display and a 1440p
+      screen at 200%. A 1080p panel at 200% (a 540-logical screen) is the
+      exception: <code>rows = 7</code> keeps the card inside that height.
+      A larger <a href="#font-size"><code>font_size</code></a> grows each
+      row, so fewer windows fit and the budget clamps (see
+      <a href="#follows">What follows the desktop</a>).</p>
       <p>A value outside 3–10, or a non-integer, is named in a diagnostic
       and the last-good settings apply.</p>
     </section>
@@ -160,8 +164,9 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
     <section id="font">
       <h2>Font</h2>
       <p><code>font</code> picks the typeface the card's titles paint in:
-      a font family name, exactly as your font picker shows it. The card
-      fixes size at 12 px and weight at Regular; you choose the family.</p>
+      a font family name, exactly as your font picker shows it. Weight
+      stays Regular, and size stays the card's own 12 px unless
+      <a href="#font-size"><code>font_size</code></a> moves it.</p>
       <ul>
         <li><strong>Absent key (the default)</strong>: follow the COSMIC
         interface font, the family your desktop already paints its UI in.
@@ -179,6 +184,31 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       fallback chains, with grayscale anti-aliasing and proportional widths.
       Fonts are scanned once at daemon startup, so a font installed while
       the daemon runs is picked up at the next daemon restart.</p>
+    </section>
+
+    <section id="font-size">
+      <h2>Font size</h2>
+      <p><code>font_size</code> sets the card's text size in logical
+      pixels: a whole number from 8 to 24, default 12. It sizes every
+      piece of text the card paints: titles, the query strip, the
+      Ctrl+N digits, and the horizontal band's caption and tile badges.
+      The 8×8 bitmap floor scales with it too, so a system with no
+      loadable fonts still obeys the setting.</p>
+      <p>The geometry that depends on text follows. A taller line grows
+      each row and the query strip, and the horizontal band's caption
+      row; the band card's height grows with its caption. The title band
+      keeps its roughly 600-px physical budget by fitting fewer
+      characters rather than stretching: a 24-px card shows about half
+      the columns of a 12-px one, and a long title elides sooner. Icons,
+      paddings, gaps, and weight stay fixed: this is a text-size knob,
+      not a UI zoom. Because the rows grow, a larger size fits fewer
+      windows in the 720-px panel and the <code>rows</code> budget clamps
+      exactly as it does at Spacious density.</p>
+      <p><code>font_size</code> is read when a gesture starts and frozen
+      for the session, like <code>font</code>: an edit applies on the
+      next press, never to the open card. A value outside 8–24, or a
+      non-integer, is named in a diagnostic and the last-good settings
+      apply.</p>
     </section>
 
     <section id="follows">
@@ -200,7 +230,8 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
         <li><strong>The typeface follows the desktop's interface font</strong>
         (the <code>font</code> key's default; see
         <a href="#font">Font</a>): the family COSMIC Settings' own font
-        picker writes, family-only, at the card's pinned 12 px. An
+        picker writes, family-only, at the default 12 px
+        (<code>font_size</code> moves the size). An
         unreadable store keeps Open Sans and logs one diagnostic.</li>
       </ul>
       <p>The two geometry values are read when a gesture starts, like every
@@ -211,8 +242,11 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       <code>rows</code> ceiling could build would not, so the budget clamps
       to what fits: <code>rows = 9</code> or <code>10</code> at Spacious
       opens with eight windows in view and one diagnostic naming the
-      density, the setting, and the clamp. The setting keeps its value:
-      back at Comfortable the full budget returns.</p>
+      density, the text size, the setting, and the clamp. The setting
+      keeps its value: back at Comfortable the full budget returns. A
+      larger <code>font_size</code> grows the rows and can bind the same
+      clamp at any density; at 24 px even Spacious's default eight clamps
+      to six.</p>
     </section>
 
     <section id="layout">
@@ -385,6 +419,10 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
         last-good settings apply. A family that is not installed is
         <em>not</em> a config error: the daemon logs the fallback to the
         interface font.</li>
+        <li><strong>A bad <code>font_size</code> value</strong>
+        (<code>font_size = 12.5</code>, <code>font_size = "12"</code>, or
+        outside 8–24) is named ("must be a whole number" / "must be
+        between 8 and 24"); the last-good settings apply.</li>
         <li><strong>A bad <code>layout</code> value</strong>
         (<code>layout = 1</code>, <code>layout = "side"</code>) is named;
         the last-good settings apply.</li>
@@ -459,6 +497,14 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
         <kbd>Alt</kbd>+<kbd>Tab</kbd> paints it, with no restart. Edit it
         under held <kbd>Alt</kbd>: the open card does not repaint until the
         next press</li>
+        <li>Set <code>font_size = 16</code> (or 8, or 24); the next
+        <kbd>Alt</kbd>+<kbd>Tab</kbd> paints larger or smaller text, the
+        rows and the query strip grow, the title band fits fewer columns
+        instead of stretching wider, and a long title elides sooner. At
+        24 px on a Spacious desktop the default <code>rows = 8</code>
+        clamps to six and the daemon log names the clamp</li>
+        <li>Set <code>font_size = 30</code>; the daemon log names the
+        range and the last-good settings apply</li>
         <li>Unset <code>font</code>: the next <kbd>Alt</kbd>+<kbd>Tab</kbd>
         paints the desktop's interface font; flip COSMIC Settings' own
         font and the next press follows</li>

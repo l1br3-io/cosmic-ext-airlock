@@ -5,8 +5,8 @@ can opt individual workspaces out: there the switcher lists every
 non-minimized window across **all** workspaces, most-recently-used first,
 while workspaces without an entry stay isolated exactly as before. The
 same file also picks the switcher's card color — light, dark, or
-following the desktop — its typeface, and how many windows the card
-keeps in view.
+following the desktop — its typeface and text size, and how many windows
+the card keeps in view.
 
 Airlock reads the file; you edit it. `airlock install` drops a starter
 copy at the path below — every setting commented out, so it means the
@@ -34,6 +34,7 @@ configure.
 
 theme = "auto"         # match the desktop's dark/light mode (the default)
 # font = "Fira Sans"   # absent (the default): follow the COSMIC interface font
+# font_size = 12       # card text size, logical px: 8–24 (the default: 12)
 rows = 8               # windows the card keeps in view (the default)
 layout = "vertical"    # the tall card; "horizontal" lays it out as a band of tiles
 # columns = "auto"     # the band's tile budget; or a whole number 3–12 (the default: "auto")
@@ -64,10 +65,11 @@ flag:
 An entry needs `name` or `index` — never both.
 
 The top-level keys: `theme` picks the card (see
-[Theme](#theme)); `font` picks its typeface (see [Font](#font));
-`rows` picks how many windows it keeps in view (see [Rows](#rows));
-`layout` picks the card's axis and `columns` the horizontal band's
-width (see [Layout](#layout)); `grouping` picks the list's shape (see
+[Theme](#theme)); `font` picks its typeface and `font_size` its text
+size (see [Font](#font) and [Font size](#font-size)); `rows` picks how
+many windows it keeps in view (see [Rows](#rows)); `layout` picks the
+card's axis and `columns` the horizontal band's width (see
+[Layout](#layout)); `grouping` picks the list's shape (see
 [Grouping](#grouping)).
 
 ## Referencing workspaces
@@ -124,10 +126,12 @@ end, and a list of ten or fewer shows every window with no `…` at
 all.
 
 The card grows by two rows once the list outgrows `rows` (the `…`
-slots). At the default that is 584 logical pixels tall — fine on any
-100%-scaled display and on a 1440p screen at 200%; a 1080p panel at
-200% (a 540-logical screen) is the one configuration that wants less —
-`rows = 7` keeps the card inside that height.
+slots). At the default text size that is 584 logical pixels tall —
+fine on any 100%-scaled display and on a 1440p screen at 200%; a 1080p
+panel at 200% (a 540-logical screen) is the one configuration that
+wants less — `rows = 7` keeps the card inside that height. A larger
+[`font_size`](#font-size) grows each row, so fewer windows fit and the
+budget clamps (see [Follows](#follows)).
 
 Like every setting, `rows` is read when a gesture starts. An edit
 mid-gesture changes nothing until the next press; a session keeps the
@@ -139,8 +143,9 @@ see [Follows](#follows).
 ## Font
 
 `font` picks the typeface the card's titles paint in — a font family
-name, exactly as your font picker shows it. Family only: size stays
-the card's own 12 px and weight stays Regular, whatever is set.
+name, exactly as your font picker shows it. Family only: weight stays
+Regular, and size stays the card's own 12 px unless
+[`font_size`](#font-size) moves it.
 
 - **Absent key (the default)** — follow the COSMIC interface font: the
   family your desktop already paints its UI in. Open Sans on a default
@@ -170,6 +175,29 @@ Like every setting, `font` is read when a gesture starts. An edit
 mid-gesture changes nothing until the next press — a session keeps the
 face it was opened with until Alt is released.
 
+## Font size
+
+`font_size` sets the card's text size in logical pixels — a whole
+number from 8 to 24, default 12. It sizes every piece of text the card
+paints: titles, the query strip, the Ctrl+N digits, and the horizontal
+band's caption and tile badges. The 8×8 bitmap floor scales with it
+too, so a system with no loadable fonts still obeys the setting.
+
+The geometry that depends on text follows. A taller line grows each
+row and the query strip, and the horizontal band's caption row; the
+band card's height grows with its caption. The title band keeps its
+roughly 600-px physical budget by fitting fewer characters rather than
+stretching: a 24-px card shows about half the columns of a 12-px one,
+and a long title elides sooner. Icons, paddings, gaps, and weight stay
+fixed — this is a text-size knob, not a UI zoom. Because the rows grow,
+a larger size fits fewer windows in the 720-px panel and the `rows`
+budget clamps exactly as it does at Spacious density.
+
+`font_size` is read when a gesture starts and frozen for the session,
+like `font`: an edit applies on the next press, never to the open card.
+A value outside 8–24, or a non-integer, is named in a diagnostic and
+the last-good settings apply.
+
 ## Follows
 
 Three of the card's values follow the COSMIC desktop itself. Two have
@@ -187,9 +215,9 @@ override it.
   density. The card's width never changes with density.
 - **The typeface follows the desktop's interface font** (the `font`
   key's default — see [Font](#font)): the family COSMIC Settings'
-  own font picker writes, family-only, at the card's pinned 12 px. An
-  unreadable store keeps Open Sans — the desktop's own default — with
-  one diagnostic in the daemon log.
+  own font picker writes, family-only, at the card's default 12 px
+  (`font_size` moves the size). An unreadable store keeps Open Sans —
+  the desktop's own default — with one diagnostic in the daemon log.
 
 Both are read when a gesture starts, like every setting: a flip
 mid-gesture changes nothing until the next press. An unreadable or
@@ -201,8 +229,11 @@ with one diagnostic in the daemon log; switching is never affected.
 Spacious the tallest card the `rows` ceiling could build — ten windows
 plus the two `…` rows — would not, so the budget clamps to what fits:
 `rows = 9` or `10` at Spacious opens with eight windows in view and
-one diagnostic naming the density, the setting, and the clamp. The
-setting keeps its value — back at Comfortable the full budget returns.
+one diagnostic naming the density, the text size, the setting, and the
+clamp. The setting keeps its value — back at Comfortable the full
+budget returns. A larger `font_size` grows the rows and can bind the
+same clamp at any density; at 24 px even Spacious's default eight
+clamps to six.
 
 ## Layout
 
@@ -393,6 +424,10 @@ A bad config never breaks switching:
   string)") and the last-good settings apply, like any malformed edit.
   A family name that simply is not installed is *not* a config error:
   the daemon logs that it fell back to the interface font.
+- **A bad `font_size` value** — a wrong type (`font_size = 12.5`,
+  `font_size = "12"`) or a number outside 8–24 — is named in a
+  diagnostic ("must be a whole number" / "must be between 8 and 24")
+  and the last-good settings apply, like any malformed edit.
 - **A bad `layout` value** — a wrong type (`layout = 1`) or an unknown
   string (`layout = "side"`) — is named in a diagnostic ("`layout`
   must be a string" / "`layout` must be \"vertical\" or
@@ -460,6 +495,13 @@ A bad config never breaks switching:
 - Set `font = "<an installed family>"`; the next Alt+Tab paints it —
   no restart. Edit it under held Alt: the open card does not repaint
   until the next press
+- Set `font_size = 16` (or 8, or 24); the next Alt+Tab paints larger or
+  smaller text, the rows and the query strip grow, the title band fits
+  fewer columns instead of stretching wider, and a long title elides
+  sooner. At 24 px on a Spacious desktop the default `rows = 8` clamps
+  to six and the daemon log names the clamp
+- Set `font_size = 30`; the daemon log names the range and the
+  last-good settings apply
 - Unset `font`: the next Alt+Tab paints the desktop's interface font —
   flip COSMIC Settings' own font and the next press follows
 - Open a window with a CJK or emoji title: the glyphs render for real

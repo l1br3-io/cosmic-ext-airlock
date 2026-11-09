@@ -6,6 +6,7 @@
 
 # theme = "auto"      # card color: "auto" (match the desktop), "dark", "light"
 # rows = 8            # windows the card keeps in view on a long list: 3–10
+# font_size = 12      # card text size, logical px: 8–24 (the default: 12)
 
 # grouping = false    # true: group the list by app — a two-level tree,
 #                     # collapsed by default

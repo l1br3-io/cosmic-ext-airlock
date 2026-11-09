@@ -83,9 +83,10 @@ pipeline the COSMIC launcher uses) beside its title.
   corner that closes on click. A group entry
   closes its app's front window — every row closes what it activates
 - Titles render in the desktop's own interface font — real glyphs,
-  real accents, fallback chains for CJK and emoji — at the card's
-  pinned 12 px; a `font` key overrides the family (see
-  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#font)).
+  real accents, fallback chains for CJK and emoji — at 12 logical px by
+  default; a `font` key overrides the family and `font_size` (8–24)
+  the size (see
+  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#font-size)).
   Before 2026-11-07 every title painted in a built-in ASCII pixel font
   that folded punctuation and accents and showed `?` for anything
   without an ASCII form; that fold survives only as the zero-fonts

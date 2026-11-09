@@ -198,8 +198,9 @@ binary.
       exactly as before the follow — no visible change for the default
       desktop
 - [ ] Spacious + `rows = 10`: the daemon log names the clamp (density,
-      setting, clamped value — eight), the card fits the panel, and the
-      setting keeps its value after the density drops back
+      text size, setting, clamped value — eight), the card fits the
+      panel, and the setting keeps its value after the density drops
+      back
 - [ ] Move the COSMIC stores aside (rename `~/.config/cosmic`); the
       next Alt+Tab paints the factory-default geometry with one
       aggregated diagnostic per follow, and switching is unaffected
@@ -229,6 +230,28 @@ binary.
 - [ ] Regression: Tab / arrows / Enter / Escape / pointer input / Alt
       release behave exactly as before; no added latency on open
       (shaping and masks are cached; the scan is startup-only)
+
+### Font size
+
+- [ ] No `font_size` key: the card is the 12-px default, byte-for-byte
+      the same as before the key (the byte-identity regression)
+- [ ] `font_size = 8`, `16`, and `24` at 1× and 2×, both themes, over a
+      light and a dark wallpaper: titles, query strip, hint digits, and
+      the band's caption and badges all scale; rows grow above 12 px;
+      hints and the parent caret never collide with titles
+- [ ] At 24 px a max-width title elides sooner than at 12 px and the
+      card does not widen past its ~600-px title band
+- [ ] At 24 px the parent pips keep their clearing under the title in
+      the vertical grouped card; the band's pips and badges stay clear
+      of the icon and caption
+- [ ] At 24 px + Spacious, the default `rows = 8` clamps (to six): the
+      daemon log names density, text size, setting, and clamp; the card
+      fits the 720-px panel and the setting keeps its value
+- [ ] An edit mid-gesture never repaints the open card; the next press
+      applies the new size
+- [ ] `font_size = 30` (or a non-integer) fails the file with the named
+      diagnostic and last-good holds
+- [ ] No loadable fonts: the bitmap face scales with `font_size` too
 
 ### Theme (card color)
 

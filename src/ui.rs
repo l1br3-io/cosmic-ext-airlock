@@ -60,6 +60,23 @@ pub const TEXT_W: u32 = GLYPH_W * FONT_SCALE_NUM / FONT_SCALE_DEN;
 /// Title text height in logical pixels.
 pub const TEXT_H: u32 = GLYPH_H * FONT_SCALE_NUM / FONT_SCALE_DEN;
 
+/// The card's text size in logical pixels when the config sets no
+/// `font_size` — the 12-px pin the card has carried since 2026-11-07.
+/// A configured size resolves once at open into a [`TextProfile`], which
+/// every text-derived metric reads from.
+pub const DEFAULT_FONT_SIZE: u32 = TEXT_W;
+
+/// Smallest `font_size` the setting accepts: 8 px is the bitmap floor's
+/// own 1× cell. Below it the 8×8 glyphs would need to downscale, and the
+/// card's 8-px disclosure caret no longer has a whole-cell home.
+pub const FONT_SIZE_MIN: u32 = 8;
+
+/// Largest `font_size` the setting accepts. 24 px still clears the
+/// icon-driven row (the Compact row is 40 high), and the title band
+/// narrows its column budget instead of growing past its ~600-px cap
+/// (see [`TextProfile::title_cols`]).
+pub const FONT_SIZE_MAX: u32 = 24;
+
 /// App-icon cell, square, in logical pixels. 32 is the converged switcher
 /// row-icon size — cosmic-launcher's alt-tab row uses exactly this
 /// (research record §2.6); GNOME's app badge is 48 inside much larger
@@ -75,7 +92,8 @@ pub const ICON_GAP: u32 = 12;
 /// rhythm; research record §2.6). The selection band fills this whole
 /// row rect, so the fill holds icon and text as one object.
 /// Derived default (Round + Standard) since 2026-11-07: [`rhythm`]
-/// re-derives it per open — 40/48/56 across the densities.
+/// re-derives it per open — 40/48/56 across the densities at the default
+/// text size; [`Rhythm::with_text`] grows it for a larger `font_size`.
 pub const ROW_H: u32 = ICON + 2 * ROW_PAD_Y;
 
 /// Vertical padding inside one row. Derived default (Standard) since
@@ -129,7 +147,11 @@ pub const RADIUS: u32 = 12;
 /// Hairline card border thickness in logical pixels.
 pub const BORDER: u32 = 1;
 
-/// Maximum title columns shown before elision. 48 columns of 12-px text
+/// Maximum title columns shown before elision at the default 12-px
+/// cell — 48 columns. A session's [`TextProfile`] derives its own column
+/// count from [`TITLE_BAND_PX`], so a larger `font_size` fits fewer
+/// columns in the same physical band. The rest of this note describes
+/// the default's arithmetic: 48 columns
 /// keeps the title territory at 660 logical px — within reach of
 /// cosmic-launcher's 596 fixed switcher width and the cross-platform
 /// consensus cap of ~600 (research record §2.6, §2.10); the full card,
@@ -140,6 +162,13 @@ pub const BORDER: u32 = 1;
 /// of the cap rather than under it (rev 2's recorded decision: the card
 /// widens by the band, the title budget does not fund it).
 pub const MAX_COLS: u32 = 48;
+
+/// The title band's width budget in logical pixels — [`MAX_COLS`] at the
+/// default 12-px cell. A [`TextProfile`] divides this budget by its own
+/// cell to derive its column count, so a larger `font_size` fits fewer
+/// characters in the same band instead of widening the card past the
+/// ~600-px switcher consensus.
+pub const TITLE_BAND_PX: u32 = MAX_COLS * TEXT_W;
 
 /// Gap between the title band's right edge and the hint band, logical
 /// px. The hint's territory is its own, never the title's — a
@@ -189,7 +218,9 @@ pub const TREE_INDENT: u32 = 16;
 /// numeric count chip and then from the inline pips: the pips moved
 /// below the app name, so they take no title width, and only the caret
 /// remains on the title line. Two columns, down from five, give parent
-/// titles back three columns.
+/// titles back three columns. This is the default profile's value;
+/// [`TextProfile::chevron_cols`] derives the same reservation from the
+/// session's cell size.
 pub const CHEVRON_COLS: u32 = 2;
 
 /// Clearing between a parent's title and its disclosure caret, logical
@@ -310,21 +341,35 @@ pub const PIP_SIDE: u32 = 6;
 /// tile's line. Re-frozen beside [`PIP_SIDE`] on the G4 sheet,
 /// 2026-11-09.
 pub const PIP_STEP: u32 = 10;
-/// The tile's content cell: badge row, icon, pip territory — no title
-/// line. The selection fill's extent; the pip row is structural on
-/// every tile (pips paint only on multi-window app tiles), so the
-/// cell never varies per tile.
-pub const TILE_CELL_H: u32 = TEXT_H + TILE_PARENT_GAP + TILE_ICON + PIP_GAP + PIP_SIDE;
+/// Clearing between a parent's title line and its count pips, logical
+/// px — the gap the default row's centered line already leaves. The row
+/// height is derived from it (see [`Rhythm::with_text`]) so the pips
+/// never share the text line at any `font_size`.
+pub const PIP_TEXT_CLEAR: u32 = 4;
+/// The tile's content cell at one text size: badge row, icon, pip
+/// territory — no title line. The selection fill's extent; the pip row
+/// is structural on every tile (pips paint only on multi-window app
+/// tiles), so the cell never varies per tile.
+pub const fn tile_cell_h_at(cell: u32) -> u32 {
+    cell + TILE_PARENT_GAP + TILE_ICON + PIP_GAP + PIP_SIDE
+}
+/// The tile cell at the default text size (the constants block).
+pub const TILE_CELL_H: u32 = tile_cell_h_at(TEXT_H);
 /// Clearing between the caption line and the strip's badge row, two
 /// 8-grid steps (glance-tiles G1, 2026-11-09).
 pub const CAPTION_GAP: u32 = 16;
-/// The horizontal card's height: the caption line, its gap, the tile
-/// cell, and the card padding — 168 logical px exactly, the working
-/// target the G4 sheet freezes (glance-tiles G1, 2026-11-09): the
-/// caption line (12) + its gap (16) take the per-tile title lines'
-/// place (12 + 12) and the padding pays the difference (40 → 32).
+/// The horizontal card's height at one text size: the caption line, its
+/// gap, the tile cell, and the card padding — 168 logical px at the
+/// default 12-px cell, the working target the G4 sheet freezes
+/// (glance-tiles G1, 2026-11-09): the caption line (12) + its gap (16)
+/// take the per-tile title lines' place (12 + 12) and the padding pays
+/// the difference (40 → 32).
+pub const fn band_card_height_at(cell: u32) -> u32 {
+    2 * TILE_PAD_Y + cell + CAPTION_GAP + tile_cell_h_at(cell)
+}
+/// [`band_card_height_at`] at the default text size.
 pub const fn band_card_height() -> u32 {
-    2 * TILE_PAD_Y + TEXT_H + CAPTION_GAP + TILE_CELL_H
+    band_card_height_at(TEXT_H)
 }
 /// The band card's width: `slots` tiles plus gaps inside the padding —
 /// the `…` tile lives inside these slots, so the card never widens for
@@ -349,19 +394,27 @@ pub const fn band_width(slots: u32) -> u32 {
 pub const CAPTION_FLOOR_W: u32 = 512;
 /// Inset of the badge from a tile's side.
 pub const TILE_TEXT_PAD: u32 = 8;
-/// The strip's top edge inside the card: the top padding, the reserved
-/// caption line, and the caption-to-strip gap — the y0 every tile
-/// paints from and the line `cell_at`'s y footprint starts at
-/// (glance-tiles G2, 2026-11-09). The reserved line exists on every
-/// frame whether or not the caption has text.
-pub const fn band_strip_top() -> u32 {
-    TILE_PAD_Y + TEXT_H + CAPTION_GAP
+/// The strip's top edge inside the card at one text size: the top
+/// padding, the reserved caption line, and the caption-to-strip gap —
+/// the y0 every tile paints from and the line `cell_at`'s y footprint
+/// starts at (glance-tiles G2, 2026-11-09). The reserved line exists on
+/// every frame whether or not the caption has text.
+pub const fn band_strip_top_at(cell: u32) -> u32 {
+    TILE_PAD_Y + cell + CAPTION_GAP
 }
-/// The icon's top edge inside a tile, logical px: the strip top, the
-/// badge row, and its clearing — the line `render_band` blits from and
-/// the vertical anchor of the tile's × badge.
+/// [`band_strip_top_at`] at the default text size.
+pub const fn band_strip_top() -> u32 {
+    band_strip_top_at(TEXT_H)
+}
+/// The icon's top edge inside a tile at one text size, logical px: the
+/// strip top, the badge row, and its clearing — the line `render_band`
+/// blits from and the vertical anchor of the tile's × badge.
+pub const fn band_icon_top_at(cell: u32) -> u32 {
+    band_strip_top_at(cell) + cell + TILE_PARENT_GAP
+}
+/// [`band_icon_top_at`] at the default text size.
 pub const fn band_icon_top() -> u32 {
-    band_strip_top() + TEXT_H + TILE_PARENT_GAP
+    band_icon_top_at(TEXT_H)
 }
 /// `auto`'s share of the invoking output's logical width — the spec's
 /// ~66 % working range, two thirds exactly; frozen on the CL4 sheet
@@ -383,13 +436,24 @@ pub const CARD_FIT_PX: u32 = 720;
 /// The effective `rows` budget at one density: the largest budget at
 /// or under `rows` (never past [`ROWS_MAX`]) whose worst-case card —
 /// budget + [`ROWS_SLACK`] slots — fits [`CARD_FIT_PX`]. Spacious is
-/// the binding density (68-px slot pitch: 8 + slack = 716 fits, 9 +
-/// slack = 784 does not); Standard and Compact never clamp. The
-/// setting keeps its value — this is the fit, and the daemon's one
-/// diagnostic names density, setting, and clamp when it binds.
+/// the binding density at the default text size (68-px slot pitch: 8 +
+/// slack = 716 fits, 9 + slack = 784 does not); Standard and Compact
+/// never clamp there. A larger `font_size` grows the rows, so the clamp
+/// follows the session's resolved rhythm ([`effective_rows_rhythm`]).
+/// The setting keeps its value — this is the fit, and the daemon's one
+/// diagnostic names density, text size, setting, and clamp when it
+/// binds.
 pub const fn effective_rows(density: Density, rows: usize) -> usize {
+    effective_rows_rhythm(rhythm(density), rows)
+}
+
+/// [`effective_rows`] at a session's resolved rhythm — the density's
+/// rows grown for the `font_size` (see [`Rhythm::with_text`]). The
+/// accepted size range guarantees at least [`ROWS_MIN`] windows still
+/// fit at every density (the test pins the worst case).
+pub const fn effective_rows_rhythm(rhythm: Rhythm, rows: usize) -> usize {
     let mut budget = if rows > ROWS_MAX { ROWS_MAX } else { rows };
-    while card_height_rhythm(rhythm(density), (budget + ROWS_SLACK) as u32) > CARD_FIT_PX {
+    while budget > 0 && card_height_rhythm(rhythm, (budget + ROWS_SLACK) as u32) > CARD_FIT_PX {
         budget -= 1;
     }
     budget
@@ -422,9 +486,10 @@ pub const fn card_height_rhythm(rhythm: Rhythm, slots: u32) -> u32 {
 
 /// Row rhythm per desktop density — COSMIC's own spacing ratios
 /// (compact ≈ ×2/3, spacious ≈ ×4/3, store record §6) on Airlock's
-/// 8-grid anchors. [`Rhythm::row_h`] stays icon-driven (ICON + 2 ×
-/// `row_pad_y`); `PAD_X` and the band inset have no density analogue
-/// and stay pinned. Compact's 4-px steps are the one deliberate
+/// 8-grid anchors. At the default text size [`Rhythm::row_h`] is
+/// icon-driven (ICON + 2 × `row_pad_y`); [`Rhythm::with_text`] grows it
+/// for a larger `font_size`. `PAD_X` and the band inset have no density
+/// analogue and stay pinned. Compact's 4-px steps are the one deliberate
 /// half-grid exception (OQ 2, ratified): `row_pad_y`/`row_gap` only —
 /// COSMIC's own `space_xxs` compact step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -435,7 +500,9 @@ pub struct Rhythm {
     pub row_gap: u32,
     /// Vertical padding inside the card.
     pub pad_y: u32,
-    /// Row height: the icon cell plus its breathing.
+    /// Row height: the icon cell plus its breathing, or the text line
+    /// plus the parent pips' clearing when a larger `font_size` needs
+    /// the room ([`Rhythm::with_text`]).
     pub row_h: u32,
 }
 
@@ -466,6 +533,24 @@ pub const fn rhythm(density: Density) -> Rhythm {
     }
 }
 
+impl Rhythm {
+    /// The same density rhythm with its row tall enough for one `cell`
+    /// of text and the parent pips' own clearing. The icon, gaps, and
+    /// padding stay fixed; above the default 12-px cell the row grows by
+    /// the line's extra height. At 12 px the formula lands exactly on
+    /// the density rows (40/48/56), so the default card is unchanged.
+    pub const fn with_text(mut self, cell: u32) -> Self {
+        let icon_driven = ICON + 2 * self.row_pad_y;
+        let text_driven = cell + 2 * self.row_pad_y + 2 * (PIP_SIDE + PIP_TEXT_CLEAR);
+        self.row_h = if text_driven > icon_driven {
+            text_driven
+        } else {
+            icon_driven
+        };
+        self
+    }
+}
+
 /// The card's corner radius, derived from the desktop's style choice.
 /// Judged on the sheet 2026-11-07, not transcribed from the store:
 /// Square's 2 keeps a hair of rounding on a hairline-border card where
@@ -490,6 +575,74 @@ pub const fn band_radius(radius: u32) -> u32 {
     }
 }
 
+/// The card's text sizing, resolved once at open from the `font_size`
+/// key and frozen with the palette and shape. `size_px` is the em box in
+/// logical pixels: the System backend shapes at it, the Bitmap floor
+/// scales its 8×8 glyph cells to it. Every text-derived metric — the
+/// title band's column budget, the query strip's line, the band's
+/// caption line, the parent caret's reservation — reads from this
+/// profile, so a larger face fits fewer characters in the same band
+/// instead of widening the card past its design cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextProfile {
+    /// The em box and glyph cell, logical px.
+    pub size_px: u32,
+}
+
+impl TextProfile {
+    /// A profile at `size_px` logical px. The `font_size` parser bounds
+    /// it to [`FONT_SIZE_MIN`]..=[`FONT_SIZE_MAX`].
+    pub const fn new(size_px: u32) -> Self {
+        Self { size_px }
+    }
+
+    /// The square cell one bitmap glyph advances, logical px.
+    pub const fn cell(self) -> u32 {
+        self.size_px
+    }
+
+    /// The cell used by the divisors, floored at 1: the parser can never
+    /// hand a zero over, but the arithmetic must not panic if it does.
+    const fn safe_size(self) -> u32 {
+        if self.size_px == 0 { 1 } else { self.size_px }
+    }
+
+    /// Title columns the band holds at this size: [`TITLE_BAND_PX`]
+    /// divided by the cell, floored (a partial column is no column).
+    /// 48 at the default 12-px cell, 72 at 8, 24 at 24 — the band's
+    /// physical width stays inside its ~600-px cap.
+    pub const fn title_cols(self) -> u32 {
+        TITLE_BAND_PX / self.safe_size()
+    }
+
+    /// The title band's width at this size, logical px.
+    pub const fn title_band(self) -> u32 {
+        self.title_cols() * self.size_px
+    }
+
+    /// Columns a parent row reserves after its title for the disclosure
+    /// caret and its clearing: the caret's ink plus [`CHEVRON_GAP`],
+    /// rounded up to whole cells. Never less than one — a caret is
+    /// always reserved.
+    pub const fn chevron_cols(self) -> u32 {
+        let needed = CHEVRON_GAP + GLYPH_W * CHEVRON_SCALE;
+        let cols = needed.div_ceil(self.safe_size());
+        if cols == 0 { 1 } else { cols }
+    }
+
+    /// Columns a child row's [`TREE_INDENT`] spends from the title
+    /// budget (floored, the shipped rule).
+    pub const fn indent_cols(self) -> u32 {
+        TREE_INDENT / self.safe_size()
+    }
+}
+
+impl Default for TextProfile {
+    fn default() -> Self {
+        Self::new(DEFAULT_FONT_SIZE)
+    }
+}
+
 /// The card's resolved shape: the style's radius and the density's
 /// rhythm, frozen onto a session at open (beside the palette) so a
 /// desktop flip mid-gesture never re-shapes the open card — GE3's
@@ -505,18 +658,32 @@ pub struct StyleProfile {
     pub band_radius: u32,
     /// Row rhythm (Standard's values on the default).
     pub rhythm: Rhythm,
+    /// Text sizing ([`TextProfile::default`] on the default).
+    pub text: TextProfile,
 }
 
 impl StyleProfile {
     /// The profile one open resolves from the followed style and
-    /// density.
+    /// density. Text starts at the default 12-px pin; the daemon
+    /// applies the session's `font_size` through [`Self::with_text`].
     pub const fn resolve(style: Style, density: Density) -> Self {
         let radius = style_radius(style);
         StyleProfile {
             radius,
             band_radius: band_radius(radius),
             rhythm: rhythm(density),
+            text: TextProfile::new(DEFAULT_FONT_SIZE),
         }
+    }
+
+    /// The same profile at a resolved text size — the one seam the
+    /// `font_size` setting crosses. The row rhythm grows with the line
+    /// (icons, gaps, and padding stay put), so the parent's pips keep
+    /// their clearing and the card's height follows the text.
+    pub const fn with_text(mut self, text: TextProfile) -> Self {
+        self.text = text;
+        self.rhythm = self.rhythm.with_text(text.cell());
+        self
     }
 }
 
@@ -887,6 +1054,19 @@ pub fn text_backend<'a>(
 // row; the constants themselves stay pinned to the default profile by
 // the const-equality test.
 const _: () = {
+    // The default text profile is the constants block's own 12-px cell.
+    assert!(DEFAULT_FONT_SIZE == TEXT_W);
+    assert!(FONT_SIZE_MIN > 0 && FONT_SIZE_MIN <= DEFAULT_FONT_SIZE);
+    assert!(DEFAULT_FONT_SIZE <= FONT_SIZE_MAX);
+    // The title band's physical budget is the default's 48 × 12.
+    assert!(TITLE_BAND_PX == MAX_COLS * TEXT_W);
+    // The band's default-profile helpers are the constants block's own
+    // values, so every runtime `_at` call passes the same numbers.
+    assert!(TILE_CELL_H == tile_cell_h_at(TEXT_H));
+    assert!(TILE_CELL_H == TEXT_H + TILE_PARENT_GAP + TILE_ICON + PIP_GAP + PIP_SIDE);
+    assert!(band_card_height() == 168);
+    assert!(band_strip_top() == TILE_PAD_Y + TEXT_H + CAPTION_GAP);
+    assert!(band_icon_top() == band_strip_top() + TEXT_H + TILE_PARENT_GAP);
     assert!(TEXT_H == GLYPH_H * FONT_SCALE_NUM / FONT_SCALE_DEN);
     assert!(TEXT_W == TEXT_H);
     // The glyph block is whole device pixels at the render-scale floor.
@@ -932,6 +1112,9 @@ const _: () = {
         while di < densities.len() {
             let profile = StyleProfile::resolve(styles[si], densities[di]);
             let rhythm = profile.rhythm;
+            // The default text size lands exactly on the icon-driven
+            // density rows; the row grows only past 12 px.
+            assert!(rhythm.with_text(DEFAULT_FONT_SIZE).row_h == rhythm.row_h);
             // The row is the icon cell plus its breathing at every
             // density (the icon-driven rule survives).
             assert!(rhythm.row_h == ICON + 2 * rhythm.row_pad_y);
@@ -1169,7 +1352,7 @@ impl OverlayModel {
         // height — the strip zone itself is the top padding's twin: no
         // row, no selection.
         let rhythm = self.profile.rhythm;
-        let strip = strip_height(&self.query, rhythm) as f64;
+        let strip = strip_height_at(&self.query, rhythm, self.profile.text.cell()) as f64;
         let y_px = y / scale as f64 - rhythm.pad_y as f64 - strip;
         let pitch = (rhythm.row_h + rhythm.row_gap) as f64;
         if y_px < 0.0 || y_px >= self.rows.len() as f64 * pitch {
@@ -1196,7 +1379,7 @@ impl OverlayModel {
         if !in_card {
             return None;
         }
-        if y < band_strip_top() as f64 * scale as f64 {
+        if y < band_strip_top_at(self.profile.text.cell()) as f64 * scale as f64 {
             return None; // the reserved caption line and its gap
         }
         // The single band admits every y below the caption (its height
@@ -1237,7 +1420,8 @@ impl OverlayModel {
         if self.horizontal {
             let tile = self.cell_at(x, y, scale)?;
             let left = TILE_PAD_X + tile as u32 * (TILE_W + TILE_GAP);
-            let (zone_left, zone_top, zone_right, zone_bottom) = close_tile_zone(left);
+            let (zone_left, zone_top, zone_right, zone_bottom) =
+                close_tile_zone_at(left, self.profile.text.cell());
             let logical_x = x / scale as f64;
             let logical_y = y / scale as f64;
             if logical_x < zone_left as f64
@@ -1305,9 +1489,20 @@ fn close_zone_rect(icon_left: u32, icon_top: u32, icon_side: u32) -> (u32, u32, 
 }
 
 /// The ×'s click territory on a horizontal tile, logical px — the
-/// tile's icon cell, centred in the slot.
+/// tile's icon cell, centred in the slot, at the default text size.
+#[allow(dead_code)] // the default-profile seam for tests; the daemon uses `_at`
 fn close_tile_zone(left: u32) -> (u32, u32, u32, u32) {
-    close_zone_rect(left + (TILE_W - TILE_ICON) / 2, band_icon_top(), TILE_ICON)
+    close_tile_zone_at(left, TEXT_H)
+}
+
+/// [`close_tile_zone`] at one text size: the tile's caption line moves
+/// the icon line, so the badge's anchor moves with it.
+fn close_tile_zone_at(left: u32, cell: u32) -> (u32, u32, u32, u32) {
+    close_zone_rect(
+        left + (TILE_W - TILE_ICON) / 2,
+        band_icon_top_at(cell),
+        TILE_ICON,
+    )
 }
 
 /// The icon cell's top-left corner on a vertical row, logical px — the
@@ -1317,7 +1512,7 @@ fn close_tile_zone(left: u32) -> (u32, u32, u32, u32) {
 fn row_icon_origin(model: &OverlayModel, row: usize) -> Option<(u32, u32)> {
     let row_model = model.rows.get(row)?;
     let rhythm = model.profile.rhythm;
-    let strip = strip_height(&model.query, rhythm);
+    let strip = strip_height_at(&model.query, rhythm, model.profile.text.cell());
     let top = rhythm.pad_y + strip + row as u32 * (rhythm.row_h + rhythm.row_gap);
     let indent = (row_model.kind == RowKind::Child) as u32 * TREE_INDENT;
     Some((PAD_X + indent, top + (rhythm.row_h - ICON) / 2))
@@ -1594,6 +1789,7 @@ pub fn overlay_model(
             RowKind::Leaf,
             &mut text,
             scale,
+            profile.text,
         );
         rows.push(RowModel {
             title,
@@ -1677,7 +1873,7 @@ pub fn overlay_model_horizontal(
     // left-aligned in the air it buys. The caption names the selected
     // window — the commit target of a flat band is always a window.
     let width = band_width(slots as u32).max(banding.width_floor.unwrap_or(0));
-    let caption = compose_caption(
+    let caption = compose_caption_at(
         rows.iter()
             .find(|row| row.selected)
             .map(|row| row.title.as_str())
@@ -1685,11 +1881,12 @@ pub fn overlay_model_horizontal(
         width,
         &mut text,
         scale,
+        profile.text,
     );
     Some(OverlayModel {
         rows,
         width,
-        height: band_card_height(),
+        height: band_card_height_at(profile.text.cell()),
         viewport: band,
         profile,
         horizontal: true,
@@ -1754,6 +1951,7 @@ pub fn overlay_model_grouped(
                     RowKind::Child,
                     &mut text,
                     scale,
+                    profile.text,
                 );
                 rows.push(RowModel {
                     title,
@@ -1787,8 +1985,14 @@ pub fn overlay_model_grouped(
                     // with no app_id fallback — the grouping tree only
                     // parents non-empty app_ids.
                     let hint = RowHint::ctrl(ordinal);
-                    let (title, band) =
-                        compose_title(&grow.app_id, "", RowKind::Parent, &mut text, scale);
+                    let (title, band) = compose_title(
+                        &grow.app_id,
+                        "",
+                        RowKind::Parent,
+                        &mut text,
+                        scale,
+                        profile.text,
+                    );
                     rows.push(RowModel {
                         title,
                         icon: icons.bitmap(&grow.app_id, ICON, scale, palette),
@@ -1807,6 +2011,7 @@ pub fn overlay_model_grouped(
                         RowKind::Leaf,
                         &mut text,
                         scale,
+                        profile.text,
                     );
                     rows.push(RowModel {
                         title,
@@ -1917,22 +2122,23 @@ pub fn overlay_model_grouped_horizontal(
                 .iter()
                 .find(|t| Some(t.handle) == row.handle)
             {
-                Some(front) => compose_caption(
+                Some(front) => compose_caption_at(
                     &display_title(&front.title, &front.app_id),
                     width,
                     &mut text,
                     scale,
+                    profile.text,
                 ),
                 None => String::new(),
             }
         }
-        Some(row) => compose_caption(&row.title, width, &mut text, scale),
+        Some(row) => compose_caption_at(&row.title, width, &mut text, scale, profile.text),
         None => String::new(),
     };
     Some(OverlayModel {
         rows,
         width,
-        height: band_card_height(),
+        height: band_card_height_at(profile.text.cell()),
         viewport: window,
         profile,
         horizontal: true,
@@ -1948,18 +2154,21 @@ pub fn overlay_model_grouped_horizontal(
 /// [`finish_model`] sees one width per row).
 ///
 /// The two backends are two honest faces of one budget: `Bitmap` folds
-/// and column-caps exactly as shipped (byte-identity — the floor's
-/// every pin depends on it); `System` measures the un-folded title
-/// through the real font and pixel-budgets it — real glyphs, real
-/// accents, fallback chains — with the kind's extras paid out of the
-/// same [`MAX_COLS`] × [`TEXT_W`] territory (the child indent and the
-/// parent's caret always fit, exactly as the column caps paid for them).
+/// and column-caps exactly as shipped (byte-identity at the default
+/// 12-px profile; the floor's every pin depends on it); `System`
+/// measures the un-folded title through the real font and pixel-budgets
+/// it — real glyphs, real accents, fallback chains — with the kind's
+/// extras paid out of the same [`TITLE_BAND_PX`] territory (the child
+/// indent and the parent's caret always fit, exactly as the column caps
+/// paid for them). `text_profile` chooses the cell and column budget, so
+/// a larger `font_size` fits fewer characters in the same band.
 fn compose_title(
     title: &str,
     app_id: &str,
     kind: RowKind,
     text: &mut TextBackend<'_>,
     scale: u32,
+    text_profile: TextProfile,
 ) -> (String, u32) {
     // A parent's label is its app_id verbatim — no `display_title`
     // fallback (the grouping tree only parents non-empty app_ids, and
@@ -1971,27 +2180,30 @@ fn compose_title(
             display_title(title, app_id)
         }
     };
+    let cell = text_profile.cell();
+    let cols = text_profile.title_cols();
     match text {
         TextBackend::Bitmap => {
             let cap = match kind {
-                RowKind::Child => MAX_COLS - TREE_INDENT / TEXT_W,
-                RowKind::Parent => MAX_COLS - CHEVRON_COLS,
-                RowKind::Leaf => MAX_COLS,
+                RowKind::Child => cols.saturating_sub(text_profile.indent_cols()),
+                RowKind::Parent => cols.saturating_sub(text_profile.chevron_cols()),
+                RowKind::Leaf => cols,
             };
             let folded = truncate_cols(fold_title(&label(title)), cap);
-            let band = folded.chars().count() as u32 * TEXT_W
+            let band = folded.chars().count() as u32 * cell
                 + (kind == RowKind::Child) as u32 * TREE_INDENT
-                + (kind == RowKind::Parent) as u32 * CHEVRON_COLS * TEXT_W;
+                + (kind == RowKind::Parent) as u32 * text_profile.chevron_cols() * cell;
             (folded, band)
         }
         TextBackend::System { system, query } => {
             let extras = match kind {
                 RowKind::Child => TREE_INDENT,
-                RowKind::Parent => CHEVRON_COLS * TEXT_W,
+                RowKind::Parent => text_profile.chevron_cols() * cell,
                 RowKind::Leaf => 0,
             };
-            let budget = (MAX_COLS * TEXT_W - extras) as f32;
-            let (display, run) = system.shape_budgeted(&label(title), *query, scale, budget);
+            let budget = text_profile.title_band().saturating_sub(extras) as f32;
+            let (display, run) =
+                system.shape_budgeted(&label(title), *query, scale, budget, cell as f32);
             // Ceiling: the card must be at least as wide as the ink it
             // holds, whole logical px.
             (display, run.width_px.ceil() as u32 + extras)
@@ -2005,13 +2217,28 @@ fn compose_title(
 /// real `…` in both backends (the row composer's truncation
 /// vocabulary, the budget the card instead of a title band). The
 /// preview sheet composes through the same rule, so its captions judge
-/// the shipped truncation.
+/// the shipped truncation. Default text profile (the preview's own
+/// seam is [`compose_caption_at`]).
+#[allow(dead_code)] // the preview sheet's default-profile entry; the daemon uses `_at`
 pub fn compose_caption(label: &str, width: u32, text: &mut TextBackend<'_>, scale: u32) -> String {
+    compose_caption_at(label, width, text, scale, TextProfile::default())
+}
+/// [`compose_caption`] at one session's text profile.
+pub fn compose_caption_at(
+    label: &str,
+    width: u32,
+    text: &mut TextBackend<'_>,
+    scale: u32,
+    text_profile: TextProfile,
+) -> String {
+    let cell = text_profile.cell();
     let budget = width - 2 * TILE_PAD_X;
     match text {
-        TextBackend::Bitmap => truncate_cols(fold_title(label), budget / TEXT_W),
+        TextBackend::Bitmap => truncate_cols(fold_title(label), budget / cell),
         TextBackend::System { system, query } => {
-            system.shape_budgeted(label, *query, scale, budget as f32).0
+            system
+                .shape_budgeted(label, *query, scale, budget as f32, cell as f32)
+                .0
         }
     }
 }
@@ -2049,7 +2276,8 @@ fn finish_model(
     // widens, so the ceiling caps the title's ink, never the card; rows
     // stay left-aligned and the hint band right-anchors to the wider
     // edge, the band's floored-width behavior on end.
-    let width = (2 * PAD_X + ICON + ICON_GAP + band + HINT_GAP + HINT_COLS * TEXT_W)
+    let cell = profile.text.cell();
+    let width = (2 * PAD_X + ICON + ICON_GAP + band + HINT_GAP + HINT_COLS * cell)
         .max(windowing.width_floor.unwrap_or(0));
     Some(OverlayModel {
         rows: windowed,
@@ -2093,7 +2321,7 @@ pub fn no_matches_model(
     width_floor: Option<u32>,
 ) -> Option<OverlayModel> {
     let mut text = TextBackend::Bitmap;
-    let (title, band) = compose_title("no matches", "", RowKind::Leaf, &mut text, 2);
+    let (title, band) = compose_title("no matches", "", RowKind::Leaf, &mut text, 2, profile.text);
     let row = RowModel {
         title,
         icon: None,
@@ -2118,13 +2346,21 @@ pub fn no_matches_model(
     Some(with_query(model, query))
 }
 
-/// The height the query strip adds to a card: its pad, its text line,
-/// and the row gap that separates it from the first row — zero with no
-/// query (`type-filter`). The strip is not a row and earns no row
-/// height; the gap is the separation the rows themselves use.
+/// The height the query strip adds to a card at the default text size:
+/// its pad, its text line, and the row gap that separates it from the
+/// first row — zero with no query (`type-filter`). The strip is not a
+/// row and earns no row height; the gap is the separation the rows
+/// themselves use. [`strip_height_at`] is the same math at one
+/// session's text size.
+#[allow(dead_code)] // the default-profile seam for tests; the daemon uses `_at`
 pub fn strip_height(query: &Option<String>, rhythm: Rhythm) -> u32 {
+    strip_height_at(query, rhythm, TEXT_H)
+}
+
+/// [`strip_height`] at one text size.
+pub fn strip_height_at(query: &Option<String>, rhythm: Rhythm, cell: u32) -> u32 {
     if query.is_some() {
-        STRIP_PAD_Y + TEXT_H + rhythm.row_gap
+        STRIP_PAD_Y + cell + rhythm.row_gap
     } else {
         0
     }
@@ -2133,10 +2369,10 @@ pub fn strip_height(query: &Option<String>, rhythm: Rhythm) -> u32 {
 /// The strip's text: the query's *tail*, an ellipsis on the head when
 /// it overflows — what was just typed stays visible, matching how the
 /// query itself ignores everything before its last 64 characters. The
-/// cap shares the row title's column budget ([`MAX_COLS`]) minus the
-/// one column the leading ellipsis spends.
-fn strip_text(query: &str) -> String {
-    let cap = MAX_COLS as usize;
+/// cap shares the row title's column budget minus the one column the
+/// leading ellipsis spends.
+fn strip_text(query: &str, cols: u32) -> String {
+    let cap = cols as usize;
     let count = query.chars().count();
     if count > cap {
         let tail: String = query.chars().skip(count - (cap - 1)).collect();
@@ -2150,8 +2386,9 @@ fn strip_text(query: &str) -> String {
 /// seam between a querying session and its card. Pure, so the height
 /// math and the zero-query identity pin headlessly.
 pub fn with_query(mut model: OverlayModel, query: &str) -> OverlayModel {
-    model.height += strip_height(&Some(query.to_string()), model.profile.rhythm);
-    model.query = Some(strip_text(query));
+    let cell = model.profile.text.cell();
+    model.height += strip_height_at(&Some(query.to_string()), model.profile.rhythm, cell);
+    model.query = Some(strip_text(query, model.profile.text.title_cols()));
     model
 }
 
@@ -2204,6 +2441,10 @@ pub fn render(
     let radius = profile.radius;
     let band_radius = profile.band_radius;
     let rhythm = profile.rhythm;
+    // The session's text profile: every line, cell, and column budget
+    // below derives from it, so the paint matches the model's sizing.
+    let text_profile = profile.text;
+    let cell = text_profile.cell();
     // Coverage masks on the logical grid, computed once per render:
     // the card shape and the same shape eroded by the border width
     // (their difference is the border ring).
@@ -2250,11 +2491,11 @@ pub fn render(
         // defense in depth behind the composer's budget.
         match &mut text {
             TextBackend::Bitmap => {
-                let ink = model.caption.chars().count() as u32 * TEXT_W;
+                let ink = model.caption.chars().count() as u32 * cell;
                 let edge = lw.saturating_sub(TILE_PAD_X);
                 let mut lx = lw.saturating_sub(ink) / 2;
                 for ch in model.caption.chars() {
-                    if lx + TEXT_W > edge {
+                    if lx + cell > edge {
                         break;
                     }
                     draw_glyph(
@@ -2263,17 +2504,17 @@ pub fn render(
                         glyph(ch),
                         lx * scale,
                         TILE_PAD_Y * scale,
-                        TEXT_W * scale / GLYPH_W,
+                        cell * scale / GLYPH_W,
                         palette.text,
                     );
-                    lx += TEXT_W;
+                    lx += cell;
                 }
             }
             TextBackend::System { system, query } => {
-                let run = system.shape(&model.caption, *query, scale);
+                let run = system.shape(&model.caption, *query, scale, cell as f32);
                 let ink = run.width_px.ceil() as u32;
                 let baseline =
-                    TILE_PAD_Y + crate::text::centering(run.ascent_px, run.descent_px, TEXT_H);
+                    TILE_PAD_Y + crate::text::centering(run.ascent_px, run.descent_px, cell);
                 paint_run(
                     system,
                     &run,
@@ -2298,7 +2539,7 @@ pub fn render(
             scale,
             palette,
             &mut text,
-            band_strip_top(),
+            band_strip_top_at(cell),
             &model.rows,
         );
         border_ring(
@@ -2320,16 +2561,16 @@ pub fn render(
     // while a query stands; every row below shifts by its height, the
     // same height `row_at` subtracts, so pointer rows and paint stay
     // one geometry.
-    let strip = strip_height(&model.query, rhythm);
+    let strip = strip_height_at(&model.query, rhythm, cell);
     if let Some(query) = &model.query {
         let strip_y = rhythm.pad_y + STRIP_PAD_Y;
-        let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * TEXT_W);
+        let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * cell);
         let title_x = PAD_X + ICON + ICON_GAP;
         let text_end = match &mut text {
             TextBackend::Bitmap => {
                 let mut lx = title_x;
                 for ch in query.chars() {
-                    if lx + TEXT_W > title_edge {
+                    if lx + cell > title_edge {
                         break;
                     }
                     draw_glyph(
@@ -2338,10 +2579,10 @@ pub fn render(
                         glyph(ch),
                         lx * scale,
                         strip_y * scale,
-                        TEXT_W * scale / GLYPH_W,
+                        cell * scale / GLYPH_W,
                         palette.text,
                     );
-                    lx += TEXT_W;
+                    lx += cell;
                 }
                 lx
             }
@@ -2349,9 +2590,9 @@ pub fn render(
                 system,
                 query: fontq,
             } => {
-                let run = system.shape(query, *fontq, scale);
+                let run = system.shape(query, *fontq, scale, cell as f32);
                 let baseline =
-                    strip_y + crate::text::centering(run.ascent_px, run.descent_px, TEXT_H);
+                    strip_y + crate::text::centering(run.ascent_px, run.descent_px, cell);
                 paint_run(
                     system,
                     &run,
@@ -2371,7 +2612,7 @@ pub fn render(
         // spent elsewhere.
         let caret_x = text_end + STRIP_CARET_GAP;
         if caret_x + STRIP_CARET_W <= lw {
-            for ly in strip_y..strip_y + TEXT_H {
+            for ly in strip_y..strip_y + cell {
                 for dy in 0..scale {
                     let y = ly * scale + dy;
                     for lx in caret_x..caret_x + STRIP_CARET_W {
@@ -2408,7 +2649,7 @@ pub fn render(
             // continuation row.
             if !row.title.is_empty() {
                 let verdict_x = PAD_X + ICON + ICON_GAP;
-                let verdict_y = top + (rhythm.row_h - TEXT_H) / 2;
+                let verdict_y = top + rhythm.row_h.saturating_sub(cell) / 2;
                 match &mut text {
                     TextBackend::Bitmap => {
                         let mut lx = verdict_x;
@@ -2419,17 +2660,17 @@ pub fn render(
                                 glyph(ch),
                                 lx * scale,
                                 verdict_y * scale,
-                                TEXT_W * scale / GLYPH_W,
+                                cell * scale / GLYPH_W,
                                 palette.muted,
                             );
-                            lx += TEXT_W;
+                            lx += cell;
                         }
                     }
                     TextBackend::System {
                         system,
                         query: fontq,
                     } => {
-                        let run = system.shape(&row.title, *fontq, scale);
+                        let run = system.shape(&row.title, *fontq, scale, cell as f32);
                         let baseline = top
                             + crate::text::centering(run.ascent_px, run.descent_px, rhythm.row_h);
                         paint_run(
@@ -2449,15 +2690,15 @@ pub fn render(
             }
             match &mut text {
                 TextBackend::Bitmap => {
-                    let dots_x = lw.saturating_sub(TEXT_W) / 2;
-                    let dots_y = top + (rhythm.row_h - TEXT_H) / 2;
+                    let dots_x = lw.saturating_sub(cell) / 2;
+                    let dots_y = top + rhythm.row_h.saturating_sub(cell) / 2;
                     draw_glyph(
                         canvas,
                         stride,
                         ELLIPSIS_GLYPH,
                         dots_x * scale,
                         dots_y * scale,
-                        TEXT_W * scale / GLYPH_W,
+                        cell * scale / GLYPH_W,
                         palette.muted,
                     );
                 }
@@ -2466,7 +2707,7 @@ pub fn render(
                     // measured ink centers on the card (the LV3
                     // card-centered rule, now against real metrics),
                     // the baseline by the ink box.
-                    let run = system.shape("…", *query, scale);
+                    let run = system.shape("…", *query, scale, cell as f32);
                     let dots_x = lw.saturating_sub(run.width_px.ceil() as u32) / 2;
                     let baseline =
                         top + crate::text::centering(run.ascent_px, run.descent_px, rhythm.row_h);
@@ -2567,14 +2808,14 @@ pub fn render(
         // run's baseline — each backend's own anchor — and `title_end`
         // is where the title's ink stopped (the caret's clearing
         // measures from it).
-        let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * TEXT_W);
+        let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * cell);
         let title_x = cell_x + ICON + ICON_GAP;
         let (text_line_y, title_end) = match &mut text {
             TextBackend::Bitmap => {
-                let text_y = top + (rhythm.row_h - TEXT_H) / 2;
+                let text_y = top + rhythm.row_h.saturating_sub(cell) / 2;
                 let mut lx = title_x;
                 for ch in row.title.chars() {
-                    if lx + TEXT_W > title_edge {
+                    if lx + cell > title_edge {
                         break;
                     }
                     draw_glyph(
@@ -2583,15 +2824,15 @@ pub fn render(
                         glyph(ch),
                         lx * scale,
                         text_y * scale,
-                        TEXT_W * scale / GLYPH_W,
+                        cell * scale / GLYPH_W,
                         palette.text,
                     );
-                    lx += TEXT_W;
+                    lx += cell;
                 }
                 (text_y, lx)
             }
             TextBackend::System { system, query } => {
-                let run = system.shape(&row.title, *query, scale);
+                let run = system.shape(&row.title, *query, scale, cell as f32);
                 let baseline =
                     top + crate::text::centering(run.ascent_px, run.descent_px, rhythm.row_h);
                 paint_run(
@@ -2662,9 +2903,9 @@ pub fn render(
             let band_right = lw.saturating_sub(PAD_X);
             match &mut text {
                 TextBackend::Bitmap => {
-                    let mut hx = band_right.saturating_sub(label.chars().count() as u32 * TEXT_W);
+                    let mut hx = band_right.saturating_sub(label.chars().count() as u32 * cell);
                     for ch in label.chars() {
-                        if hx + TEXT_W > band_right {
+                        if hx + cell > band_right {
                             break; // a degenerate canvas: never paint past the card
                         }
                         draw_glyph(
@@ -2673,14 +2914,14 @@ pub fn render(
                             glyph(ch),
                             hx * scale,
                             text_line_y * scale,
-                            TEXT_W * scale / GLYPH_W,
+                            cell * scale / GLYPH_W,
                             palette.muted,
                         );
-                        hx += TEXT_W;
+                        hx += cell;
                     }
                 }
                 TextBackend::System { system, query } => {
-                    let run = system.shape(&label, *query, scale);
+                    let run = system.shape(&label, *query, scale, cell as f32);
                     let hx = band_right.saturating_sub(run.width_px.ceil() as u32);
                     paint_run(
                         system,
@@ -2781,28 +3022,30 @@ fn render_band(
     tiles: &[RowModel],
 ) {
     let band_radius = model.profile.band_radius;
+    let cell = model.profile.text.cell();
+    let tile_cell = tile_cell_h_at(cell);
     for (index, tile) in tiles.iter().enumerate() {
         let left = TILE_PAD_X + index as u32 * (TILE_W + TILE_GAP);
         if tile.handle.is_none() {
             match text {
                 TextBackend::Bitmap => {
-                    let dots_x = left + (TILE_W - TEXT_W) / 2;
-                    let dots_y = y0 + TEXT_H + TILE_PARENT_GAP + (TILE_ICON - TEXT_H) / 2;
+                    let dots_x = left + (TILE_W.saturating_sub(cell)) / 2;
+                    let dots_y = y0 + cell + TILE_PARENT_GAP + TILE_ICON.saturating_sub(cell) / 2;
                     draw_glyph(
                         canvas,
                         stride,
                         ELLIPSIS_GLYPH,
                         dots_x * scale,
                         dots_y * scale,
-                        TEXT_W * scale / GLYPH_W,
+                        cell * scale / GLYPH_W,
                         palette.muted,
                     );
                 }
                 TextBackend::System { system, query } => {
-                    let run = system.shape("\u{2026}", *query, scale);
+                    let run = system.shape("\u{2026}", *query, scale, cell as f32);
                     let dots_x = left + (TILE_W - run.width_px.ceil() as u32) / 2;
                     let baseline = y0
-                        + TEXT_H
+                        + cell
                         + TILE_PARENT_GAP
                         + crate::text::centering(run.ascent_px, run.descent_px, TILE_ICON);
                     paint_run(
@@ -2821,12 +3064,11 @@ fn render_band(
             continue;
         }
         if tile.selected {
-            for ly in y0..y0 + TILE_CELL_H {
+            for ly in y0..y0 + tile_cell {
                 for dy in 0..scale {
                     let y = ly * scale + dy;
                     for lx in left..left + TILE_W {
-                        let cov =
-                            shape_cov(lx - left, ly - y0, TILE_W, TILE_CELL_H, band_radius, 0);
+                        let cov = shape_cov(lx - left, ly - y0, TILE_W, tile_cell, band_radius, 0);
                         if cov == 0 {
                             continue;
                         }
@@ -2848,7 +3090,7 @@ fn render_band(
         // The icon, centered on its line: a bitmap prepared at
         // TILE_ICON × scale blits 1:1; a mismatched size or a miss
         // draws the generic window glyph (the row cell's rule).
-        let icon_y = y0 + TEXT_H + TILE_PARENT_GAP;
+        let icon_y = y0 + cell + TILE_PARENT_GAP;
         match tile.icon.as_deref() {
             Some(bitmap) if bitmap.side == TILE_ICON * scale => {
                 blit_bitmap(
@@ -2904,14 +3146,14 @@ fn render_band(
                             glyph(ch),
                             lx * scale,
                             y0 * scale,
-                            TEXT_W * scale / GLYPH_W,
+                            cell * scale / GLYPH_W,
                             palette.muted,
                         );
-                        lx += TEXT_W;
+                        lx += cell;
                     }
                 }
                 TextBackend::System { system, query } => {
-                    let run = system.shape(&label, *query, scale);
+                    let run = system.shape(&label, *query, scale, cell as f32);
                     paint_run(
                         system,
                         &run,
@@ -2920,7 +3162,7 @@ fn render_band(
                         scale,
                         palette.muted,
                         left + TILE_TEXT_PAD,
-                        y0 + crate::text::centering(run.ascent_px, run.descent_px, TEXT_H),
+                        y0 + crate::text::centering(run.ascent_px, run.descent_px, cell),
                         left + TILE_W - TILE_TEXT_PAD,
                     );
                 }
@@ -4241,6 +4483,231 @@ mod tests {
     }
 
     #[test]
+    fn text_profiles_derive_their_band_and_caret_from_the_cell() {
+        assert_eq!(TextProfile::default(), TextProfile::new(12));
+        assert_eq!(TextProfile::new(12).cell(), TEXT_W);
+        assert_eq!(TextProfile::new(12).title_cols(), MAX_COLS);
+        assert_eq!(TextProfile::new(12).title_band(), TITLE_BAND_PX);
+        // Every accepted size stays inside the title band's physical
+        // cap and reserves a caret that fits its ink plus the clearing.
+        for size in FONT_SIZE_MIN..=FONT_SIZE_MAX {
+            let profile = TextProfile::new(size);
+            assert_eq!(profile.cell(), size);
+            assert!(profile.title_cols() >= 1, "{size}: at least one column");
+            assert!(
+                profile.title_band() <= TITLE_BAND_PX,
+                "{size}: the band never grows past the default cap"
+            );
+            let caret = CHEVRON_GAP + GLYPH_W * CHEVRON_SCALE;
+            let reserved = profile.chevron_cols() * size;
+            assert!(profile.chevron_cols() >= 1, "{size}: a caret is reserved");
+            assert!(reserved >= caret, "{size}: the caret's ink fits");
+            assert!(reserved < caret + size, "{size}: the reservation is tight");
+        }
+    }
+
+    #[test]
+    fn every_font_size_fits_inside_the_row_with_its_pips_clear() {
+        // The row grows with the line while the icon, gaps, and padding
+        // stay fixed. At every accepted size the cell fits with the
+        // density's own breathing, the row still holds the 32-px icon,
+        // and a parent's pips keep their clearing below the text line.
+        for density in [Density::Compact, Density::Standard, Density::Spacious] {
+            for size in FONT_SIZE_MIN..=FONT_SIZE_MAX {
+                let resolved = rhythm(density).with_text(size);
+                assert_eq!(
+                    resolved.row_pad_y,
+                    rhythm(density).row_pad_y,
+                    "{density:?}: padding stays fixed"
+                );
+                assert!(
+                    ICON + 2 * resolved.row_pad_y <= resolved.row_h,
+                    "{density:?} × {size} px: the icon still fits"
+                );
+                assert!(
+                    size + 2 * resolved.row_pad_y <= resolved.row_h,
+                    "{density:?} × {size} px: the line fits the row"
+                );
+                let text_bottom = (resolved.row_h + size) / 2;
+                let pip_top = resolved.row_h - resolved.row_pad_y - PIP_SIDE;
+                assert!(
+                    text_bottom + PIP_TEXT_CLEAR <= pip_top,
+                    "{density:?} × {size} px: the pips clear the text line"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_larger_font_size_clamps_the_rows_to_fit_the_panel() {
+        // A taller line means fewer windows fit the 720-px panel. The
+        // clamp follows the resolved rhythm, never drops below the
+        // setting's floor, and every clamped card fits.
+        for density in [Density::Compact, Density::Standard, Density::Spacious] {
+            for size in FONT_SIZE_MIN..=FONT_SIZE_MAX {
+                let rhythm = rhythm(density).with_text(size);
+                let effective = effective_rows_rhythm(rhythm, ROWS_MAX);
+                assert!(
+                    effective >= ROWS_MIN,
+                    "{density:?} × {size} px: at least the floor fits"
+                );
+                assert!(
+                    card_height_rhythm(rhythm, (effective + ROWS_SLACK) as u32) <= CARD_FIT_PX,
+                    "{density:?} × {size} px: the clamped card fits"
+                );
+            }
+        }
+        // The largest text at Spacious is the binding case: even the
+        // default budget clamps there, while Standard still fits it.
+        let standard = rhythm(Density::Standard).with_text(FONT_SIZE_MAX);
+        assert_eq!(effective_rows_rhythm(standard, DEFAULT_ROWS), DEFAULT_ROWS);
+        let spacious = rhythm(Density::Spacious).with_text(FONT_SIZE_MAX);
+        assert!(effective_rows_rhythm(spacious, DEFAULT_ROWS) < DEFAULT_ROWS);
+        assert!(effective_rows_rhythm(spacious, ROWS_MAX) < ROWS_MAX);
+    }
+
+    #[test]
+    fn the_default_text_keeps_every_densitys_pinned_row() {
+        for density in [Density::Compact, Density::Standard, Density::Spacious] {
+            assert_eq!(
+                rhythm(density).with_text(DEFAULT_FONT_SIZE),
+                rhythm(density),
+                "{density:?}: 12 px is the pinned row"
+            );
+        }
+    }
+
+    #[test]
+    fn a_larger_font_size_fits_fewer_columns_in_the_same_band() {
+        let title = "W".repeat(200);
+        let mut text = TextBackend::Bitmap;
+        let small = compose_title(
+            &title,
+            "",
+            RowKind::Leaf,
+            &mut text,
+            2,
+            TextProfile::new(FONT_SIZE_MIN),
+        );
+        let large = compose_title(
+            &title,
+            "",
+            RowKind::Leaf,
+            &mut text,
+            2,
+            TextProfile::new(FONT_SIZE_MAX),
+        );
+        assert_eq!(
+            small.0.chars().count(),
+            TextProfile::new(FONT_SIZE_MIN).title_cols() as usize
+        );
+        assert_eq!(
+            large.0.chars().count(),
+            TextProfile::new(FONT_SIZE_MAX).title_cols() as usize
+        );
+        assert!(small.1 <= TITLE_BAND_PX, "the small band stays capped");
+        assert!(large.1 <= TITLE_BAND_PX, "the large band stays capped");
+    }
+
+    #[test]
+    fn the_band_geometry_follows_the_text_size() {
+        assert_eq!(band_card_height_at(12), band_card_height());
+        assert_eq!(tile_cell_h_at(12), TILE_CELL_H);
+        for size in [FONT_SIZE_MIN, 12, 16, FONT_SIZE_MAX] {
+            let cell = TextProfile::new(size).cell();
+            assert_eq!(
+                band_icon_top_at(cell),
+                band_strip_top_at(cell) + cell + TILE_PARENT_GAP
+            );
+            assert_eq!(
+                band_card_height_at(cell),
+                2 * TILE_PAD_Y + cell + CAPTION_GAP + tile_cell_h_at(cell)
+            );
+        }
+        assert!(
+            band_card_height_at(FONT_SIZE_MAX) > band_card_height(),
+            "a larger caption line grows the band"
+        );
+    }
+
+    #[test]
+    fn a_larger_text_profile_addresses_the_rows_it_paints() {
+        let profile = StyleProfile::default().with_text(TextProfile::new(FONT_SIZE_MAX));
+        let mut text = TextBackend::Bitmap;
+        let (title, band) = compose_title("Airlock", "", RowKind::Leaf, &mut text, 2, profile.text);
+        let row = RowModel {
+            title,
+            ..RowModel::default()
+        };
+        let model = finish_model(
+            vec![row],
+            0,
+            Windowing {
+                rows: DEFAULT_ROWS,
+                width_floor: None,
+                prev: None,
+            },
+            profile,
+            vec![band],
+        )
+        .expect("a model");
+        assert_eq!(model.profile.text, profile.text);
+        let rhythm = model.profile.rhythm;
+        let queried = with_query(model, "ab");
+        let strip = strip_height_at(&queried.query, rhythm, profile.text.cell());
+        // The strip's own zone holds no row; the first row starts after
+        // it, exactly as the render paints it.
+        assert_eq!(queried.row_at(4.0, (rhythm.pad_y + 1) as f64, 1), None);
+        assert_eq!(
+            queried.row_at(4.0, (rhythm.pad_y + strip + 1) as f64, 1),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn render_paints_a_larger_text_card() {
+        let profile = StyleProfile::default().with_text(TextProfile::new(FONT_SIZE_MAX));
+        let mut text = TextBackend::Bitmap;
+        let (title, band) = compose_title("Airlock", "", RowKind::Leaf, &mut text, 2, profile.text);
+        let row = RowModel {
+            title,
+            handle: Some(Handle(1)),
+            selected: true,
+            ..RowModel::default()
+        };
+        let model = finish_model(
+            vec![row],
+            0,
+            Windowing {
+                rows: DEFAULT_ROWS,
+                width_floor: None,
+                prev: None,
+            },
+            profile,
+            vec![band],
+        )
+        .expect("a model");
+        let palette = Palette::dark();
+        let stride = model.width * 4;
+        let mut canvas = vec![0u8; (model.height * stride) as usize];
+        render(
+            &model,
+            &mut canvas,
+            model.width,
+            model.height,
+            stride,
+            2,
+            &palette,
+            TextBackend::Bitmap,
+        );
+        let ink = palette.text.to_le_bytes();
+        assert!(
+            canvas.as_chunks::<4>().0.contains(&ink),
+            "the larger cell paints full-coverage glyph ink"
+        );
+    }
+
+    #[test]
     fn the_default_profile_is_exactly_todays_constants() {
         // The Round + Standard row — COSMIC's factory default and the
         // miss default — equals the constants block verbatim, so the
@@ -4256,6 +4723,7 @@ mod tests {
                     pad_y: PAD_Y,
                     row_h: ROW_H,
                 },
+                text: TextProfile::default(),
             }
         );
     }
@@ -10604,7 +11072,12 @@ mod tests {
         // The band guard on its own, at the helper level: a run painted
         // against a tight edge leaves every pixel beyond it untouched.
         let mut system = fixture_text();
-        let run = system.shape("WWWWWWWWWW", crate::text::FontQuery::SansSerif, 2);
+        let run = system.shape(
+            "WWWWWWWWWW",
+            crate::text::FontQuery::SansSerif,
+            2,
+            crate::text::TEXT_PX,
+        );
         assert!(run.width_px > 8.0, "the run genuinely overflows the edge");
         let (w, h) = (64u32, 24u32);
         let stride = w * 4;

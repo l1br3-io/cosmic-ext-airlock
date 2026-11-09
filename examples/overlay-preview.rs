@@ -28,6 +28,12 @@
 //! the flag judges the face and its coverage, live-applying the real
 //! daemon's shaping/rasterization path.
 //!
+//! `--font-size N` renders the font-size sheet at N logical px (8–24):
+//! a long vertical list, a max-width title at that size, the query strip,
+//! and a horizontal band, so the title-band column budget, the strip and
+//! caption lines, and the band height are judged at the configured size.
+//! Without the flag the sheets render at the default 12 px.
+//!
 //! ```sh
 //! `--horizontal` renders the horizontal band family instead
 //! (the `card-layout` module's CL4 sheet input): the band at CL4's
@@ -79,7 +85,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let Some(path) = args.next().map(std::path::PathBuf::from) else {
         eprintln!(
-            "usage: overlay-preview <out.png> [--scale N] [--light] [--geometry] [--horizontal] [--combined] [--system-font <dir>]"
+            "usage: overlay-preview <out.png> [--scale N] [--light] [--geometry] [--horizontal] [--combined] [--font-size N] [--system-font <dir>]"
         );
         std::process::exit(2);
     };
@@ -88,6 +94,7 @@ fn main() {
     let mut geometry = false;
     let mut horizontal = false;
     let mut combined = false;
+    let mut font_size: Option<u32> = None;
     let mut system_font: Option<std::path::PathBuf> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -102,6 +109,20 @@ fn main() {
             "--geometry" => geometry = true,
             "--horizontal" => horizontal = true,
             "--combined" => combined = true,
+            "--font-size" => {
+                font_size = args
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .filter(|n| (ui::FONT_SIZE_MIN..=ui::FONT_SIZE_MAX).contains(n));
+                if font_size.is_none() {
+                    eprintln!(
+                        "--font-size needs a whole number between {} and {}",
+                        ui::FONT_SIZE_MIN,
+                        ui::FONT_SIZE_MAX
+                    );
+                    std::process::exit(2);
+                }
+            }
             "--system-font" => {
                 system_font = args.next().map(std::path::PathBuf::from);
                 if system_font.is_none() {
@@ -111,7 +132,7 @@ fn main() {
             }
             other => {
                 eprintln!(
-                    "unknown argument {other}; expected --scale N, --light, --geometry, --horizontal, --combined, or --system-font <dir>"
+                    "unknown argument {other}; expected --scale N, --light, --geometry, --horizontal, --combined, --font-size N, or --system-font <dir>"
                 );
                 std::process::exit(2);
             }
@@ -188,6 +209,25 @@ fn main() {
     if geometry {
         let cells = geometry_cells(&dark_icons, &light_icons);
         write_grid(&path, &cells, scale, &mut text_system);
+        return;
+    }
+    if let Some(size) = font_size {
+        let profile = ui::StyleProfile::default().with_text(ui::TextProfile::new(size));
+        let icons = if base.is_dark {
+            &dark_icons
+        } else {
+            &light_icons
+        };
+        let band_dark = band_icons(scale, &ui::Palette::dark());
+        let band_light = band_icons(scale, &ui::Palette::light());
+        let band = if base.is_dark {
+            &band_dark
+        } else {
+            &band_light
+        };
+        let mut text = text_backend(&mut text_system);
+        let sheet = font_size_scenarios(profile, icons, band, base, &mut text, scale);
+        write_sheet(&path, &sheet, scale, &mut text_system);
         return;
     }
     let scenarios = scenarios(base, &dark_icons, &light_icons);
@@ -875,14 +915,15 @@ fn windowed(
         .max()
         .unwrap_or(1);
     let shown = rows.len() as u32;
+    let cell = profile.text.cell();
     OverlayModel {
         rows,
         width: 2 * ui::PAD_X
             + ui::ICON
             + ui::ICON_GAP
-            + cols * ui::TEXT_W
+            + cols * cell
             + ui::HINT_GAP
-            + ui::HINT_COLS * ui::TEXT_W,
+            + ui::HINT_COLS * cell,
         height: ui::card_height_rhythm(profile.rhythm, shown),
         viewport,
         profile,
@@ -904,15 +945,95 @@ fn sized_profile(mut model: OverlayModel, profile: ui::StyleProfile) -> OverlayM
         .max()
         .unwrap_or(1);
     let count = model.rows.len() as u32;
-    model.width = 2 * ui::PAD_X
-        + ui::ICON
-        + ui::ICON_GAP
-        + cols * ui::TEXT_W
-        + ui::HINT_GAP
-        + ui::HINT_COLS * ui::TEXT_W;
+    let cell = profile.text.cell();
+    model.width =
+        2 * ui::PAD_X + ui::ICON + ui::ICON_GAP + cols * cell + ui::HINT_GAP + ui::HINT_COLS * cell;
     model.height = ui::card_height_rhythm(profile.rhythm, count);
     model.profile = profile;
     model
+}
+
+/// The font-size sheet (`--font-size N`): the card's text-derived
+/// geometry judged at one configured size. A long vertical list shows the
+/// unchanged row rhythm with the larger line, a max-width title shows
+/// elision at that size's column budget, the query strip shows its taller
+/// line and caret, and the band shows its caption row and badge digits.
+fn font_size_scenarios(
+    profile: ui::StyleProfile,
+    icons: &[Option<Rc<IconBitmap>>],
+    band_icons: &[Option<Rc<IconBitmap>>],
+    base: ui::Palette,
+    text: &mut ui::TextBackend<'_>,
+    scale: u32,
+) -> Vec<Scenario> {
+    let cell = profile.text.cell();
+    let cols = profile.text.title_cols();
+    let mut sheet = vec![
+        Scenario {
+            model: windowed(15, 7, ui::DEFAULT_ROWS, None, icons, profile),
+            palette: base,
+        },
+        Scenario {
+            model: sized_profile(
+                OverlayModel {
+                    rows: vec![
+                        entry_row(
+                            &format!("{}…", "W".repeat(cols as usize)),
+                            icons[0].clone(),
+                            false,
+                            1,
+                        ),
+                        entry_row("Short title", icons[1].clone(), true, 2),
+                    ],
+                    ..OverlayModel::default()
+                },
+                profile,
+            ),
+            palette: base,
+        },
+    ];
+    sheet.push(Scenario {
+        model: ui::with_query(
+            sized_profile(
+                OverlayModel {
+                    rows: vec![
+                        entry_row("firefox — docs", icons[2].clone(), true, 1),
+                        entry_row("firefox — mail", icons[3].clone(), false, 2),
+                    ],
+                    ..OverlayModel::default()
+                },
+                profile,
+            ),
+            "fir",
+        ),
+        palette: base,
+    });
+    let width = ui::band_width(3);
+    let rows = vec![
+        entry_row("Editor", band_icons[0].clone(), true, 1),
+        entry_row("Files", band_icons[1].clone(), false, 2),
+        entry_row("Terminal", band_icons[2].clone(), false, 3),
+    ];
+    let caption = ui::compose_caption_at(
+        "Preview sheet — the font size",
+        width,
+        text,
+        scale,
+        profile.text,
+    );
+    sheet.push(Scenario {
+        model: OverlayModel {
+            rows,
+            width,
+            height: ui::band_card_height_at(cell),
+            horizontal: true,
+            caption,
+            profile,
+            ..OverlayModel::default()
+        },
+        palette: base,
+    });
+    sheet
 }
 
 fn scenarios(

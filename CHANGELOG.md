@@ -3,6 +3,23 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
+## [Unreleased]
+
+### Added
+
+- **The `font_size` setting** — set the card's text size in logical
+  pixels, 8–24 (default 12). Titles, the query strip, hint digits, and
+  the horizontal band's caption and badges all follow, as do the lines
+  and heights that hold them: rows grow to keep the count pips clear,
+  and the query strip and band caption grow with their text. The title
+  band keeps its physical width by fitting fewer characters instead of
+  stretching, so a larger size elides long titles sooner rather than
+  widening the card. Rows growing means fewer windows fit the 720-px
+  panel, so the `rows` budget clamps as it does at Spacious density;
+  the daemon log names the density, text size, and clamp. The 8×8
+  bitmap floor scales too. Read when a gesture starts; a value outside
+  8–24 is named in a diagnostic and the last-good settings apply.
+
 ## [0.3.0] — 2026-11-09
 
 ### Added
