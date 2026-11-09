@@ -3,19 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Airlock — Workspace-isolated Alt+Tab for COSMIC</title>
+<meta name="theme-color" content="#1E2126">
+<title>Airlock · Workspace-isolated Alt+Tab for COSMIC</title>
 <meta name="description" content="Workspace-isolated Alt+Tab for the COSMIC desktop: the switcher lists and cycles only the windows on the current workspace, so nothing you parked elsewhere leaks into your focus.">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="assets/style.css">
 </head>
-<body>
+<body class="home">
 <header>
   <div class="wrap">
-    <p class="brand">Airlock</p>
+    <a class="brand" href="index.html"><img src="assets/favicon.svg" width="18" height="18" alt="">Airlock</a>
     <nav>
       <a href="how-it-works.html">How it works</a>
       <a href="settings.html">Settings</a>
       <a href="troubleshooting.html">Troubleshooting</a>
+      <a href="#install">Install</a>
       <a href="https://github.com/l1br3-io/cosmic-ext-airlock">GitHub</a>
     </nav>
   </div>
@@ -23,88 +25,156 @@
 <main>
   <div class="wrap">
     <section class="hero">
-      <img src="assets/overlay-card.png" width="388" height="464"
-           alt="Airlock's Alt+Tab overlay: a dark rounded card listing the current workspace's windows — app icon and title per row, one highlighted, ellipsis rows above and below">
-      <h1>Workspace-isolated Alt+Tab for COSMIC</h1>
-      <p class="lede">The switcher lists and cycles only the windows on the
-      <strong>current workspace</strong>, so nothing you parked elsewhere leaks
-      into your focus.</p>
-    </section>
-
-    <section id="why">
-      <h2>Why</h2>
-      <ul>
-        <li>The built-in COSMIC switcher lists every window on every workspace,
-        most recently used first. There is no workspace filter, and the request
-        for one
-        (<a href="https://github.com/pop-os/cosmic-epoch/issues/1777">pop-os/cosmic-epoch#1777</a>)
-        is still open.</li>
-        <li>Airlock is that filter, as a standalone app. No compositor patch;
-        <code>airlock install --uninstall</code> restores the built-in switcher.</li>
-        <li>The switcher path it replaces (cosmic-launcher's cosmic-switch-less)
-        measured ≈ 170 MB RSS. Airlock's daemon: <strong>8.0 MB</strong>
-        (see <a href="#performance">Performance</a>).</li>
-      </ul>
-    </section>
-
-    <section id="how-it-works">
-      <h2>How it works</h2>
-      <p>Hold <kbd>Alt</kbd>, tap <kbd>Tab</kbd>: an overlay lists the current
-      workspace's windows, most recently used first. Rows are the application's
-      themed icon (the same pipeline the COSMIC launcher uses) beside its title.</p>
-      <table>
-        <thead>
-          <tr><th>Key</th><th>Action</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>Hold <kbd>Alt</kbd>, tap <kbd>Tab</kbd></td><td>Open the overlay</td></tr>
-          <tr><td><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Step forward / back — arrow keys work too</td></tr>
-          <tr><td>Release <kbd>Alt</kbd></td><td>Switch to the selection and dismiss</td></tr>
-          <tr><td><kbd>Enter</kbd></td><td>Confirm without releasing <kbd>Alt</kbd></td></tr>
-          <tr><td><kbd>Escape</kbd></td><td>Dismiss without switching</td></tr>
-          <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd></td><td>Switch to the Nth window at once, like a click — each row shows its key</td></tr>
-          <tr><td><kbd>Alt</kbd>+<kbd>`</kbd></td><td>Cycle the current application's windows (<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>`</kbd> steps backwards)</td></tr>
-          <tr><td><kbd>Alt</kbd>+<kbd>Esc</kbd></td><td>Jump to the second-most-recent window, no overlay</td></tr>
-        </tbody>
-      </table>
-      <p>Pointer: hover moves the selection, click switches, the wheel steps
-      the list. A quick tap, released before the overlay appears, still
-      switches.</p>
-      <p>Sticky windows appear on every workspace; minimized windows nowhere; a
-      window on another workspace can never be reached through Airlock. A
-      workspace can opt into the global list — see
-      <a href="settings.html">Settings</a>.</p>
-      <p>Every key, pointer rule, the frozen-list rule, and the card's
-      measurements:
-      <a href="how-it-works.html">how the switcher behaves</a>.</p>
-    </section>
-
-    <section id="install">
-      <h2>Install</h2>
-      <pre><code>cargo install cosmic-ext-airlock
+      <div class="hero-copy">
+        <p class="gesture">Hold <kbd>Alt</kbd>, tap <kbd>Tab</kbd>.</p>
+        <h1>Workspace-isolated Alt+Tab for COSMIC</h1>
+        <p class="lede">The switcher lists and cycles only the windows on the
+        <strong>current workspace</strong>, so nothing you parked elsewhere
+        leaks into your focus.</p>
+        <div class="quick-install">
+          <pre><code class="language-bash">cargo install cosmic-ext-airlock
 airlock install</code></pre>
-      <p class="muted">Requires a COSMIC desktop session (epoch) and Rust
-      1.93+. On another compositor the daemon exits with a diagnostic naming
-      the missing protocol. <code>airlock install</code> is the complete
-      setup: keybind takeover plus app icon &amp; desktop entry, all
-      user-level; <code>airlock install --uninstall</code> restores the
-      built-in switcher byte-for-byte.</p>
+          <p class="fine">Requires a COSMIC Epoch desktop session and Rust
+          1.93+. <a href="#install">What the installer writes</a>, and how to
+          undo it.</p>
+        </div>
+      </div>
+      <figure class="hero-card">
+        <img src="assets/overlay-card.png" width="532" height="584"
+             alt="Airlock's Alt+Tab overlay: a dark rounded card listing the current workspace's windows; app icon and title per row, one highlighted, ellipsis rows above and below">
+        <figcaption><span class="hub" aria-hidden="true"></span><span>The
+        current workspace's windows, most recently used first.</span></figcaption>
+      </figure>
     </section>
 
-    <section id="performance">
+    <section id="why" class="row-section">
+      <h2>Why not the built-in switcher</h2>
+      <div>
+        <div class="rows">
+          <div class="row">
+            <h3>The built-in switcher</h3>
+            <p>Lists every window on every workspace, most recently used
+            first; the request for a workspace filter
+            (<a href="https://github.com/pop-os/cosmic-epoch/issues/1777">pop-os/cosmic-epoch#1777</a>)
+            is still open.</p>
+          </div>
+          <div class="row">
+            <h3>Airlock</h3>
+            <p>Airlock is that filter as a standalone app, with no compositor
+            patch; <code>airlock install --uninstall</code> restores the
+            built-in switcher.</p>
+          </div>
+          <div class="row">
+            <h3>The cost</h3>
+            <p>The switcher path Airlock replaces (cosmic-launcher's
+            cosmic-switch-less) measured about 170 MB RSS. Airlock's daemon:
+            <strong>8.0 MB</strong> (see
+            <a href="#performance">Performance</a>).</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="how-it-works" class="row-section">
+      <h2>How it works</h2>
+      <div>
+        <p>Hold <kbd>Alt</kbd>, tap <kbd>Tab</kbd>: an overlay lists the
+        current workspace's windows, most recently used first. Rows are the
+        application's themed icon (the same pipeline the COSMIC launcher
+        uses) beside its title.</p>
+        <table class="keys">
+          <thead>
+            <tr><th>Key</th><th>Action</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Hold <kbd>Alt</kbd>, tap <kbd>Tab</kbd></td><td>Open the overlay</td></tr>
+            <tr><td><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Step forward or back; arrow keys work too</td></tr>
+            <tr><td>Release <kbd>Alt</kbd></td><td>Switch to the selection and dismiss</td></tr>
+            <tr><td><kbd>Enter</kbd></td><td>Confirm without releasing <kbd>Alt</kbd></td></tr>
+            <tr><td><kbd>Escape</kbd></td><td>Dismiss without switching</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd></td><td>Switch to the Nth window at once, like a click; each row shows its key</td></tr>
+            <tr><td><kbd>Alt</kbd>+<kbd>`</kbd></td><td>Cycle the current application's windows (<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>`</kbd> steps backwards)</td></tr>
+            <tr><td><kbd>Alt</kbd>+<kbd>Esc</kbd></td><td>Jump to the second-most-recent window, no overlay</td></tr>
+            <tr><td><kbd>Alt</kbd>+<kbd>-</kbd></td><td>Close the selected window; the card stays up for the next</td></tr>
+          </tbody>
+        </table>
+        <p>Pointer: hover moves the selection, click switches, the wheel steps
+        the list, and resting on a window row reveals an <strong>×</strong>
+        that closes it. A quick tap, released before the overlay appears,
+        still switches.</p>
+        <div class="rows">
+          <div class="row">
+            <h3>Type to filter</h3>
+            <p>While the card is up, typing narrows it to the windows whose
+            title or app name matches.
+            <a href="how-it-works.html#type-to-filter">How it narrows</a>.</p>
+          </div>
+          <div class="row">
+            <h3>Group by app</h3>
+            <p><code>grouping = true</code> turns the list into a per-app
+            tree; an entry commits its app's front window, and <kbd>→</kbd>
+            expands it.
+            <a href="how-it-works.html#grouped-mode">The tree's keys</a>.</p>
+          </div>
+          <div class="row">
+            <h3>A horizontal band</h3>
+            <p><code>layout = "horizontal"</code> lays the same list out as
+            a wide band of tiles, stepped with Left/Right.
+            <a href="how-it-works.html#the-card">Both cards</a>.</p>
+          </div>
+          <div class="row">
+            <h3>Close from the card</h3>
+            <p><kbd>Alt</kbd>+<kbd>-</kbd> or the row's × closes a window
+            without leaving the gesture.
+            <a href="how-it-works.html#closing-windows">What closes what</a>.</p>
+          </div>
+          <div class="row">
+            <h3>Real type</h3>
+            <p>Titles render in the desktop's own interface font, Unicode
+            included; a <code>font</code> key overrides the family.
+            <a href="settings.html#font">Font</a>.</p>
+          </div>
+        </div>
+        <p>Sticky windows appear on every workspace, minimized windows appear
+        on none, and a window on another workspace can never be reached through
+        Airlock. A workspace can opt into the global list; see
+        <a href="settings.html">Settings</a>.</p>
+        <p>Every key, pointer rule, and card measurement is documented in
+        <a href="how-it-works.html">how the switcher behaves</a>.</p>
+      </div>
+    </section>
+
+    <section id="performance" class="row-section">
       <h2>Performance</h2>
-      <p class="muted">Measured on hardware, 2026-11-02 (method:
-      <a href="https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/hardware-checklist.md">hardware checklist</a>).</p>
-      <table>
-        <thead>
-          <tr><th>Measurement</th><th>Target</th><th>Airlock</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>Daemon RSS / threads</td><td>&lt; 30 MB</td><td><strong>8.0 MB / 1 thread</strong></td></tr>
-          <tr><td>Warm press round-trip</td><td>&lt; 50 ms</td><td><strong>&lt; 10 ms</strong></td></tr>
-          <tr><td>Cold press (respawn + settle)</td><td>—</td><td>~340 ms</td></tr>
-        </tbody>
-      </table>
+      <div>
+        <p class="muted">Measured on hardware on 2026-11-02 (method:
+        <a href="https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/hardware-checklist.md">hardware checklist</a>).</p>
+        <table>
+          <thead>
+            <tr><th>Measurement</th><th>Target</th><th>Airlock</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Daemon RSS / threads</td><td>&lt; 30 MB</td><td><strong>8.0 MB / 1 thread</strong></td></tr>
+            <tr><td>Warm press round-trip</td><td>&lt; 50 ms</td><td><strong>&lt; 10 ms</strong></td></tr>
+            <tr><td>Cold press (respawn + settle)</td><td>n/a</td><td>~340 ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="install" class="row-section">
+      <h2>Install</h2>
+      <div>
+        <pre><code class="language-bash">cargo install cosmic-ext-airlock
+airlock install</code></pre>
+        <p>Requires a COSMIC Epoch desktop session and Rust 1.93+. On
+        another compositor the daemon exits with a diagnostic naming the
+        missing protocol. <code>airlock install</code> is the complete
+        setup (keybind takeover, app icon, desktop entry, commented starter
+        config, all user-level);
+        <code>airlock install --uninstall</code> restores the built-in
+        switcher byte-for-byte.</p>
+      </div>
     </section>
   </div>
 </main>

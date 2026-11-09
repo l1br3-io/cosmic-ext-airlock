@@ -88,7 +88,10 @@ lands on the first match.
 It works in every mode: the flat list, the grouped tree, which
 flattens to its matching windows while a query stands, and the
 same-app view. **Ctrl+N** keeps its chord; every other printable key,
-digits included, types.
+digits included, types. One carve-out: **grave** in the grouped strip
+(grouping on the horizontal layout) steps the selected app's windows
+instead, and types only while a query stands. See
+[Grouping](settings.md#grouping).
 
 Clearing the query restores the card you had, keeping the window you
 had selected when it is still there. When nothing matches, the card
@@ -134,11 +137,16 @@ the card; `auto`, the default, follows the desktop's dark/light
 preference. See [settings.md](settings.md#theme).
 
 The `layout = "horizontal"` setting trades the column for a wide,
-short **band**: the same windows as tiles, each the app icon with the
-title beneath, clamped to the tile, ended by a `…` tile when the list
-outgrows the band. **Left** and **Right** step the band. **Ctrl+N**
-and the pointer address its tiles exactly as they address rows. The
-`columns` setting sizes it: two-thirds of the invoking output
+short **band**: the same windows as compact, icon-only tiles, each
+tile the app icon with its chord's digit, under one caption that
+names the selected window, ended by a `…` tile when the list
+outgrows the strip.
+
+- **Left** and **Right** step the strip.
+- **Ctrl+N** and the pointer address its tiles exactly as they
+  address rows.
+
+The `columns` setting sizes it: two-thirds of the invoking output
 (`"auto"`, the default) or a pinned 3 to 12 tiles. See
 [settings.md](settings.md#layout).
 

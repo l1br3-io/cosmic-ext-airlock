@@ -37,7 +37,7 @@ theme = "auto"         # match the desktop's dark/light mode (the default)
 rows = 8               # windows the card keeps in view (the default)
 layout = "vertical"    # the tall card; "horizontal" lays it out as a band of tiles
 # columns = "auto"     # the band's tile budget; or a whole number 3–12 (the default: "auto")
-grouping = false       # the flat list; true groups it by app (the default)
+grouping = false       # the flat list (the default); true groups it by app
 
 [[workspace]]
 name = "code"          # matches a workspace COSMIC reports as named "code"
@@ -122,7 +122,7 @@ end, and a list of ten or fewer shows every window with no `…` at
 all.
 
 The card grows by two rows once the list outgrows `rows` (the `…`
-slots). At the default that is 576 logical pixels tall — fine on any
+slots). At the default that is 584 logical pixels tall — fine on any
 100%-scaled display and on a 1440p screen at 200%; a 1080p panel at
 200% (a 540-logical screen) is the one configuration that wants less —
 `rows = 7` keeps the card inside that height.
@@ -208,20 +208,25 @@ setting keeps its value — back at Comfortable the full budget returns.
 
 - **`"vertical"` (default)** — today's card: the tall column of rows.
 - **`"horizontal"`** — the band: the same MRU window list laid out as
-  a single row of tiles in a wide, short card. A tile is the window's
-  application icon with its title beneath, clamped to the tile's
-  width; a list longer than the band ends in a `…` tile, and stepping
-  past the band scrolls it just enough to keep the selection on a
-  tile. **Left** and **Right** become the primary step keys — **Up**
-  and **Down** still step, as aliases — and **Ctrl+1..9** addresses
-  tiles in reading order, left to right, the chord shown as a corner
-  badge on each of the first nine tiles. The pointer drives the same
-  gesture per tile: hover moves the selection, a click commits, the
-  wheel steps.
+  a single row of compact icon-only tiles in a wide, short card. A
+  tile is the window's application icon with its chord's digit as a
+  corner badge; an app holding several live windows draws up to three
+  count dots under its icon. The card's one caption, fixed top-center,
+  names the commit target — the selected window's own title — and
+  truncates with an ellipsis when it outgrows the card. A list longer
+  than the strip ends in a `…` tile, and stepping past it scrolls
+  just enough to keep the selection on a tile. **Left** and
+  **Right** become the primary step keys — **Up** and **Down** still
+  step, as aliases — and **Ctrl+1..9** addresses tiles in reading
+  order, left to right, the digit shown on each of the first nine.
+  The pointer drives the same gesture per tile: hover moves the
+  selection, a click commits, the wheel steps.
 
 `rows` binds the vertical card only — the band's budget is
 [Columns](#columns). A grouped session (`grouping = true`) renders
-the grouped card, which is vertical; `layout` binds the flat list.
+the grouped card; `layout` still binds it: vertical keeps the tall
+tree, horizontal renders the grouped strip (see
+[Grouping](#grouping)).
 
 Like every setting, `layout` is read when a gesture starts. An edit
 mid-gesture changes nothing until the next press — a session keeps
@@ -232,15 +237,18 @@ the axis it opened with until Alt is released.
 `columns` sizes the horizontal band — `"auto"` (the default) or a
 whole number from 3 to 12. The vertical card ignores it.
 
-- **`"auto"`** — the band holds as many tiles as two-thirds of the
+- **`"auto"`** — the strip holds as many tiles as two-thirds of the
   invoking output's logical width fits, never fewer than three: a
-  1920-logical output opens eight tiles, a 2560 one ten. The share is
-  read from the output the gesture starts on and frozen for the
-  session — auto is responsive per monitor, not mid-gesture.
+  1920-logical output opens seventeen tiles, a 2560 one twenty-three.
+  The share is read from the output the gesture starts on and frozen
+  for the session — auto is responsive per monitor, not mid-gesture.
 - **`columns = N`** — a pinned budget: exactly N tiles, whatever the
-  output. Three is the shortest band that still reads as a strip;
-  twelve spans 1960 logical pixels — past the full logical width of a
-  4-K panel at 200 %.
+  output. Three is the shortest strip that still reads as one; twelve
+  spans 912 logical pixels.
+
+Whatever the budget, the card keeps a caption-width floor: a short
+strip renders left-aligned inside a card wide enough that the caption
+always reads, so the card never narrows below it.
 
 `columns` is read with `layout` when a gesture starts and frozen for
 the session like it — a pinned value live-applies on the next press.
@@ -277,8 +285,30 @@ The keys re-bind to the tree:
   on an expanded entry it collapses the group; elsewhere it does
   nothing.
 - **Ctrl+1..9** activates the Nth level-1 entry's window instantly.
+- **`** (the key above Tab) steps the selected app's windows — but only
+  when grouping combines with `layout = "horizontal"`, the grouped
+  strip. From an app tile, ` opens that app's windows on their most
+  recently used one and **Shift+`** on the last; from a window tile it
+  steps within the same app, wrapping, never crossing into another.
+  Everywhere else the key keeps its filter meaning: it types into the
+  query — in the flat and vertical-grouped card always, and in the
+  grouped strip while a query stands (a querying session is flat).
 - Flat mode (`grouping = false`, the default) is unchanged: Tab steps
   rows and ←/→ ride with ↑/↓ as step aliases.
+
+**Grouping on the band** (`layout = "horizontal"`) trades the tree for
+**the strip**: one row of tiles where the selected app's tile is
+replaced, in place, by its window run — nothing sits below, nothing is
+always open. **↓** opens the run on the app's most recently used
+window and **↑** closes it back to the app's tile, and the card keeps
+one width across the two. An app holds a run only while it has at
+least two live windows: **↓** on anything else does nothing, and
+committing that tile activates its one window. **Left/Right** step the
+visible tiles linearly, wrapping — stepping off a run closes it —
+**Tab/Shift+Tab** step app tiles from anywhere, **Ctrl+1..9** address
+the visible tiles in reading order, and Alt+minus keeps the parent
+rule (an app tile closes its front window). The expansion state above
+plays no part here: the strip's shape follows the selection alone.
 
 **The quick tap** — one Tab press with Alt released before the card can
 be read — is the first step of the same walk: your own app's next
@@ -367,14 +397,19 @@ A bad config never breaks switching:
 - Set `rows = 10`, then `rows = 3`; the next Alt+Tab keeps that many
   windows in view, `…` rows riding on top — no restart
 - Set `layout = "horizontal"`; the next Alt+Tab lays the same windows
-  out as a band of tiles — Left/Right step, the first nine tiles show
-  their Ctrl+N corner badges, a long list ends in a `…` tile
+  out as a strip of icon-only tiles under the one caption —
+  Left/Right step, the first nine tiles show their digit badges, a
+  long list ends in a `…` tile
 - With the band open, set `columns = 3`, then `columns = 12` — each
   applies on the next press; on `"auto"` the band refits when the
   gesture starts on a different-sized output
 - Set `layout = "vertical"`; the next Alt+Tab is the tall card again,
   unchanged — and `grouping = true` renders the grouped card, vertical
   whatever `layout` says
+- Set `grouping = true` with `layout = "horizontal"`: the next Alt+Tab
+  is the strip — ↓ opens the selected app's windows in place, ↑ closes
+  them, and the card never changes width between the two; Tab steps
+  apps, Left/Right step the tiles
 - Flip COSMIC's Appearance style (Round / Slightly-Round / Square); the
   next Alt+Tab's corners already match — 12 / 8 / 2 px
 - Flip COSMIC's interface density (Compact / Comfortable / Spacious);

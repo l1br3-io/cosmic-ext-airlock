@@ -4,9 +4,7 @@ Workspace-isolated Alt+Tab for the COSMIC™ desktop: the switcher lists and
 cycles only the windows on the **current workspace**, so nothing you parked
 elsewhere leaks into your focus.
 
-![Airlock's Alt+Tab overlay: a dark rounded card listing the current
-workspace's windows — app icon and title per row, one highlighted, ellipsis
-rows above and below](https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/docs/img/overlay-card.png)
+<img src="https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/docs/img/overlay-card.png" width="532" alt="Airlock's Alt+Tab overlay: a dark rounded card listing the current workspace's windows — app icon and title per row, one highlighted, ellipsis rows above and below">
 
 > Airlock is third-party software for the COSMIC™ desktop. It is not official
 > COSMIC software and is not affiliated with or endorsed by System76.
@@ -44,17 +42,32 @@ pipeline the COSMIC launcher uses) beside its title.
   default) with `…` rows marking the truncated edges, and stepping
   walks the whole list — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#rows)
-- **A horizontal card** (`layout = "horizontal"`) lays the same list out
-  as a wide band of tiles — app icon, title beneath — stepped with
-  Left/Right and addressed by Ctrl+N and the pointer per tile;
-  `columns` fits the band to two-thirds of the screen (`"auto"`, the
-  default) or pins 3–12 tiles — see
+- **A horizontal card** (`layout = "horizontal"`) lays the same list
+  out as a wide strip of compact icon-only tiles, one caption at the
+  top naming the window the release would activate; stepped with
+  Left/Right and addressed by Ctrl+N (a bare digit on each tile) and
+  the pointer per tile; apps with several windows show up to three
+  count dots under their icon, and `columns` fits the strip to
+  two-thirds of the screen (`"auto"`, the default) or pins 3–12
+  tiles — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#layout)
 - **App grouping** (`grouping = true`) turns the list into a per-app tree:
   collapsed app entries that commit their most recently used window, → to
   expand one (remembered across gestures) and ← to collapse; Tab, arrows,
   and the wheel walk the visible rows linearly — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#grouping)
+- **Grouping on the band** (`grouping = true` with
+  `layout = "horizontal"`) lays the tree out as one strip: the selected
+  app's tile is replaced, in place, by its window run. ↓ opens the run
+  and ↑ closes it — the card keeps its width across the two, and an app
+  holds a run only while it has two live windows (the caption names the
+  app's most recently used window while its tile is selected). Tab
+  steps apps;
+  Left/Right step the visible tiles; **`** (the key above Tab) opens
+  the selected app's windows on their most recently used one and steps
+  them, wrapping within the app — **Shift+`** backwards. The key does
+  this in this mode only; in every other session it types into the
+  filter
 - **Type to filter**: while the card is up, typing narrows it — title or
   app name, case-insensitive, first match selected; Backspace edits,
   Escape clears before it dismisses. Works in every mode

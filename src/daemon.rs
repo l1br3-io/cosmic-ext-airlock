@@ -81,6 +81,14 @@ impl Mru {
 /// is dismissed and the next press starts fresh against real state. The
 /// frozen scope extends the same philosophy to settings: an edit landing
 /// mid-gesture changes nothing until the next press.
+/// The frozen session — the selection ring over a scope plus the settings
+/// frozen at open. See [`session_step`] for how sessions are built.
+///
+/// For a grouped session, [`Self::visible`] and [`Self::viewport`] are
+/// the one-sequence map: the exact strip the last model rendered (the
+/// derived sequence, `inplace-strip`) beside the window it rendered it
+/// under, so pointer rows map back to tree rows without handle guessing
+/// and the sticky `…` follow carries on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Switch {
     ring: switcher::Ring,
@@ -221,7 +229,8 @@ impl Switch {
     /// past the window are `None`. The row index is exact where a
     /// handle alone is ambiguous — a group's front window is both its
     /// parent row and its first child, and hovering the child must
-    /// select the child.
+    /// select the child. A combined session's stored sequence is its
+    /// derived strip (`inplace-strip`) — the same map, one sequence.
     fn tree_row_at(&self, row: usize) -> Option<usize> {
         let viewport = self.viewport?;
         let top = viewport.top as usize;
@@ -237,7 +246,11 @@ impl Switch {
     /// MRU head. An empty card leaves the selection exactly where it
     /// was (the caller's rebuild decides what an empty card means).
     fn select_first(&mut self, snapshot: &Snapshot, expanded: &std::collections::HashSet<String>) {
-        if self.tree.is_some() {
+        if self.is_combined() {
+            if let Some(&first) = strip_level1(self, snapshot).first() {
+                self.tree_sel = first;
+            }
+        } else if self.tree.is_some() {
             let visible = grouped_visible(self, snapshot, expanded);
             if let Some(&first) = visible.first() {
                 self.tree_sel = first;
@@ -252,8 +265,10 @@ impl Switch {
     /// Applies a pointer hover crossing: flat sessions select by the
     /// event-time handle; grouped sessions by the event-time row — both
     /// captured against the model the user saw. Rev 5: every visible
-    /// row selects, headers included — the divider rule is gone.
-    /// Returns whether the selection moved.
+    /// row selects, headers included — the divider rule is gone. A
+    /// combined session selects through the same one-sequence map; the
+    /// strip's shape follows the selection by derivation. Returns
+    /// whether the selection moved.
     fn select_pointer_row(&mut self, row: usize, handle: Option<Handle>) -> bool {
         match &self.tree {
             Some(_) => {
@@ -265,6 +280,12 @@ impl Switch {
             }
             None => handle.is_some_and(|handle| self.ring.select(handle).is_some()),
         }
+    }
+
+    /// Whether this session is the grouped-horizontal combination: the
+    /// frozen tree plus a horizontal layout.
+    fn is_combined(&self) -> bool {
+        self.tree.is_some() && self.layout == crate::ui::LayoutSetting::Horizontal
     }
 }
 
@@ -395,7 +416,14 @@ pub fn ring_step(
         });
         if open.as_ref().is_some_and(|session| session.tree.is_some()) {
             let session = open.as_mut()?;
-            step_open(session, snapshot, expanded, direction);
+            if session.is_combined() {
+                // Combined: the opening press steps apps (lands on the
+                // second app tile) — Tab's behavior, the quick-tap
+                // criterion.
+                step_apps(session, snapshot, direction);
+            } else {
+                step_open(session, snapshot, expanded, direction);
+            }
             return session.selected_handle();
         }
     }
@@ -454,11 +482,16 @@ pub fn session_step(
     // An open grouped session steps its visible rows (Tab, ↓/↑, and
     // the wheel share the one linear walk); the snapshot, scope,
     // palette, rows, and grouping only matter when a session opens.
-    // Plain opens go straight through.
+    // Plain opens go straight through. The combined card's step is
+    // within-band, not the linear walk.
     if let Some(session) = open.as_mut()
         && session.tree.is_some()
     {
-        step_visible(session, snapshot, expanded, direction);
+        if session.is_combined() {
+            step_band(session, snapshot, direction);
+        } else {
+            step_visible(session, snapshot, expanded, direction);
+        }
         return session.selected_handle();
     }
     if open.is_some() || !same_app {
@@ -649,6 +682,314 @@ fn step_visible(
     session.tree_sel = step_in(&visible, session.tree_sel, direction);
 }
 
+// --- grouped-horizontal: the derived strip (`inplace-strip`) ----------
+//
+// The strip's shape is a pure function of the tree selection, never
+// carried state: a child selection opens its parent's run at the
+// parent's slot, a level-1 selection closes every run. The ≥2 rule
+// keeps a single-window app's tile whole — no run ever grows below it,
+// so the same window never shows twice.
+
+/// An app's live windows: a parent's liveness-filtered children in
+/// frozen MRU order, a leaf's own single window. The shared domain of
+/// the run derivation and ↓'s ≥2 rule — the frozen window set decides
+/// liveness, as it always has.
+fn strip_windows(
+    tree: &switcher::Grouping,
+    snapshot: &Snapshot,
+    scope: Scope,
+    app: usize,
+) -> Vec<usize> {
+    let indices = match tree.rows().get(app).map(|row| row.kind) {
+        Some(switcher::RowKind::Parent) => tree.children_of(app),
+        _ => vec![app],
+    };
+    indices
+        .into_iter()
+        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, scope))
+        .collect()
+}
+
+/// The strip's closed shape: the level-1 tree rows (parents and
+/// leaves), liveness-filtered — the plain app tiles every level-1
+/// selection shows.
+fn strip_level1(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
+    let Some(tree) = session.tree.as_ref() else {
+        return Vec::new();
+    };
+    tree.visible(&HashSet::new())
+        .into_iter()
+        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, session.scope))
+        .collect()
+}
+
+/// The strip's visible sequence — the one derivation the
+/// grouped-horizontal card renders and walks: a pure function of the
+/// tree selection (tree indices, liveness-filtered). A child selection
+/// opens its parent's run at the parent's slot — the app's windows
+/// between the other apps' level-1 rows, the replaced tile gone; every
+/// level-1 selection closes all runs: the plain level-1 rows. A parent
+/// holding fewer than two live windows derives no run — the shrink
+/// rule's derivation half ([`coerce_shrunk_run`] owns the selection
+/// half), so a single-window app never shows the same handle twice.
+fn strip_sequence(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
+    let Some(tree) = session.tree.as_ref() else {
+        return Vec::new();
+    };
+    let level1 = strip_level1(session, snapshot);
+    // The open run: the selected child's parent's live windows, but
+    // only while the ≥2 rule holds. Tree order is strip order, so the
+    // run splices between the level-1 rows around the parent's slot —
+    // the parent's own tile drops out (replaced in place), and a dead
+    // parent tile still finds its slot between its neighbors.
+    let run = tree
+        .rows()
+        .get(session.tree_sel)
+        .filter(|row| row.kind == switcher::RowKind::Child)
+        .and_then(|_| tree.parent_of(session.tree_sel))
+        .and_then(|parent| {
+            let windows = strip_windows(tree, snapshot, session.scope, parent);
+            (windows.len() >= 2).then_some((parent, windows))
+        });
+    let Some((parent, windows)) = run else {
+        return level1;
+    };
+    let mut sequence = Vec::with_capacity(level1.len() + windows.len());
+    sequence.extend(level1.iter().copied().filter(|&index| index < parent));
+    sequence.extend(windows);
+    sequence.extend(level1.iter().copied().filter(|&index| index > parent));
+    sequence
+}
+
+/// The shrink rule's selection half: a child selection whose parent
+/// has fallen below two live windows moves to the parent row. The run
+/// is closed by derivation either way; this keeps the selection on a
+/// tile the card actually shows, never dangling inside a gone run.
+/// Returns whether the selection moved.
+fn coerce_shrunk_run(session: &mut Switch, snapshot: &Snapshot) -> bool {
+    let Some(tree) = session.tree.as_ref() else {
+        return false;
+    };
+    let Some(parent) = tree
+        .rows()
+        .get(session.tree_sel)
+        .filter(|row| row.kind == switcher::RowKind::Child)
+        .and_then(|_| tree.parent_of(session.tree_sel))
+    else {
+        return false;
+    };
+    if strip_windows(tree, snapshot, session.scope, parent).len() >= 2 {
+        return false;
+    }
+    session.tree_sel = parent;
+    true
+}
+
+/// ↓'s ≥2 rule: whether the app tile at `app` opens its run — true iff
+/// the app holds at least two live windows. A leaf (a single-window
+/// app) and a parent shrunk below two commit directly; the no-op below
+/// their tiles is what kills the duplicate-tile bug.
+fn opens_run(session: &Switch, snapshot: &Snapshot, app: usize) -> bool {
+    let Some(tree) = session.tree.as_ref() else {
+        return false;
+    };
+    strip_windows(tree, snapshot, session.scope, app).len() >= 2
+}
+
+/// The strip's render inputs: the derived sequence beside the width
+/// frozen against both of the selection's shapes — the closed shape's
+/// slots (the level-1 rows under the tile budget) and the open shape's
+/// (the selection's app's run spliced in), whichever the card shows
+/// now. ↓ and ↑ toggle between the two; the max never moves, so the
+/// card never resizes on either key. A leaf or a shrunk parent opens
+/// nothing — its open shape is the closed one.
+fn strip_render(session: &Switch, snapshot: &Snapshot) -> (Vec<usize>, usize) {
+    let Some(tree) = session.tree.as_ref() else {
+        return (Vec::new(), 0);
+    };
+    let level1 = strip_level1(session, snapshot);
+    let sequence = strip_sequence(session, snapshot);
+    // The app whose run the freeze pins: the selection's parent when a
+    // child holds it, the selection itself when a tile does. A dead
+    // parent tile (its front window gone) still finds its slot, so the
+    // splice length drops the tile only when the level-1 list holds it.
+    let app = match tree.rows().get(session.tree_sel).map(|row| row.kind) {
+        Some(switcher::RowKind::Child) => tree.parent_of(session.tree_sel),
+        _ => Some(session.tree_sel),
+    };
+    let open_len = app.map_or(level1.len(), |app| {
+        level1.len() + strip_windows(tree, snapshot, session.scope, app).len()
+            - usize::from(level1.contains(&app))
+    });
+    let slots = level1
+        .len()
+        .min(session.tiles)
+        .max(open_len.min(session.tiles));
+    (sequence, slots)
+}
+
+// --- grouped-horizontal: the combined card's session walks -----------
+//
+// The walks address the derived strip: the sequence is a pure function
+// of the selection, so every walk is "move the selection, let the
+// shape follow." No band state, no collapse state — the ≥2 rule guards
+// the only shape-changing key (↓), and every other movement closes or
+// keeps runs by derivation alone.
+
+/// The strip's linear walk (←/→, the wheel): one step along the
+/// visible sequence, wrapping — windows and app tiles alike. Stepping
+/// off a run onto a neighboring tile closes the run (derived); a
+/// selection the sequence does not hold (a child under a shrunk
+/// parent, pre-coercion) stays put until the rebuild settles it.
+fn step_band(session: &mut Switch, snapshot: &Snapshot, direction: Direction) {
+    if !session.is_combined() {
+        return;
+    }
+    let sequence = strip_sequence(session, snapshot);
+    session.tree_sel = step_in(&sequence, session.tree_sel, direction);
+}
+
+/// Tab / Shift+Tab: step the **app tiles only**, from anywhere — from
+/// inside a run, from the run's parent to the next app tile after it
+/// (the run closes by derivation).
+fn step_apps(session: &mut Switch, snapshot: &Snapshot, direction: Direction) {
+    if !session.is_combined() {
+        return;
+    }
+    let apps = strip_level1(session, snapshot);
+    if apps.is_empty() {
+        return;
+    }
+    let Some(tree) = session.tree.as_ref() else {
+        return;
+    };
+    // From inside a run, the walk continues from the run's parent.
+    let current = if tree
+        .rows()
+        .get(session.tree_sel)
+        .is_some_and(|row| row.kind == switcher::RowKind::Child)
+    {
+        tree.parent_of(session.tree_sel).unwrap_or(session.tree_sel)
+    } else {
+        session.tree_sel
+    };
+    session.tree_sel = step_in(&apps, current, direction);
+}
+
+/// ↓: open the selected app tile's run on its MRU-front window — under
+/// the ≥2 rule. A tile whose app holds fewer than two live windows
+/// opens nothing (a leaf commits directly, never growing a run below
+/// itself), and a window tile is the deepest level: the W3C no-op.
+fn enter_band(session: &mut Switch, snapshot: &Snapshot) -> bool {
+    if !session.is_combined() {
+        return false;
+    }
+    let Some(tree) = session.tree.as_ref() else {
+        return false;
+    };
+    if tree
+        .rows()
+        .get(session.tree_sel)
+        .is_some_and(|row| row.kind == switcher::RowKind::Child)
+    {
+        return false; // a window tile: the deepest level
+    }
+    if !opens_run(session, snapshot, session.tree_sel) {
+        return false; // the ≥2 rule
+    }
+    let Some(&front) = strip_windows(tree, snapshot, session.scope, session.tree_sel).first()
+    else {
+        return false;
+    };
+    session.tree_sel = front;
+    true
+}
+
+/// ↑: from a window tile, select its parent row (the run closes by
+/// derivation); from a level-1 tile, the W3C root no-op.
+fn exit_band(session: &mut Switch) -> bool {
+    if !session.is_combined() {
+        return false;
+    }
+    let Some(tree) = session.tree.as_ref() else {
+        return false;
+    };
+    let Some(parent) = tree.parent_of(session.tree_sel) else {
+        return false; // a level-1 selection: the root
+    };
+    session.tree_sel = parent;
+    true
+}
+
+/// The key above Tab in the combined card (`` ` ``): the within-app
+/// walk. From an app tile, open that app's windows — Next on the
+/// MRU-front window (↓'s twin), Previous on the last; from a window
+/// tile, step the focused app's windows with wrap, never crossing into
+/// another app (that walk is ←/→ and Tab). A one-window app holds no
+/// dead end: entering from its tile selects it, stepping from it stays
+/// put. While a query stands the session is flat (the flatten-on-query
+/// rule), so the press types the key's own char instead — the backtick
+/// bare, `~` shifted — the level lives here, keeping `key_input` pure.
+/// Returns whether a session was touched.
+fn step_window(open: &mut Option<Switch>, snapshot: &Snapshot, direction: Direction) -> bool {
+    if open
+        .as_ref()
+        .is_some_and(|session| session.filtered.is_some())
+    {
+        // The char rides the direction: the shifted press (Previous)
+        // types `~`, the bare one the backtick — the query keeps
+        // receiving what the key prints, whichever keysym delivered it.
+        let ch = match direction {
+            Direction::Next => '`',
+            Direction::Previous => '~',
+        };
+        return type_into(open, snapshot, ch);
+    }
+    let Some(session) = open.as_mut() else {
+        return false;
+    };
+    if !session.is_combined() {
+        return false;
+    }
+    let Some(tree) = session.tree.as_ref() else {
+        return false;
+    };
+    // The focused app: the selection's parent when a window tile holds
+    // it, the selection itself when an app tile does.
+    let focused = if tree
+        .rows()
+        .get(session.tree_sel)
+        .is_some_and(|row| row.kind == switcher::RowKind::Child)
+    {
+        tree.parent_of(session.tree_sel).unwrap_or(session.tree_sel)
+    } else {
+        session.tree_sel
+    };
+    let windows = strip_windows(tree, snapshot, session.scope, focused);
+    if tree
+        .rows()
+        .get(session.tree_sel)
+        .is_some_and(|row| row.kind == switcher::RowKind::Child)
+    {
+        if windows.is_empty() {
+            return false;
+        }
+        // A one-window set stays put (`step_in`'s len < 2 rule) — the
+        // no-dead-end guarantee, both directions alike.
+        session.tree_sel = step_in(&windows, session.tree_sel, direction);
+        return true;
+    }
+    let target = match direction {
+        Direction::Next => windows.first().copied(),
+        Direction::Previous => windows.last().copied(),
+    };
+    let Some(target) = target else {
+        return false;
+    };
+    session.tree_sel = target;
+    true
+}
+
 /// One character into the session's query (`type-filter`): append —
 /// the query caps at [`QUERY_MAX`], input past it ignored — then
 /// re-derive the narrowed ring over the frozen set and reselect its
@@ -761,6 +1102,15 @@ fn advance_off_doomed(
     // The querying walk: the narrowed ring's handles.
     let sequence: Vec<Handle> = if let Some(filtered) = &session.filtered {
         filtered.handles().to_vec()
+    } else if session.is_combined() {
+        let tree = session
+            .tree
+            .as_ref()
+            .expect("combined sessions carry a tree");
+        strip_sequence(session, snapshot)
+            .into_iter()
+            .map(|index| tree.rows()[index].handle)
+            .collect()
     } else if let Some(tree) = &session.tree {
         grouped_visible(session, snapshot, expanded)
             .into_iter()
@@ -801,6 +1151,20 @@ fn select_fresh(
 ) -> bool {
     if let Some(filtered) = &mut session.filtered {
         return filtered.select(handle).is_some();
+    }
+    if session.is_combined() {
+        let tree = session
+            .tree
+            .as_ref()
+            .expect("combined sessions carry a tree");
+        let sequence = strip_sequence(session, snapshot);
+        return sequence
+            .iter()
+            .position(|&index| tree.rows()[index].handle == handle)
+            .is_some_and(|pos| {
+                session.tree_sel = sequence[pos];
+                true
+            });
     }
     if let Some(tree) = &session.tree {
         let target = grouped_visible(session, snapshot, expanded)
@@ -910,8 +1274,8 @@ struct Step {
 }
 
 /// Live settings state: the parsed rules plus the source that watches
-/// them. Refreshed only at session open — one stat per invocation, so
-/// nothing on the gesture path blocks on file reads.
+/// them. Refreshed only at session open — one bounded read per
+/// invocation, so nothing on the gesture path blocks on file reads.
 struct LiveSettings {
     source: SettingsSource,
     settings: settings::Settings,
@@ -920,7 +1284,8 @@ struct LiveSettings {
 impl LiveSettings {
     /// Startup load: read once (missing file means defaults, silently;
     /// anything else diagnostic-worthy degrades to defaults too), then
-    /// seed the mtime so the first gesture does not re-read for nothing.
+    /// seed the change baseline so the first gesture does not re-read
+    /// for nothing.
     fn load() -> Self {
         let mut source = SettingsSource::new();
         let settings = match source.read() {
@@ -935,15 +1300,23 @@ impl LiveSettings {
         Self { source, settings }
     }
 
-    /// One-stat reload check: adopt a changed file, fall back to defaults
+    /// One-read reload check: adopt a changed file, fall back to defaults
     /// when it is gone, and keep last-good settings on a malformed read —
-    /// settings can never break switching.
+    /// settings can never break switching. An adoption says so once per
+    /// edit with the two shape-determining keys, so a config that seems
+    /// ignored can be traced in the journal: no line, no change seen.
     fn refresh(&mut self) {
         match self.source.check() {
             Reload::Unchanged => {}
             Reload::NotPresent => self.settings = settings::Settings::default(),
             Reload::Changed => match self.source.read() {
-                Ok(fresh) => self.settings = fresh,
+                Ok(fresh) => {
+                    eprintln!(
+                        "airlock daemon: config change adopted: layout={:?} grouping={}",
+                        fresh.layout, fresh.grouping
+                    );
+                    self.settings = fresh;
+                }
                 Err(ReadError::Missing) => self.settings = settings::Settings::default(),
                 Err(error) => {
                     eprintln!("airlock daemon: keeping last-good settings: {error}");
@@ -1128,10 +1501,17 @@ pub fn run() -> Result<(), RunError> {
                 GestureOutput::EnterChild => {
                     // → expands the selected parent (persistently) and
                     // enters its children; on a leaf the W3C end-node
-                    // rule makes it a no-op.
-                    if open.as_mut().is_some_and(|session| {
-                        enter_group(session, &snapshot, &mut expanded, Direction::Next)
-                    }) {
+                    // rule makes it a no-op. ↓ in the combined card
+                    // opens that app's run on its front window.
+                    let entered = if open.as_ref().is_some_and(|session| session.is_combined()) {
+                        open.as_mut()
+                            .is_some_and(|session| enter_band(session, &snapshot))
+                    } else {
+                        open.as_mut().is_some_and(|session| {
+                            enter_group(session, &snapshot, &mut expanded, Direction::Next)
+                        })
+                    };
+                    if entered {
                         show_selection(
                             &mut session,
                             &mut gesture,
@@ -1145,11 +1525,47 @@ pub fn run() -> Result<(), RunError> {
                 GestureOutput::ExitParent => {
                     // ← exits a child to its parent row; an expanded
                     // parent collapses; a collapsed top-level row is the
-                    // W3C root no-op.
-                    if open
-                        .as_mut()
-                        .is_some_and(|session| exit_group(session, &mut expanded))
+                    // W3C root no-op. ↑ in the combined card returns to
+                    // parent row — the run closes by derivation.
+                    let exited = if open.as_ref().is_some_and(|session| session.is_combined()) {
+                        open.as_mut().is_some_and(exit_band)
+                    } else {
+                        open.as_mut()
+                            .is_some_and(|session| exit_group(session, &mut expanded))
+                    };
+                    if exited {
+                        show_selection(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            &expanded,
+                            &mut icons,
+                        );
+                    }
+                }
+                GestureOutput::StepApp(direction) => {
+                    // Tab in the combined card steps the app list from
+                    // app tiles only, from anywhere.
+                    if let Some(current) = open.as_mut()
+                        && current.is_combined()
                     {
+                        step_apps(current, &snapshot, direction);
+                        show_selection(
+                            &mut session,
+                            &mut gesture,
+                            &mut open,
+                            &snapshot,
+                            &expanded,
+                            &mut icons,
+                        );
+                    }
+                }
+                GestureOutput::StepWindow(direction) => {
+                    // The key above Tab: the within-app walk, or the
+                    // type-into fallthrough while a query stands (the
+                    // walk fn owns that decision).
+                    if step_window(&mut open, &snapshot, direction) {
                         show_selection(
                             &mut session,
                             &mut gesture,
@@ -1700,12 +2116,11 @@ fn show_selection(
         .map_or_else(crate::ui::Palette::dark, |session| session.palette);
     let scale = session.render_scale();
     // Icons rasterize at the side the shown card paints: the row's own
-    // 32 for every vertical card (the grouped tree included — the
-    // grouped-horizontal combination is its own module and stays
-    // vertical here), the tile's 48 for a horizontal flat session.
-    let horizontal = open.as_ref().is_some_and(|current| {
-        current.layout == crate::ui::LayoutSetting::Horizontal && current.tree.is_none()
-    });
+    // 32 for every vertical card, the tile's 48 for any horizontal card
+    // (flat band or the grouped strip — both are tiles).
+    let horizontal = open
+        .as_ref()
+        .is_some_and(|current| current.layout == crate::ui::LayoutSetting::Horizontal);
     let icon_side = if horizontal {
         crate::ui::TILE_ICON
     } else {
@@ -1722,8 +2137,11 @@ fn show_selection(
     );
     // A grouped session stores the visible sequence its card renders —
     // the exact list the pointer's row indexes address — beside the
-    // model that rendered it.
-    if let Some(current) = open.as_mut() {
+    // model that rendered it. The combined session's list is its
+    // derived strip, stored in its own branch below.
+    if let Some(current) = open.as_mut()
+        && !current.is_combined()
+    {
         current.visible = grouped_visible(current, snapshot, expanded);
     }
     let model = open.as_mut().and_then(|current| {
@@ -1795,6 +2213,37 @@ fn show_selection(
                     }
                 })
                 .map(|model| crate::ui::with_query(model, &current.query.clone()));
+        }
+        // The combined session renders the derived strip
+        // (`inplace-strip`) — settled before the shared match, which
+        // borrows the tree immutably while this branch must mutate the
+        // session: settle the shrink rule, derive the sequence and its
+        // frozen width, render one band. The stored `visible` becomes
+        // the strip's sequence — the pointer's one-sequence map.
+        if current.is_combined() {
+            coerce_shrunk_run(current, snapshot);
+            let (sequence, width_slots) = strip_render(current, snapshot);
+            current.visible = sequence.clone();
+            let tree = current
+                .tree
+                .as_ref()
+                .expect("combined sessions carry a tree");
+            return crate::ui::overlay_model_grouped_horizontal(
+                tree,
+                &sequence,
+                current.tree_sel,
+                width_slots,
+                snapshot,
+                icons,
+                scale,
+                &palette,
+                current.profile,
+                crate::ui::Banding {
+                    tiles: current.tiles,
+                    prev: current.viewport,
+                },
+                crate::ui::text_backend(&text, session.text_system()),
+            );
         }
         match (&current.tree, current.app.as_deref()) {
             // Grouped plain session: the frozen tree cut to the stored
@@ -1871,17 +2320,26 @@ fn show_selection(
             let observed = open.as_ref().and_then(|session| session.hovered);
             let mut model = model;
             model.hovered = hovered_row(&model, observed);
-            // The key map rides the shown card: Tab/→/← mean tree
-            // walks exactly when the card paints the tree. The text
-            // decision rides it too — the overlay freezes what it
-            // draws under.
+            // The key map rides the shown card: flat, vertical grouped,
+            // or the grouped-horizontal combination (tree × horizontal).
+            // The text decision rides it too — the overlay freezes what
+            // it draws under.
             let open_session = open.as_ref();
-            let grouped = open_session.is_some_and(|session| session.tree.is_some());
+            let mode = match open_session {
+                Some(session) if session.tree.is_some() => {
+                    if session.layout == crate::ui::LayoutSetting::Horizontal {
+                        crate::ui::KeyMode::GroupedHorizontal
+                    } else {
+                        crate::ui::KeyMode::Grouped
+                    }
+                }
+                _ => crate::ui::KeyMode::Flat,
+            };
             let text = open_session.map_or_else(
                 || crate::text::TextDecision::Bitmap,
                 |session| session.text.clone(),
             );
-            session.overlay_show(model, palette, text, grouped)
+            session.overlay_show(model, palette, text, mode)
         }
         None => {
             session.overlay_hide("nothing eligible");
@@ -5973,6 +6431,674 @@ mod tests {
         assert_eq!(
             open.as_ref().expect("fresh session opened").text,
             crate::text::TextDecision::Bitmap
+        );
+    }
+
+    // --- grouped-horizontal: the combined session (GH1) -------------------
+
+    /// Opens a combined (grouped-horizontal) session on `snap` with one
+    /// opening Alt+Tab — the grouped twin with a horizontal layout.
+    fn combined_session(snap: &Snapshot) -> (Option<Switch>, HashSet<String>) {
+        let mut open = None;
+        let mut expanded = HashSet::new();
+        session_step(
+            &mut open,
+            snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            true,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Horizontal,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut expanded,
+        );
+        (open, expanded)
+    }
+
+    /// Three two-window apps, MRU a1, a2, b1, b2, c1, c2. The frozen
+    /// tree reads [P-a1, C-a1, C-a2, P-b1, C-b1, C-b2, P-c1, C-c1,
+    /// C-c2] — apps at tree indices 0, 3, 6.
+    fn combined_three_apps() -> Snapshot {
+        snapshot(
+            vec![
+                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 60),
+                app_toplevel(2, "app.a", &[1], State::default(), 50),
+                app_toplevel(3, "app.b", &[1], State::default(), 40),
+                app_toplevel(4, "app.b", &[1], State::default(), 30),
+                app_toplevel(5, "app.c", &[1], State::default(), 20),
+                app_toplevel(6, "app.c", &[1], State::default(), 10),
+            ],
+            Some(1),
+        )
+    }
+
+    /// The three-apps fixture with b's second window gone mid-gesture:
+    /// the frozen tree keeps both of b's children, the live set keeps
+    /// one — the shape the shrink rule and the ≥2 rule decide over.
+    fn combined_three_apps_b_shrunk() -> Snapshot {
+        snapshot(
+            vec![
+                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 60),
+                app_toplevel(2, "app.a", &[1], State::default(), 50),
+                app_toplevel(3, "app.b", &[1], State::default(), 40),
+                app_toplevel(5, "app.c", &[1], State::default(), 20),
+                app_toplevel(6, "app.c", &[1], State::default(), 10),
+            ],
+            Some(1),
+        )
+    }
+
+    #[test]
+    fn combined_opening_press_lands_on_the_second_app_tile() {
+        // The quick-tap criterion: the opening press steps the app band
+        // once — the second app tile — and release activates that app's
+        // MRU-front window.
+        let snap = grouped_two_apps();
+        let (open, _expanded) = combined_session(&snap);
+        let session = open.as_ref().expect("session opened");
+        assert_eq!(session.tree_sel, 3, "b's parent tile");
+        assert_eq!(session.selected_handle(), Some(Handle(3)));
+    }
+
+    #[test]
+    fn combined_tab_steps_apps_from_anywhere() {
+        // Tab steps the app tiles only, from anywhere: from inside a
+        // run it lands on the next app tile after the run's parent (the
+        // run closes by derivation); Shift+Tab wraps.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 1; // a's front child, inside the run
+        step_apps(session, &snap, Direction::Next);
+        assert_eq!(session.tree_sel, 3, "the next app after a");
+        step_apps(session, &snap, Direction::Next);
+        assert_eq!(session.tree_sel, 0, "wraps to a");
+        step_apps(session, &snap, Direction::Previous);
+        assert_eq!(session.tree_sel, 3, "wraps back");
+    }
+
+    #[test]
+    fn combined_arrows_step_the_visible_sequence() {
+        // ←/→ step the visible strip sequence linearly, wrapping —
+        // windows and app tiles alike. Stepping off a run onto a
+        // neighboring tile closes the run (the shape follows the
+        // selection by derivation).
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        // The closed strip: b's tile (3) → wraps to a's (0).
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 3;
+        step_band(session, &snap, Direction::Next);
+        assert_eq!(session.tree_sel, 0, "the closed strip wraps");
+        // a's run: the front child (1) → the second (2) → steps off
+        // onto b's tile; ← off the run's front wraps onto b's tile too.
+        session.tree_sel = 1;
+        step_band(session, &snap, Direction::Next);
+        assert_eq!(session.tree_sel, 2);
+        step_band(session, &snap, Direction::Next);
+        assert_eq!(session.tree_sel, 3, "steps off the run onto b's tile");
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![0, 3],
+            "the run closed by derivation"
+        );
+        open.as_mut().expect("open").tree_sel = 1;
+        step_band(open.as_mut().expect("open"), &snap, Direction::Previous);
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "backwards off the run wraps onto b's tile"
+        );
+    }
+
+    #[test]
+    fn combined_down_opens_the_run_and_up_exits() {
+        // ↓ from an app tile opens its run on the MRU-front window; ↑
+        // from a window tile selects its parent row — the run closes by
+        // derivation, the strip's two shapes one key apart.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 0; // a's parent
+        assert!(enter_band(session, &snap));
+        assert_eq!(session.tree_sel, 1, "a's front child");
+        assert!(exit_band(session));
+        assert_eq!(session.tree_sel, 0, "back on a's tile");
+    }
+
+    #[test]
+    fn combined_level_keys_no_op_at_their_edges() {
+        // The W3C no-ops: ↓ from a window tile (deepest level) and ↑
+        // from a level-1 tile (root) — parent and leaf kinds alike, the
+        // selection never moves. (↓'s ≥2 floor is
+        // `combined_down_holds_the_two_window_floor` below.)
+        let two = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&two);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 1; // a's child, inside the run
+        assert!(!enter_band(session, &two), "↓ on a window tile");
+        assert_eq!(session.tree_sel, 1);
+        session.tree_sel = 0; // a's parent
+        assert!(!exit_band(session), "↑ on a parent tile");
+        assert_eq!(session.tree_sel, 0);
+        let lone = grouped_lone_parent();
+        let (mut lone_open, _) = combined_session(&lone);
+        let session = lone_open.as_mut().expect("open");
+        session.tree_sel = 3; // c's leaf
+        assert!(!exit_band(session), "↑ on a leaf tile");
+        assert_eq!(session.tree_sel, 3);
+    }
+
+    #[test]
+    fn combined_down_enters_each_of_three_apps_children() {
+        // No collapse state anywhere: ↓ from *each* app tile enters that
+        // app's children in one press — the walk over three apps — and
+        // the expansion set stays empty throughout (the combined card
+        // never touches it).
+        let snap = combined_three_apps();
+        let (mut open, expanded) = combined_session(&snap);
+        for (parent, first_child) in [(0usize, 1usize), (3, 4), (6, 7)] {
+            let session = open.as_mut().expect("open");
+            session.tree_sel = parent;
+            assert!(enter_band(session, &snap), "enters from tree row {parent}");
+            assert_eq!(session.tree_sel, first_child, "the app's MRU-front window");
+            assert!(
+                !session.tree.as_ref().expect("tree").rows()[first_child]
+                    .app_id
+                    .is_empty()
+            );
+        }
+        assert!(expanded.is_empty(), "no collapse state exists");
+    }
+
+    #[test]
+    fn combined_grave_opens_the_apps_windows_from_its_tile() {
+        // The key above Tab from an app tile: open that app's windows —
+        // Next on the MRU-front window (↓'s twin), Shift on the last —
+        // across all three apps.
+        let snap = combined_three_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        for (parent, front, last) in [(0usize, 1usize, 2usize), (3, 4, 5), (6, 7, 8)] {
+            let session = open.as_mut().expect("open");
+            session.tree_sel = parent;
+            assert!(step_window(&mut open, &snap, Direction::Next));
+            assert_eq!(
+                open.as_ref().expect("open").tree_sel,
+                front,
+                "the MRU-front window"
+            );
+            open.as_mut().expect("open").tree_sel = parent;
+            assert!(step_window(&mut open, &snap, Direction::Previous));
+            assert_eq!(
+                open.as_ref().expect("open").tree_sel,
+                last,
+                "Shift opens on the last"
+            );
+        }
+    }
+
+    #[test]
+    fn combined_grave_steps_within_the_app_and_wraps() {
+        // From a window tile the walk stays inside the focused app's
+        // window set, wrapping at both ends — never onto another app's
+        // rows (that walk is ←/→ and Tab).
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        open.as_mut().expect("open").tree_sel = 1; // a's front child
+        assert!(step_window(&mut open, &snap, Direction::Next));
+        assert_eq!(open.as_ref().expect("open").tree_sel, 2, "a's second");
+        assert!(step_window(&mut open, &snap, Direction::Next));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            1,
+            "wraps to the front"
+        );
+        assert!(step_window(&mut open, &snap, Direction::Previous));
+        assert_eq!(open.as_ref().expect("open").tree_sel, 2, "Shift wraps back");
+        for _ in 0..4 {
+            assert!(step_window(&mut open, &snap, Direction::Next));
+            let session = open.as_ref().expect("open");
+            assert!(
+                session.tree_sel == 1 || session.tree_sel == 2,
+                "never crosses into b's rows (at {})",
+                session.tree_sel
+            );
+        }
+    }
+
+    #[test]
+    fn combined_grave_falls_through_to_the_query() {
+        // While a query stands the session is flat (flatten-on-query),
+        // so the press types the key's own char instead of walking —
+        // the backtick bare, `~` shifted (the keysym Alt+Shift+` really
+        // delivers) — the level lives in the daemon, key_input stays
+        // pure.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        open.as_mut().expect("open").tree_sel = 1;
+        assert!(type_into(&mut open, &snap, 'b'));
+        assert!(step_window(&mut open, &snap, Direction::Next));
+        let session = open.as_ref().expect("open");
+        assert_eq!(session.query, "b`", "the backtick appended");
+        assert!(session.filtered.is_some(), "still a querying session");
+        assert_eq!(session.tree_sel, 1, "the walk never ran");
+        assert!(step_window(&mut open, &snap, Direction::Previous));
+        assert_eq!(
+            open.as_ref().expect("open").query,
+            "b`~",
+            "the tilde appended"
+        );
+    }
+
+    #[test]
+    fn combined_grave_holds_a_one_window_app_without_dead_ends() {
+        // A single-window app: from its tile the key selects its one
+        // window; from the window itself it stays put — no dead end in
+        // either direction.
+        let lone = grouped_lone_parent();
+        let (mut open, _expanded) = combined_session(&lone);
+        open.as_mut().expect("open").tree_sel = 3; // c's leaf tile
+        assert!(step_window(&mut open, &lone, Direction::Next));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "selects its one window"
+        );
+        assert!(step_window(&mut open, &lone, Direction::Next));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "stays put from the window"
+        );
+        assert!(step_window(&mut open, &lone, Direction::Previous));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "stays put backwards too"
+        );
+    }
+
+    #[test]
+    fn combined_steps_flow_through_session_step() {
+        // The Step arm (Tab-alias arrows, wheel) routes through
+        // session_step into the strip's linear walk, not the vertical
+        // linear walk: from a's front child inside the run, one step
+        // lands on a's second window — never on b's rows.
+        let snap = grouped_two_apps();
+        let (mut open, mut expanded) = combined_session(&snap);
+        open.as_mut().expect("open").tree_sel = 1;
+        let selected = session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            true,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Horizontal,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut expanded,
+        );
+        assert_eq!(selected, Some(Handle(2)), "stays inside the run");
+        assert_eq!(open.as_ref().expect("open").tree_sel, 2);
+    }
+
+    #[test]
+    fn combined_pointer_rows_map_through_the_strip_sequence() {
+        // A pointer crossing maps through the one-sequence map: the
+        // stored strip (visible + viewport) addresses the exact tree
+        // row, so hovering a window tile inside a run selects that
+        // window even though its handle is also its app's parent row —
+        // and the shape follows the selection by derivation.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        // a's run open at a's slot, b's tile after it.
+        session.visible = vec![1, 2, 3];
+        session.viewport = Some(crate::ui::Viewport {
+            start: 0,
+            content: 3,
+            top: false,
+            bottom: false,
+        });
+        assert!(session.select_pointer_row(1, Some(Handle(3))));
+        assert_eq!(session.tree_sel, 2, "a's second window, not its parent");
+        assert!(session.select_pointer_row(0, Some(Handle(1))));
+        assert_eq!(session.tree_sel, 1, "the window tile, not its parent row");
+        assert!(session.select_pointer_row(2, Some(Handle(3))));
+        assert_eq!(session.tree_sel, 3, "b's app tile closes the run (derived)");
+        assert!(
+            !session.select_pointer_row(3, Some(Handle(3))),
+            "past the window addresses nothing"
+        );
+    }
+
+    #[test]
+    fn combined_close_advances_the_strip_reading_order() {
+        // Advance-then-close walks the strip's own reading order — the
+        // derived sequence — skipping rows carrying the doomed window
+        // (a parent tile and its front child are one window); the
+        // session survives for repeated closes.
+        let snap = grouped_two_apps();
+        let (mut open, expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 1; // a's front child, the run open
+        assert!(prepare_close(session, &snap, &expanded, Handle(1)));
+        assert_eq!(session.tree_sel, 2, "the run's own next: a's second window");
+        // Closing a's second window instead advances onto b's tile.
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 2; // a's second child
+        assert!(prepare_close(session, &snap, &expanded, Handle(2)));
+        assert_eq!(session.tree_sel, 3, "b's tile, the sequence's next");
+    }
+
+    #[test]
+    fn combined_sessions_ignore_the_expansion_state() {
+        // The strip has no collapse state: a pre-populated expansion
+        // set (a leftover from vertical grouped gestures) changes
+        // nothing — the derivation never reads it, open or closed.
+        let snap = grouped_two_apps();
+        let mut expanded = HashSet::new();
+        expanded.insert("app.a".to_string());
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            true,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Horizontal,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut expanded,
+        );
+        let session = open.as_ref().expect("open");
+        assert_eq!(session.tree_sel, 3, "the opening press stepped to b");
+        assert_eq!(
+            strip_sequence(session, &snap),
+            vec![0, 3],
+            "the closed strip, expansion ignored"
+        );
+        open.as_mut().expect("open").tree_sel = 4; // b's front child
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![0, 4, 5],
+            "the run opens by derivation, expansion ignored"
+        );
+        assert_eq!(
+            expanded,
+            HashSet::from(["app.a".to_string()]),
+            "the derivation never touches the expansion set"
+        );
+    }
+
+    // --- grouped-horizontal: the derived strip (`inplace-strip`) --------
+
+    #[test]
+    fn combined_pointer_dots_and_past_the_window_address_nothing() {
+        // The one-sequence map behind a truncating viewport: content
+        // rows map, the `…` tile and rows past the window address
+        // nothing — the affordance never holds a selection.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        // a's run open, windowed to two content tiles plus the dots.
+        session.visible = vec![1, 2, 3];
+        session.viewport = Some(crate::ui::Viewport {
+            start: 0,
+            content: 2,
+            top: false,
+            bottom: true,
+        });
+        assert_eq!(session.tree_row_at(0), Some(1), "the first content tile");
+        assert_eq!(session.tree_row_at(1), Some(2), "the second content tile");
+        assert_eq!(session.tree_row_at(2), None, "the dots tile");
+        assert_eq!(session.tree_row_at(5), None, "past the window");
+    }
+
+    #[test]
+    fn combined_hover_follows_the_derived_shape() {
+        // Hovering selects the addressed tree row; the shape follows
+        // the selection by derivation — a window tile inside the run
+        // keeps the run open, an app tile closes it.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.visible = vec![1, 2, 3]; // a's run open at a's slot
+        session.viewport = Some(crate::ui::Viewport {
+            start: 0,
+            content: 3,
+            top: false,
+            bottom: false,
+        });
+        {
+            let session = open.as_mut().expect("open");
+            assert!(session.select_pointer_row(1, Some(Handle(3))));
+            assert_eq!(session.tree_sel, 2, "a's second window");
+        }
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![1, 2, 3],
+            "hovering a run window keeps the run open"
+        );
+        {
+            let session = open.as_mut().expect("open");
+            assert!(session.select_pointer_row(2, Some(Handle(3))));
+            assert_eq!(session.tree_sel, 3, "b's app tile");
+        }
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![0, 3],
+            "hovering an app tile closes the run"
+        );
+    }
+
+    #[test]
+    fn combined_click_commits_the_clicked_tile_not_the_selection() {
+        // The click seam the pointer Click arm composes: the boundary's
+        // captured handle selects through the one-sequence map and the
+        // commit resolves the clicked tile's own window — inside a run,
+        // a group's front window is its child tile alone, never its
+        // parent row.
+        let snap = grouped_two_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        // The keyboard left the selection on b's tile; a's run is open.
+        session.tree_sel = 3;
+        session.visible = strip_sequence(session, &snap);
+        assert_eq!(session.visible, vec![0, 3], "the selection closed a's run");
+        // Reopen a's run the honest way — ↓ on a's tile — then click a
+        // window tile through the flow a click takes.
+        session.tree_sel = 0;
+        assert!(enter_band(session, &snap));
+        session.visible = strip_sequence(session, &snap);
+        assert_eq!(session.visible, vec![1, 2, 3], "a's run open");
+        assert_eq!(session.select_handle(Handle(1)), Some(Handle(1)));
+        assert_eq!(session.tree_sel, 1, "the child tile, not the parent row");
+        assert_eq!(commit_target(session, &snap), Some(Handle(1)));
+        assert_eq!(session.select_handle(Handle(3)), Some(Handle(3)));
+        assert_eq!(session.tree_sel, 3, "b's front window is b's tile here");
+        assert_eq!(commit_target(session, &snap), Some(Handle(3)));
+    }
+
+    #[test]
+    fn strip_opens_the_selected_childs_parent_run_in_place() {
+        // The derived shape: a child selection replaces its app's tile
+        // with the app's window run at that very slot — the other apps'
+        // tiles stay in place around it, at the front and mid-list
+        // alike. Nothing sits below; nothing is always-open.
+        let snap = combined_three_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        open.as_mut().expect("open").tree_sel = 4; // b's front child
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![0, 4, 5, 6],
+            "b's run mid-list: a's tile, the run, c's tile"
+        );
+        open.as_mut().expect("open").tree_sel = 1; // a's front child
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![1, 2, 3, 6],
+            "a's run at the front: the run, b's tile, c's tile"
+        );
+    }
+
+    #[test]
+    fn strip_level1_selection_shows_plain_app_tiles() {
+        // A level-1 selection closes every run: the plain level-1 rows,
+        // parents and leaves alike.
+        let snap = combined_three_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        open.as_mut().expect("open").tree_sel = 3; // b's parent tile
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![0, 3, 6],
+            "three app tiles, no run"
+        );
+        let lone = grouped_lone_parent();
+        let (mut open, _expanded) = combined_session(&lone);
+        open.as_mut().expect("open").tree_sel = 3; // c's leaf tile
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &lone),
+            vec![0, 3],
+            "the parent tile and the leaf"
+        );
+    }
+
+    #[test]
+    fn strip_never_duplicates_a_single_window_app() {
+        // The duplicate-tile bug's regression test: a single-window app
+        // grows no run below its tile, so its window shows exactly once
+        // however the strip is derived.
+        let lone = grouped_lone_parent();
+        let (mut open, _expanded) = combined_session(&lone);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 3; // c's leaf tile
+        let tree = session.tree.as_ref().expect("tree");
+        let handle = tree.rows()[3].handle;
+        let count = strip_sequence(session, &lone)
+            .iter()
+            .filter(|&&index| tree.rows()[index].handle == handle)
+            .count();
+        assert_eq!(count, 1, "the leaf's window shows exactly once");
+    }
+
+    #[test]
+    fn shrunk_parent_coerces_the_child_selection_onto_its_tile() {
+        // The mid-gesture shrink: b down to one live window while its
+        // front child holds the selection. The derivation closes the
+        // run on its own; the coercion then moves the selection onto
+        // b's tile, so no child ever dangles inside a run that no
+        // longer derives.
+        let full = combined_three_apps();
+        let shrunk = combined_three_apps_b_shrunk();
+        let (mut open, _expanded) = combined_session(&full);
+        open.as_mut().expect("open").tree_sel = 4; // b's front child
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &shrunk),
+            vec![0, 3, 6],
+            "the shrunk run is closed by derivation, coercion or not"
+        );
+        assert!(coerce_shrunk_run(open.as_mut().expect("open"), &shrunk));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            3,
+            "lands on b's tile"
+        );
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &shrunk),
+            vec![0, 3, 6]
+        );
+        assert!(
+            !coerce_shrunk_run(open.as_mut().expect("open"), &shrunk),
+            "a level-1 selection never coerces"
+        );
+    }
+
+    #[test]
+    fn combined_down_holds_the_two_window_floor() {
+        // The ≥2 rule: ↓ on a tile whose app holds fewer than two live
+        // windows is a no-op — a single-window app commits directly and
+        // never grows a run below its tile (the duplicate-tile bug's
+        // grave), and a shrunk parent holds the same floor.
+        let lone = grouped_lone_parent();
+        let (mut open, _expanded) = combined_session(&lone);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 3; // c's leaf tile
+        assert!(!enter_band(session, &lone), "a leaf opens nothing");
+        assert_eq!(session.tree_sel, 3, "the selection stays on the leaf");
+        let full = combined_three_apps();
+        let shrunk = combined_three_apps_b_shrunk();
+        let (mut open, _expanded) = combined_session(&full);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 3; // b's tile, shrunk to one live window
+        assert!(
+            !enter_band(session, &shrunk),
+            "a shrunk parent opens nothing"
+        );
+        assert_eq!(session.tree_sel, 3);
+    }
+
+    #[test]
+    fn strip_width_freezes_across_down_and_up() {
+        // The width freeze: the closed and open shapes of one selection
+        // compute one slot count, so ↓ and ↑ never resize the card —
+        // the strip reflows inside the frozen grid and back.
+        let snap = combined_three_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 3; // b's parent tile
+        let (closed, closed_width) = strip_render(session, &snap);
+        assert_eq!(closed, vec![0, 3, 6], "plain app tiles");
+        assert_eq!(
+            closed_width, 4,
+            "the open shape's slots: 3 apps - 1 tile + 2 windows"
+        );
+        assert!(enter_band(session, &snap), "↓ opens the run");
+        let (opened, opened_width) = strip_render(session, &snap);
+        assert_eq!(opened, vec![0, 4, 5, 6], "b's run at b's slot");
+        assert_eq!(opened_width, 4, "the same frozen width");
+        assert!(exit_band(session), "↑ closes the run");
+        let (reclosed, reclosed_width) = strip_render(session, &snap);
+        assert_eq!((reclosed, reclosed_width), (closed, closed_width));
+    }
+
+    #[test]
+    fn opens_run_requires_two_live_windows() {
+        // ↓'s ≥2 rule: an app tile opens its run only while the app
+        // holds at least two live windows — a two-window parent yes; a
+        // leaf and a shrunk parent no (they commit directly, never
+        // growing a run below themselves).
+        let full = combined_three_apps();
+        let (open, _expanded) = combined_session(&full);
+        let session = open.as_ref().expect("open");
+        assert!(opens_run(session, &full, 0), "a's two live windows");
+        assert!(opens_run(session, &full, 3), "b's two live windows");
+        let lone = grouped_lone_parent();
+        let (open, _expanded) = combined_session(&lone);
+        assert!(
+            !opens_run(open.as_ref().expect("open"), &lone, 3),
+            "c's single window opens nothing"
+        );
+        let shrunk = combined_three_apps_b_shrunk();
+        let (open, _expanded) = combined_session(&full);
+        assert!(
+            !opens_run(open.as_ref().expect("open"), &shrunk, 3),
+            "b's lone live window opens nothing"
         );
     }
 }

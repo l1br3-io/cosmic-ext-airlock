@@ -104,6 +104,22 @@ observe, not internal mechanics.
   settings doc instead of the repository root. Existing configs are
   never rewritten; only fresh installs write the new line.
 
+### Fixed
+
+- **Config edits reliably live-apply at the next gesture.** The reload
+  check compared mtimes, which miss edits on filesystems with coarse or
+  stale timestamps (VM shared folders are the known case) and never move
+  when a boolean flips — `grouping = true` to `false` keeps the byte
+  count — so a changed config could serve stale settings until the
+  daemon restarted. The check now compares the file's bytes, and every
+  adoption logs one line (`config change adopted: layout=… grouping=…`)
+  so an ignored edit is traceable in the journal.
+- **Alt+Shift+` steps the focused app's windows backwards** in the
+  grouped strip. Holding Shift delivers the shifted keysym (`~` on a US
+  layout), which the key match did not recognize, so the documented
+  backwards step never fired. Both levels now map; typing ` and `~`
+  into a query still works everywhere.
+
 ## [0.2.0] — 2026-11-07
 
 ### Added

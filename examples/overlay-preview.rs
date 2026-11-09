@@ -46,7 +46,7 @@
 
 use std::rc::Rc;
 
-use cosmic_ext_airlock::switcher::Handle;
+use cosmic_ext_airlock::switcher::{Handle, RowKind};
 use cosmic_ext_airlock::text::{FontQuery, TextSystem};
 use cosmic_ext_airlock::ui::{self, IconBitmap, OverlayModel, RowModel};
 
@@ -79,7 +79,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let Some(path) = args.next().map(std::path::PathBuf::from) else {
         eprintln!(
-            "usage: overlay-preview <out.png> [--scale N] [--light] [--geometry] [--system-font <dir>]"
+            "usage: overlay-preview <out.png> [--scale N] [--light] [--geometry] [--horizontal] [--combined] [--system-font <dir>]"
         );
         std::process::exit(2);
     };
@@ -87,6 +87,7 @@ fn main() {
     let mut light = false;
     let mut geometry = false;
     let mut horizontal = false;
+    let mut combined = false;
     let mut system_font: Option<std::path::PathBuf> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -100,6 +101,7 @@ fn main() {
             "--light" => light = true,
             "--geometry" => geometry = true,
             "--horizontal" => horizontal = true,
+            "--combined" => combined = true,
             "--system-font" => {
                 system_font = args.next().map(std::path::PathBuf::from);
                 if system_font.is_none() {
@@ -109,7 +111,7 @@ fn main() {
             }
             other => {
                 eprintln!(
-                    "unknown argument {other}; expected --scale N, --light, --geometry, --horizontal, or --system-font <dir>"
+                    "unknown argument {other}; expected --scale N, --light, --geometry, --horizontal, --combined, or --system-font <dir>"
                 );
                 std::process::exit(2);
             }
@@ -131,6 +133,32 @@ fn main() {
     };
     let dark_icons = ui_icons(scale, &ui::Palette::dark());
     let light_icons = ui_icons(scale, &ui::Palette::light());
+    if combined {
+        let band_dark = band_icons(scale, &ui::Palette::dark());
+        let band_light = band_icons(scale, &ui::Palette::light());
+        let icons = if base.is_dark {
+            &band_dark
+        } else {
+            &band_light
+        };
+        let mut text = text_backend(&mut text_system);
+        let mut sheet = combined_scenarios(base, icons, &mut text, scale);
+        // Both polarities judge the strip, the horizontal family's
+        // rule.
+        let other = if base.is_dark {
+            ui::Palette::light()
+        } else {
+            ui::Palette::dark()
+        };
+        let other_icons = if other.is_dark {
+            &band_dark
+        } else {
+            &band_light
+        };
+        sheet.extend(combined_scenarios(other, other_icons, &mut text, scale));
+        write_sheet(&path, &sheet, scale, &mut text_system);
+        return;
+    }
     if horizontal {
         let icons = if base.is_dark {
             &dark_icons
@@ -139,7 +167,8 @@ fn main() {
         };
         let band_dark = band_icons(scale, &ui::Palette::dark());
         let band_light = band_icons(scale, &ui::Palette::light());
-        let mut sheet = horizontal_scenarios(base, icons);
+        let mut text = text_backend(&mut text_system);
+        let mut sheet = horizontal_scenarios(base, icons, &mut text, scale);
         // Both polarities judge the band: the same tiles in the other
         // palette's tint, the band scenarios' arrangement.
         let other = if base.is_dark {
@@ -152,7 +181,7 @@ fn main() {
         } else {
             &band_light
         };
-        sheet.extend(horizontal_scenarios(other, other_icons));
+        sheet.extend(horizontal_scenarios(other, other_icons, &mut text, scale));
         write_sheet(&path, &sheet, scale, &mut text_system);
         return;
     }
@@ -442,23 +471,229 @@ fn band_icons(scale: u32, palette: &ui::Palette) -> Vec<Option<Rc<IconBitmap>>> 
         .collect()
 }
 
-/// The horizontal band family (card-layout): the flat band as
+/// The grouped-horizontal family (`grouped-horizontal`): the strip
+/// composed the way the daemon composes it — the app tiles with the
+/// selected app's tile replaced in place by its window run, one
+/// sequence behind one `band_window`, hints in reading order. GH1's
+/// working tokens; GH2's sheet freezes the hierarchy values on
+/// scenarios of this shape.
+fn combined_scenarios(
+    base: ui::Palette,
+    icons: &[Option<Rc<IconBitmap>>],
+    text: &mut ui::TextBackend<'_>,
+    scale: u32,
+) -> Vec<Scenario> {
+    let tile = |title: &str,
+                icon: Option<Rc<IconBitmap>>,
+                selected: bool,
+                hint: Option<usize>|
+     -> RowModel {
+        RowModel {
+            title: title.to_string(),
+            icon,
+            selected,
+            handle: Some(Handle::default()),
+            hint: hint
+                .filter(|&position| position < 9)
+                .map(|position| ui::RowHint::Ctrl(position + 1)),
+            ..RowModel::default()
+        }
+    };
+    let dots = || RowModel {
+        title: String::new(),
+        icon: None,
+        selected: false,
+        handle: None,
+        ..RowModel::default()
+    };
+    // apps: (label, window count); windows: the focused app's titles.
+    // selected: Some((false, i)) — the closed strip, an app tile;
+    // Some((true, pos)) — the open run, that window. The strip derives:
+    // the focused app's tile is replaced in place by its run exactly
+    // while a window holds the selection (`inplace-strip`).
+    let mut combined = |apps: &[(&str, usize)],
+                        focused: usize,
+                        windows: &[&str],
+                        selected: Option<(bool, usize)>,
+                        tiles: usize|
+     -> OverlayModel {
+        let open = matches!(selected, Some((true, _)));
+        let mut full: Vec<RowModel> = Vec::new();
+        let mut selected_row = 0usize;
+        let mut icon_index = 0usize;
+        let mut hint_pos = 0usize;
+        for (index, &(label, count)) in apps.iter().enumerate() {
+            if open && index == focused {
+                for (position, window) in windows.iter().enumerate() {
+                    let selected = selected == Some((true, position));
+                    if selected {
+                        selected_row = full.len();
+                    }
+                    full.push(tile(
+                        window,
+                        icons[icon_index % icons.len()].clone(),
+                        selected,
+                        Some(hint_pos),
+                    ));
+                    icon_index += 1;
+                    hint_pos += 1;
+                }
+            } else {
+                let mut row = tile(
+                    label,
+                    icons[icon_index % icons.len()].clone(),
+                    false,
+                    Some(hint_pos),
+                );
+                row.kind = switcher_row_kind(count);
+                row.count = count;
+                if selected == Some((false, index)) {
+                    selected_row = full.len();
+                    row.selected = true;
+                }
+                full.push(row);
+                icon_index += 1;
+                hint_pos += 1;
+            }
+        }
+        let viewport = ui::band_window(full.len(), selected_row, tiles, None);
+        let mut rows: Vec<RowModel> =
+            full[viewport.start..viewport.start + viewport.content].to_vec();
+        if viewport.bottom {
+            rows.push(dots());
+        }
+        // The width freeze: the closed and open shapes' slots, whichever
+        // the strip shows now.
+        let open_len = apps.len() + windows.len() - 1;
+        let width_slots = apps.len().min(tiles).max(open_len.min(tiles));
+        let width = ui::band_width(width_slots as u32);
+        // The caption names the commit target — the open run's selected
+        // window, the focused app's MRU-front window on a closed app
+        // tile — composed through the shipped rule, so the sheet
+        // judges the real truncation.
+        let commit = match selected {
+            Some((true, position)) => windows[position],
+            _ => windows[0],
+        };
+        let caption = ui::compose_caption(commit, width, text, scale);
+        OverlayModel {
+            rows,
+            width,
+            height: ui::band_card_height(),
+            viewport,
+            profile: ui::StyleProfile::default(),
+            horizontal: true,
+            query: None,
+            hovered: None,
+            caption,
+        }
+    };
+    let editor_windows = [
+        "Overview — the design pass",
+        "Renderer — the strip walk",
+        "Preview sheet — the freeze",
+        "Key table — the axis map",
+        "Notes",
+    ];
+    [
+        // The closed strip: app tiles only, the selection on the
+        // editor's tile mid-list.
+        combined(
+            &[("Files", 2), ("Editor", 5), ("Terminal", 3)],
+            1,
+            &editor_windows,
+            Some((false, 1)),
+            8,
+        ),
+        // One ↓ later, the same session: the editor's tile replaced in
+        // place by its window run, the selection on the run's front
+        // window — and the card the same width (the freeze).
+        combined(
+            &[("Files", 2), ("Editor", 5), ("Terminal", 3)],
+            1,
+            &editor_windows,
+            Some((true, 1)),
+            8,
+        ),
+        // The same open run, the selection swept to its last window.
+        combined(
+            &[("Files", 2), ("Editor", 5), ("Terminal", 3)],
+            1,
+            &editor_windows,
+            Some((true, 4)),
+            8,
+        ),
+        // A single-window app among multi-window apps: one tile like
+        // any other — ↓ on it holds the two-window floor (the ≥2 rule)
+        // and commits directly.
+        combined(
+            &[("Files", 2), ("Notes", 1), ("Terminal", 3)],
+            1,
+            &["Notes"],
+            Some((false, 1)),
+            8,
+        ),
+        // The truncated edge: the run open at the pinned minimum, the
+        // `…` tile spending the last slot.
+        combined(
+            &[
+                ("Files", 2),
+                ("Editor", 5),
+                ("Terminal", 3),
+                ("Chat", 2),
+                ("Mail", 4),
+            ],
+            1,
+            &editor_windows,
+            Some((true, 3)),
+            ui::COLUMNS_MIN,
+        ),
+    ]
+    .into_iter()
+    .map(|model| Scenario {
+        model,
+        palette: base,
+    })
+    .collect()
+}
+
+/// The tile kind an app tile carries for preview purposes: a parent when
+/// the app has more than one window, a leaf otherwise.
+fn switcher_row_kind(count: usize) -> RowKind {
+    if count > 1 {
+        RowKind::Parent
+    } else {
+        RowKind::Leaf
+    }
+}
+
+/// The horizontal band family (glance-tiles): the flat band as
 /// `overlay_model_horizontal` composes it — `band_window` over the
-/// selection, the trailing `…` tile, the tile grid's width — at CL4's
-/// acceptance counts (one, three, the 1920-auto eight, the pinned
-/// twelve), a swept mid-band selection, and the 48-column title every
-/// tile clamps to its own budget. The tokens these render froze on
-/// this sheet, 2026-11-08, every value kept as built.
-fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Vec<Scenario> {
+/// selection, the trailing `…` tile, the floored tile grid's width —
+/// at the acceptance counts (one, three, the 1920-auto seventeen, the
+/// pinned twelve), a swept mid-band selection, and the over-budget
+/// title the caption truncates with a real `…`. Frozen on the G4
+/// sheet, 2026-11-09: both families judged over both polarities and
+/// both text faces — every token kept as built except the pips, which
+/// grew 4 → 6 (both judgments named them the weakest element); the
+/// caption zone's air and the muted badge-over-fill kept as shipped
+/// (the caption is content, and the muted hint over a fill is the
+/// vertical card's own frozen vocabulary).
+fn horizontal_scenarios(
+    base: ui::Palette,
+    icons: &[Option<Rc<IconBitmap>>],
+    text: &mut ui::TextBackend<'_>,
+    scale: u32,
+) -> Vec<Scenario> {
     let titles: Vec<String> = (0..16)
         .map(|index| format!("Window {index} — the band case"))
         .collect();
     let band_row =
         |title: &str, icon: Option<Rc<IconBitmap>>, selected: bool, position: usize| -> RowModel {
             RowModel {
-                // The tile's own clamp: the band's width is the tile grid,
-                // never the title's — the daemon composes the same budget.
-                title: ui::clamp_tile_title(title),
+                // The display title unclamped: nothing paints it at the
+                // compact pitch; the caption (G3) reads the selection's.
+                title: title.to_string(),
                 icon,
                 selected,
                 handle: Some(Handle::default()),
@@ -466,7 +701,7 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
                 ..RowModel::default()
             }
         };
-    let band = |list: &[String], sel: usize, tiles: usize| -> OverlayModel {
+    let mut band = |list: &[String], sel: usize, tiles: usize| -> OverlayModel {
         let count = list.len();
         let viewport = ui::band_window(count, sel, tiles, None);
         let mut rows = Vec::with_capacity(viewport.content + viewport.bottom as usize);
@@ -489,20 +724,26 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
             });
         }
         let slots = rows.len() as u32;
+        let width = ui::band_width(slots);
+        // The caption names the selected window — the flat band's
+        // commit target is always a window — composed through the
+        // shipped rule so the sheet judges the real truncation.
+        let caption = ui::compose_caption(&list[sel], width, text, scale);
         OverlayModel {
             rows,
-            width: ui::band_width(slots),
+            width,
             height: ui::band_card_height(),
             viewport,
             profile: ui::StyleProfile::default(),
             horizontal: true,
             query: None,
             hovered: None,
+            caption,
         }
     };
-    // The 48-column clamp input: the tile's own budget (eleven columns
-    // at the frozen pitch) ellipsizes every tile that carries it.
-    let long = "This title is exactly forty-eight columns long —";
+    // The caption-budget input: a title past the caption's budget at
+    // the floor, so the one caption carries the card's whole `…`.
+    let long = "Quarterly review — compiled notes and appendix three";
     let long_titles: Vec<String> = std::iter::repeat_n(long.to_string(), 5).collect();
     [
         // A lone window: one tile, selected, its badge the only hint.
@@ -518,7 +759,8 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
         // The pinned extremes: three tiles and twelve.
         band(&titles, 0, ui::COLUMNS_MIN),
         band(&titles, 0, ui::COLUMNS_MAX),
-        // The 48-column title: every tile clamps it, selection mid-band.
+        // The over-budget title: the caption truncates it with the
+        // real ellipsis, selection mid-band.
         band(&long_titles, 2, 5),
     ]
     .into_iter()
@@ -606,6 +848,8 @@ fn windowed(
         viewport,
         profile,
         horizontal: false,
+        // The vertical card paints no caption.
+        caption: String::new(),
         query: None,
         hovered: None,
     }

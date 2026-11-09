@@ -1,13 +1,20 @@
 /* Airlock site — one stylesheet, dark theme default.
 
-   The design tokens are the overlay card's palette, copied from
-   src/ui.rs (Palette::dark): background and text are the card's own
-   colors; selected-bg, border, and muted are the card's derived blends —
-   the text at 20% / 18% / 55% over the card, computed by the same
-   integer math as the renderer's blend_over. Values are never invented
-   here. Spacing steps the card's 4/8 grid; hairline borders are the only
-   separation, exactly as on the overlay; the selection band is the one
-   fill (it hovers links the way it highlights rows). */
+   The tokens come from the product, never from a palette invented for
+   the site: background and text are the overlay card's own colors,
+   copied from src/ui.rs (Palette::dark); selected-bg, border, and muted
+   are the card's derived blends — the text at 20% / 18% / 55% over the
+   card, computed by the same integer math as the renderer's blend_over.
+   The one addition is --hub, the app icon's amber, spent only on
+   "current workspace". Spacing steps the card's 4/8 grid; hairline
+   borders are the only separation, exactly as on the overlay; the
+   selection band is the one fill (it hovers links the way it highlights
+   rows).
+
+   The landing page borrows the card's own grammar for its first screen:
+   one 12 px frame, one inner hairline between the claim and the render,
+   and the same face the overlay paints — the desktop's interface font
+   (system-ui here), never a downloaded family. */
 
 :root {
   --background: #1E2126;   /* COLOR_BACKGROUND — the card, alpha dropped: a page, not a wallpaper */
@@ -15,11 +22,23 @@
   --selected-bg: #484B50;  /* COLOR_SELECTED_BG — text at 20% over the card */
   --border: #44464B;       /* COLOR_BORDER — text at 18% over the card */
   --muted: #929599;        /* the row-hint color — text at 55% over the card */
+  --hub: #FA9218;          /* the app icon's hub — the page's one accent, only ever "you are here" */
   --radius: 12px;          /* RADIUS — the card's corner rounding */
   --mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: dark;      /* the site is the dark card; native controls follow */
 }
 
 * { box-sizing: border-box; }
+
+/* The selection band is the one fill, here too: selected text highlights
+   the way a selected row does. */
+
+::selection { background: var(--selected-bg); }
+
+:focus-visible {
+  outline: 2px solid var(--muted);
+  outline-offset: 2px;
+}
 
 body {
   margin: 0;
@@ -29,6 +48,19 @@ body {
 }
 
 .wrap { max-width: 720px; margin: 0 auto; padding: 0 24px; }
+
+/* The landing page runs wider: the hero is two cells, and the sections
+   are a heading column beside their text. Subpages keep the one-column
+   reading measure. */
+
+.home .wrap { max-width: 1060px; }
+
+/* The chrome runs the landing page's width everywhere, so the header
+   and footer do not jump when you move between the landing page and a
+   docs page. The docs pages' own main still holds 720. */
+
+body > header .wrap,
+body > footer .wrap { max-width: 1060px; }
 
 /* Header and footer take the card's hairline treatment: the border is
    the only separation, no shadows, no fades. */
@@ -44,7 +76,18 @@ body > header .wrap {
   padding: 16px 24px;
 }
 
-.brand { margin: 0; font-weight: 600; letter-spacing: 0.02em; }
+.brand {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.brand img { flex: none; }
 
 body > header nav { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 
@@ -56,6 +99,10 @@ body > footer .wrap { padding: 24px; color: var(--muted); font-size: 0.875rem; }
 
 body > footer p { margin: 0 0 8px; }
 
+/* Content links underline, the way the card's hints sit in a row; the
+   nav is chrome, so it stays quiet until hovered — the selection band
+   fills on hover exactly as it fills the selected row. */
+
 a {
   color: inherit;
   text-decoration: underline;
@@ -64,15 +111,174 @@ a {
 
 a:hover { background: var(--selected-bg); }
 
-/* Hero: the card screenshot front and center, title and lede under it. */
+body > header nav a {
+  text-decoration: none;
+  color: var(--muted);
+}
 
-.hero { text-align: center; padding: 24px 0 8px; }
+body > header nav a:hover,
+body > footer a:hover,
+.muted a:hover { color: var(--text); }
 
-.hero img { width: 388px; max-width: 100%; height: auto; }
+body > header nav a[aria-current="page"] { color: var(--text); }
 
-.hero h1 { font-size: 1.75rem; line-height: 1.3; margin: 24px 0 8px; }
+/* The landing page's first screen is the card, at page scale: one 12 px
+   frame around the claim, the commands, and the real render, divided by
+   one inner hairline. The command block keeps the selection band as the
+   page's only fill. */
 
-.lede { font-size: 1.125rem; max-width: 40em; margin: 0 auto; }
+.hero {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: clip;
+}
+
+.hero-copy { padding: 32px 24px; }
+
+.gesture { margin: 0; color: var(--muted); font-size: 1rem; }
+
+.hero .gesture kbd { font-size: 1rem; padding: 0.16em 0.5em; }
+
+.hero h1 {
+  font-size: clamp(2rem, 3vw, 2.5rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin: 16px 0 12px;
+  max-width: 20ch;
+}
+
+h1, h2 { text-wrap: balance; }
+
+/* The lede sits at the reading measure; it is the agreed one-liner, so
+   the line breaks do the emphasis, not a colored word. */
+
+.lede { font-size: 1.0625rem; line-height: 1.65; max-width: 46ch; margin: 0; }
+
+.quick-install { margin-top: 28px; }
+
+.quick-install pre { margin: 0; }
+
+.fine { margin: 12px 0 0; max-width: 52ch; color: var(--muted); font-size: 0.875rem; }
+
+.hero-card {
+  margin: 0;
+  padding: 32px 24px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.hero-card img { width: 100%; max-width: 420px; height: auto; }
+
+.hero-card figcaption {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 42ch;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+/* The favicon's hub, at its one job: marking the workspace the card is
+   showing. It is the only color on the page that is not a grey. */
+
+.hub {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 0.5em;
+  border-radius: 50%;
+  background: var(--hub);
+}
+
+@media (min-width: 900px) {
+  .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; }
+  .hero-copy {
+    padding: 48px 40px 48px 48px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .hero-card { border-top: 0; padding: 40px 32px; }
+}
+
+/* The narrowest phones cannot fit the compound at 32 px; dropping one
+   step lets "Workspace-isolated" break only at its hyphen, never
+   mid-word. */
+
+@media (max-width: 380px) {
+  .hero-copy { padding: 24px 20px; }
+  .hero h1 { font-size: 1.625rem; }
+  /* The two commands are the point of the page; let the band run to the
+     frame's edges and step the type down rather than clip a command. */
+  .quick-install { margin-left: -20px; margin-right: -20px; }
+  .quick-install pre {
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    padding: 12px 14px;
+  }
+  .quick-install pre code { font-size: 0.75rem; }
+}
+
+/* Sections read as rows of the same card: a heading column beside the
+   text, one hairline above each section. Prose holds a reading measure;
+   the tables are allowed the full column. */
+
+.row-section {
+  margin-top: 56px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.row-section > h2 {
+  font-size: 1.5rem;
+  letter-spacing: -0.01em;
+  margin: 0 0 16px;
+}
+
+.row-section > div { min-width: 0; }
+
+.row-section > div > :first-child { margin-top: 0; }
+
+.row-section p { max-width: 68ch; }
+
+@media (min-width: 860px) {
+  .row-section {
+    display: grid;
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: 0 48px;
+  }
+  .row-section > h2 { margin: 0; }
+}
+
+/* A stack of terms and sentences — the Why and the extra features. The
+   hairline between rows is the same separation the card uses, and the
+   term is the row's title. */
+
+.rows {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.row { padding: 14px 0; }
+
+.row + .row { border-top: 1px solid var(--border); }
+
+.row h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+
+.row p { margin: 4px 0 0; }
+
+/* Subpage titles take the hero's step down one: same face, no browser
+   default margins. */
+
+main h1 { font-size: 1.75rem; line-height: 1.3; margin: 0; }
 
 section { margin-top: 32px; }
 
@@ -85,7 +291,10 @@ ul { padding-left: 24px; }
 li { margin-top: 4px; }
 
 /* Tables carry the hairline grid; headers sit in the row-hint color,
-   the card's own secondary text. */
+   the card's own secondary text. Figures use tabular numerals — the
+   card's hint band aligns its digits, and so do the performance
+   figures. A key table's first column holds one chord and never wraps
+   mid-chip. */
 
 table {
   border-collapse: collapse;
@@ -93,6 +302,8 @@ table {
   margin: 12px 0 0;
   display: block;
   overflow-x: auto;
+  scrollbar-color: var(--border) transparent;
+  font-variant-numeric: tabular-nums;
 }
 
 th, td {
@@ -103,6 +314,22 @@ th, td {
 }
 
 th { color: var(--muted); font-weight: 600; font-size: 0.875rem; }
+
+table.keys td:first-child { white-space: nowrap; }
+
+/* On a phone the key table stacks: the chord becomes the row's title,
+   the action sits under it. Same two-line shape as an overlay row, and
+   no column of two-word wraps. */
+
+@media (max-width: 700px) {
+  table.keys { display: block; overflow: visible; border: 0; margin-top: 16px; }
+  table.keys thead { display: none; }
+  table.keys tbody, table.keys tr, table.keys td { display: block; width: auto; }
+  table.keys tr { border-top: 1px solid var(--border); padding: 10px 0; }
+  table.keys tr:last-child { border-bottom: 1px solid var(--border); }
+  table.keys td { border: 0; padding: 0; }
+  table.keys td + td { margin-top: 2px; color: var(--muted); }
+}
 
 /* Code blocks are the selection band: the one fill the overlay spends. */
 
@@ -115,6 +342,7 @@ pre {
   padding: 12px 16px;
   overflow-x: auto;
   margin: 12px 0 0;
+  scrollbar-color: var(--border) transparent;
 }
 
 pre code { font-size: 0.875rem; }
