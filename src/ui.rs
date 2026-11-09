@@ -3960,7 +3960,8 @@ pub enum KeyMode {
     /// The flat list: Tab/↑/↓/←/→ all step rows, Ctrl+N addresses rows.
     Flat,
     /// The vertical grouped tree (grouping rev 5): Tab/↑/↓ step the
-    /// linear walk, →/← expand/exit, Ctrl+N addresses level-1 entries.
+    /// linear walk, →/← expand/exit, the key above Tab steps the
+    /// focused app's windows, Ctrl+N addresses level-1 entries.
     Grouped,
     /// The grouped-horizontal combination: ←/→ step within the focused
     /// band, ↓/↑ enter/exit band 2, Tab steps apps, Ctrl+N addresses
@@ -3979,8 +3980,9 @@ pub enum KeyMode {
 /// Grouped mode (the owner's 2026-11-08 rev-5 simplification): Tab
 /// steps one visible row like ↓/↑ — headers included, collapsed
 /// children never; → expands and enters ([`GestureKey::EnterChild`]), ←
-/// exits or collapses ([`GestureKey::ExitParent`]); Ctrl+N addresses
-/// level-1 entries ([`GestureKey::SelectApp`]). Flat mode
+/// exits or collapses ([`GestureKey::ExitParent`]); the key above Tab
+/// steps the focused app's windows ([`GestureKey::StepWindow`]); Ctrl+N
+/// addresses level-1 entries ([`GestureKey::SelectApp`]). Flat mode
 /// keeps the flat mapping byte for byte — Tab and ←/→ step rows —
 /// pinned by the flat regression tests. The boundary passes the live
 /// model's own mode, so the keysym the user pressed maps against the
@@ -4053,17 +4055,18 @@ pub fn key_input(
         // printable, not the key.
         Keysym::minus | Keysym::KP_Subtract if alt_held => (GestureKey::Close, shift_held),
         // The key above Tab (`` `` ``) steps the focused app's windows in
-        // the combination — GNOME's model — and only there: flat and
-        // vertical-grouped sessions keep typing it into the query (the
-        // type-filter contract). Both of the key's keysyms map: the
-        // compositor reports the level-resolved symbol, so Shift+` on a
-        // US layout arrives as `asciitilde`, never `grave` — matching
-        // `grave` alone left Alt+Shift+`'s backwards step unmatchable at
-        // runtime (the shifted-printable twin of the underscore arm
-        // below). The daemon resolves the level — an app tile opens on
-        // the MRU-front window, a window tile steps within the app — and
-        // reroutes to the type-into path while a query stands.
-        Keysym::grave | Keysym::asciitilde if matches!(mode, GroupedHorizontal) => (
+        // every grouped card — the strip and the vertical tree alike,
+        // GNOME's model — and only there: flat sessions keep typing it
+        // into the query (the type-filter contract). Both of the key's
+        // keysyms map: the compositor reports the level-resolved symbol,
+        // so Shift+` on a US layout arrives as `asciitilde`, never
+        // `grave` — matching `grave` alone left Alt+Shift+`'s backwards
+        // step unmatchable at runtime (the shifted-printable twin of the
+        // underscore arm below). The daemon resolves the level — an app
+        // tile opens on the MRU-front window, a window tile steps within
+        // the app — and reroutes to the type-into path while a query
+        // stands.
+        Keysym::grave | Keysym::asciitilde if matches!(mode, GroupedHorizontal | Grouped) => (
             GestureKey::StepWindow(if shift_held {
                 Direction::Previous
             } else {
@@ -10529,85 +10532,66 @@ mod tests {
     }
 
     #[test]
-    fn grave_steps_windows_only_in_the_combined_card() {
+    fn grave_steps_windows_in_the_grouped_cards() {
         // The key above Tab (keysym `grave`, ` on US layouts) is the
-        // within-app step in the combination — GNOME's model — and only
-        // there: the flat and vertical-grouped sessions keep typing it
-        // into the query, the type-filter contract untouched.
-        assert_eq!(
-            key_input(
-                Keysym::grave,
-                false,
-                false,
-                false,
-                KeyMode::GroupedHorizontal
-            ),
-            GestureInput::Press {
-                key: GestureKey::StepWindow(Direction::Next),
-                shift: false
-            }
-        );
-        assert_eq!(
-            key_input(
-                Keysym::grave,
-                true,
-                false,
-                false,
-                KeyMode::GroupedHorizontal
-            ),
-            GestureInput::Press {
-                key: GestureKey::StepWindow(Direction::Previous),
-                shift: true
-            }
-        );
-        // The runtime form of Alt+Shift+`: the compositor reports the
-        // level-resolved keysym, so the shifted press arrives as
-        // `asciitilde` on US layouts — the arm must match it too, or
-        // the backwards step is unreachable (2026-11-09).
-        assert_eq!(
-            key_input(
-                Keysym::asciitilde,
-                true,
-                false,
-                false,
-                KeyMode::GroupedHorizontal
-            ),
-            GestureInput::Press {
-                key: GestureKey::StepWindow(Direction::Previous),
-                shift: true
-            }
-        );
-        assert_eq!(
-            key_input(
-                Keysym::asciitilde,
-                false,
-                false,
-                false,
-                KeyMode::GroupedHorizontal
-            ),
-            GestureInput::Press {
-                key: GestureKey::StepWindow(Direction::Next),
-                shift: false
-            }
-        );
-        for mode in [KeyMode::Flat, KeyMode::Grouped] {
+        // within-app step in every grouped card — the strip and the
+        // vertical tree, GNOME's model — and only there: flat sessions
+        // keep typing it into the query, the type-filter contract
+        // untouched.
+        for mode in [KeyMode::GroupedHorizontal, KeyMode::Grouped] {
             assert_eq!(
                 key_input(Keysym::grave, false, false, false, mode),
                 GestureInput::Press {
-                    key: GestureKey::Type('\u{60}'),
+                    key: GestureKey::StepWindow(Direction::Next),
                     shift: false
                 },
-                "{mode:?} keeps typing the backtick"
+                "{mode:?} steps forward on the bare key"
             );
+            assert_eq!(
+                key_input(Keysym::grave, true, false, false, mode),
+                GestureInput::Press {
+                    key: GestureKey::StepWindow(Direction::Previous),
+                    shift: true
+                },
+                "{mode:?} steps backwards on Shift"
+            );
+            // The runtime form of Alt+Shift+`: the compositor reports
+            // the level-resolved keysym, so the shifted press arrives
+            // as `asciitilde` on US layouts — the arm must match it
+            // too, or the backwards step is unreachable (2026-11-09).
             assert_eq!(
                 key_input(Keysym::asciitilde, true, false, false, mode),
                 GestureInput::Press {
-                    key: GestureKey::Type('~'),
+                    key: GestureKey::StepWindow(Direction::Previous),
                     shift: true
                 },
-                "{mode:?} keeps typing the tilde"
+                "{mode:?} steps backwards on the shifted keysym"
+            );
+            assert_eq!(
+                key_input(Keysym::asciitilde, false, false, false, mode),
+                GestureInput::Press {
+                    key: GestureKey::StepWindow(Direction::Next),
+                    shift: false
+                },
+                "{mode:?} steps forward on the bare shifted keysym"
             );
         }
+        assert_eq!(
+            key_input(Keysym::grave, false, false, false, KeyMode::Flat),
+            GestureInput::Press {
+                key: GestureKey::Type('\u{60}'),
+                shift: false
+            },
+            "Flat keeps typing the backtick"
+        );
+        assert_eq!(
+            key_input(Keysym::asciitilde, true, false, false, KeyMode::Flat),
+            GestureInput::Press {
+                key: GestureKey::Type('~'),
+                shift: true
+            },
+            "Flat keeps typing the tilde"
+        );
         // The gesture machine forwards the window step like the app step.
         let mut gesture = Gesture::default();
         gesture.feed(GestureInput::Invoke(Direction::Next));
@@ -10623,7 +10607,7 @@ mod tests {
     #[test]
     fn grave_leaves_the_printable_arm_byte_for_byte() {
         // The carve-out is the key above Tab — `grave` and its shifted
-        // `asciitilde` twin, and in the combination alone: every other
+        // `asciitilde` twin, and in the grouped cards alone: every other
         // printable keysym maps to Type(char) through every mode, exactly
         // as before — the table pins the neighbors beside grave on the US
         // layout and the printable mainstays alike.
