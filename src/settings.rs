@@ -10,7 +10,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::switcher::{Scope, Workspace, WorkspaceId};
-use crate::ui::{self, ColumnsSetting, LayoutSetting, SelectionSetting, ThemeSetting};
+use crate::ui::{
+    self, ColumnsSetting, LayoutSetting, SelectionSetting, ThemeSetting, WidthSetting,
+};
 
 /// Cap on config size: reloads run at session open, on the gesture path,
 /// so a pathological file must never stall switching.
@@ -73,6 +75,14 @@ pub struct Settings {
     /// [`ColumnsSetting::Auto`] — fit to the invoking output. Binds
     /// `layout = "horizontal"` only; the vertical card ignores it.
     pub columns: ColumnsSetting,
+    /// The card's width floor; missing key = [`WidthSetting::Auto`] —
+    /// the content-sized card. Both layouts read it; a floor below the
+    /// card's content width does nothing (nothing ever clips) and the
+    /// daemon clamps one past the invoking output.
+    pub width: WidthSetting,
+    /// The card's never-below width; same syntax as [`Self::width`],
+    /// and the pair collapses to the wider floor at open.
+    pub min_width: WidthSetting,
     /// The custom card/text pair from the paired `card`/`text` keys,
     /// each `0x00RRGGBB` (alpha unreachable by construction) and
     /// contrast-checked against [`ui::CONTRAST_FLOOR`] at parse.
@@ -99,6 +109,8 @@ impl Default for Settings {
             grouping: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
+            width: WidthSetting::Auto,
+            min_width: WidthSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -261,6 +273,8 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             }
         },
     };
+    let width = width_key(root.get("width"), WIDTH_PROBLEM)?;
+    let min_width = width_key(root.get("min-width"), MIN_WIDTH_PROBLEM)?;
     let card = color_key(
         root.get("card"),
         "`card` must be a string holding a 6-digit hex color",
@@ -321,6 +335,8 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             grouping,
             layout,
             columns,
+            width,
+            min_width,
             pair,
             selection,
             font,
@@ -343,6 +359,8 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         grouping,
         layout,
         columns,
+        width,
+        min_width,
         pair,
         selection,
         font,
@@ -371,6 +389,41 @@ fn color_key(
     Ok(Some(
         hex_rgb(text).ok_or(SettingsError::InvalidFile { problem: not_hex })?,
     ))
+}
+
+/// The `width` union's one diagnostic: any bad value — wrong type, a
+/// percentage past 100, a zero — names the key and the whole domain.
+const WIDTH_PROBLEM: &str =
+    "`width` must be \"auto\", a percentage like \"100%\" (1–100), or a pixel count (1 at least)";
+/// `min-width`'s twin of [`WIDTH_PROBLEM`].
+const MIN_WIDTH_PROBLEM: &str = "`min-width` must be \"auto\", a percentage like \"100%\" (1–100), or a pixel count (1 at least)";
+
+/// Parses one card-width key: `"auto"`, a whole number of pixels, or a
+/// percentage like `"100%"` — the percentage 1..=100 (the card is
+/// centered, so 100 is the whole output) and the pixel count 1 at
+/// least (a floor of zero sizes nothing). A missing key is `auto`.
+fn width_key(
+    value: Option<&toml::Value>,
+    problem: &'static str,
+) -> Result<WidthSetting, SettingsError> {
+    let Some(value) = value else {
+        return Ok(WidthSetting::Auto);
+    };
+    match value.as_str() {
+        Some("auto") => Ok(WidthSetting::Auto),
+        Some(percent) => percent
+            .strip_suffix('%')
+            .and_then(|digits| digits.parse::<u32>().ok())
+            .filter(|percent| (1..=100).contains(percent))
+            .map(WidthSetting::Percent)
+            .ok_or(SettingsError::InvalidFile { problem }),
+        None => value
+            .as_integer()
+            .and_then(|px| u32::try_from(px).ok())
+            .filter(|px| *px >= 1)
+            .map(WidthSetting::Px)
+            .ok_or(SettingsError::InvalidFile { problem }),
+    }
 }
 
 /// A 6-digit hex color (`#RRGGBB`, `#` optional, case-insensitive) as
@@ -692,6 +745,8 @@ isolated = false
                 grouping: false,
                 layout: LayoutSetting::Vertical,
                 columns: ColumnsSetting::Auto,
+                width: WidthSetting::Auto,
+                min_width: WidthSetting::Auto,
                 pair: None,
                 selection: SelectionSetting::Accent,
                 font: crate::text::FontSetting::Default,
@@ -1497,6 +1552,107 @@ isolated = false
         assert_eq!(settings.columns, ColumnsSetting::Pinned(5));
     }
 
+    #[test]
+    fn parse_reads_the_width_keys() {
+        for (config, width, min_width) in [
+            (
+                &b"width = \"auto\"\n"[..],
+                WidthSetting::Auto,
+                WidthSetting::Auto,
+            ),
+            (
+                b"width = \"100%\"\n",
+                WidthSetting::Percent(100),
+                WidthSetting::Auto,
+            ),
+            (
+                b"width = \"66%\"\n",
+                WidthSetting::Percent(66),
+                WidthSetting::Auto,
+            ),
+            (b"width = 640\n", WidthSetting::Px(640), WidthSetting::Auto),
+            (
+                b"min-width = \"50%\"\n",
+                WidthSetting::Auto,
+                WidthSetting::Percent(50),
+            ),
+            (
+                b"min-width = 800\n",
+                WidthSetting::Auto,
+                WidthSetting::Px(800),
+            ),
+            (
+                b"width = \"100%\"\nmin-width = 640\n",
+                WidthSetting::Percent(100),
+                WidthSetting::Px(640),
+            ),
+        ] {
+            let settings = Settings::parse(config).expect("valid width value");
+            assert_eq!(
+                (settings.width, settings.min_width),
+                (width, min_width),
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_without_width_keys_defaults_to_auto() {
+        // An empty file and a rules-only file alike: no width keys, the
+        // content-sized card — the no-config card is unchanged.
+        assert_eq!(
+            Settings::parse(b"").expect("empty").width,
+            WidthSetting::Auto
+        );
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert_eq!(rules_only.min_width, WidthSetting::Auto);
+        assert_eq!(Settings::default().width, WidthSetting::Auto);
+        assert_eq!(Settings::default().min_width, WidthSetting::Auto);
+    }
+
+    #[test]
+    fn parse_rejects_width_values_out_of_domain() {
+        // A percentage past 100, a zero of either form, a negative, a
+        // quoted pixel count, a float, a bool — named per key, never
+        // clamped.
+        for (config, problem) in [
+            (&b"width = \"101%\"\n"[..], WIDTH_PROBLEM),
+            (b"width = \"0%\"\n", WIDTH_PROBLEM),
+            (b"width = 0\n", WIDTH_PROBLEM),
+            (b"width = -640\n", WIDTH_PROBLEM),
+            (b"width = \"640\"\n", WIDTH_PROBLEM),
+            (b"width = 640.5\n", WIDTH_PROBLEM),
+            (b"width = true\n", WIDTH_PROBLEM),
+            (b"min-width = \"200%\"\n", MIN_WIDTH_PROBLEM),
+            (b"min-width = 0\n", MIN_WIDTH_PROBLEM),
+            (b"min-width = \"auto-ish\"\n", MIN_WIDTH_PROBLEM),
+        ] {
+            assert_eq!(
+                Settings::parse(config),
+                Err(SettingsError::InvalidFile { problem }),
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn a_bad_width_fails_the_whole_file() {
+        // The last-good contract: an out-of-domain `min-width` beside
+        // valid rules yields no settings at all, never a partial set.
+        let config = b"min-width = \"101%\"\n\n[[workspace]]\nname = \"code\"\nisolated = false\n";
+        assert!(Settings::parse(config).is_err());
+    }
+
+    #[test]
+    fn parse_coexists_width_with_columns() {
+        let config = b"columns = 5\nwidth = \"100%\"\n";
+        let settings = Settings::parse(config).expect("valid config");
+        assert_eq!(settings.columns, ColumnsSetting::Pinned(5));
+        assert_eq!(settings.width, WidthSetting::Percent(100));
+    }
+
     // --- Resolution ------------------------------------------------------
 
     fn rule(reference: WorkspaceRef, isolated: bool) -> WorkspaceRule {
@@ -1514,6 +1670,8 @@ isolated = false
             grouping: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
+            width: WidthSetting::Auto,
+            min_width: WidthSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1537,6 +1695,8 @@ isolated = false
             grouping: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
+            width: WidthSetting::Auto,
+            min_width: WidthSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1561,6 +1721,8 @@ isolated = false
             grouping: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
+            width: WidthSetting::Auto,
+            min_width: WidthSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1587,6 +1749,8 @@ isolated = false
             grouping: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
+            width: WidthSetting::Auto,
+            min_width: WidthSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1610,6 +1774,8 @@ isolated = false
             grouping: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
+            width: WidthSetting::Auto,
+            min_width: WidthSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1633,6 +1799,8 @@ isolated = false
             grouping: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
+            width: WidthSetting::Auto,
+            min_width: WidthSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1659,6 +1827,8 @@ isolated = false
             grouping: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
+            width: WidthSetting::Auto,
+            min_width: WidthSetting::Auto,
             pair: None,
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -1854,6 +2024,8 @@ isolated = false
                 grouping: false,
                 layout: LayoutSetting::Vertical,
                 columns: ColumnsSetting::Auto,
+                width: WidthSetting::Auto,
+                min_width: WidthSetting::Auto,
                 pair: None,
                 selection: SelectionSetting::Accent,
                 font: crate::text::FontSetting::Default,

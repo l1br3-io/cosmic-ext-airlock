@@ -51,6 +51,11 @@ pipeline the COSMIC launcher uses) beside its title.
   two-thirds of the screen (`"auto"`, the default) or pins 3–12
   tiles — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#layout)
+- **Card width** — `width` and `min-width` hold either card at a floor:
+  `"auto"` (the default) sizes from content, `"100%"` fills the
+  screen, or set a pixel count. A value below what the card needs
+  changes nothing — see
+  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#width)
 - **App grouping** (`grouping = true`) turns the list into a per-app tree:
   collapsed app entries that commit their most recently used window, with
   window-count pips below the app name and an inline caret; → to

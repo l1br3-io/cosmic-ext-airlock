@@ -815,6 +815,25 @@ pub enum ColumnsSetting {
     Pinned(usize),
 }
 
+/// One card-width key's answer. `Auto` (the default) keeps the
+/// content-sized card — the widest title row on the vertical card, the
+/// tile shape on the band; `Px(n)` floors the card at n logical px;
+/// `Percent(n)` at n % of the invoking output's logical width (`"100%"`
+/// the whole output), the percentage parser-guaranteed ≤ 100. Parsed by
+/// `settings` from the `width`/`min-width` keys; both layouts read them,
+/// and neither ever shrinks the card below its content — the floor only
+/// widens, so nothing clips mid-gesture.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WidthSetting {
+    /// The content-sized card (default).
+    #[default]
+    Auto,
+    /// A fixed width floor, logical px.
+    Px(u32),
+    /// A share of the invoking output's logical width, 1..=100.
+    Percent(u32),
+}
+
 /// The text backend one card paints through, chosen once at session
 /// open beside the palette and frozen for the gesture's life (the
 /// palette freeze philosophy): `Bitmap` is the font8x8 floor — today's
@@ -1385,23 +1404,44 @@ pub struct Viewport {
 
 /// The two inputs to the windowing rule, carried together into
 /// [`overlay_model`]: the session's `rows` budget (frozen at open from
-/// the setting) and the window the previous rebuild computed, `None` at
-/// open.
+/// the setting), the card's resolved width floor (frozen at open from
+/// the `width`/`min-width` settings; `None` sizes from content), and
+/// the window the previous rebuild computed, `None` at open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Windowing {
     pub rows: usize,
+    pub width_floor: Option<u32>,
     pub prev: Option<Viewport>,
 }
 
 /// The horizontal band's windowing inputs, carried into
 /// [`overlay_model_horizontal`]: the session's resolved tile budget
 /// (frozen at open from the `columns` setting and the invoking
-/// output's logical width) and the window the previous rebuild
-/// computed, `None` at open.
+/// output's logical width), the card's resolved width floor (frozen at
+/// open beside it; `None` sizes from the tile shape), and the window
+/// the previous rebuild computed, `None` at open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Banding {
     pub tiles: usize,
+    pub width_floor: Option<u32>,
     pub prev: Option<Viewport>,
+}
+
+/// Resolves one card-width key against the invoking output's logical
+/// width: `Auto` stays `None` (the content-sized card), `Px(n)` is `n`
+/// verbatim, `Percent(n)` is `output × n / 100` (whole logical px,
+/// parser-guaranteed ≤ 100 so never past the output). Like
+/// [`resolved_tiles`]: read once at map and frozen for the session.
+/// The caller owns the one clamp left — a pixel count past the output
+/// rides back down to it with the daemon's diagnostic.
+pub fn resolved_width(setting: WidthSetting, output_width: u32) -> Option<u32> {
+    match setting {
+        WidthSetting::Auto => None,
+        WidthSetting::Px(px) => Some(px),
+        // Saturating: the output's width comes from the compositor, and
+        // an implausible one must not panic the gesture path.
+        WidthSetting::Percent(percent) => Some(output_width.saturating_mul(percent) / 100),
+    }
 }
 
 /// Resolves the `columns` setting against the invoking output's
@@ -1632,9 +1672,11 @@ pub fn overlay_model_horizontal(
     }
     // The card is the tile grid: wide-short, the `…` tile inside the
     // slots (the spec's "card width = N × tile pitch"), floored at the
-    // caption's guarantee. The caption names the selected window —
-    // the commit target of a flat band is always a window.
-    let width = band_width(slots as u32);
+    // caption's guarantee and — when the session carries one — the
+    // `width`/`min-width` floor; the floor only widens, the tiles stay
+    // left-aligned in the air it buys. The caption names the selected
+    // window — the commit target of a flat band is always a window.
+    let width = band_width(slots as u32).max(banding.width_floor.unwrap_or(0));
     let caption = compose_caption(
         rows.iter()
             .find(|row| row.selected)
@@ -1860,8 +1902,10 @@ pub fn overlay_model_grouped_horizontal(
         rows.push(continuation_row());
     }
     // The frozen grid: the daemon's max of the two shapes, whatever
-    // the strip is showing now, floored at the caption's guarantee.
-    let width = band_width(width_slots as u32);
+    // the strip is showing now, floored at the caption's guarantee and
+    // — when the session carries one — the `width`/`min-width` floor;
+    // the floor only widens, the strip stays left-aligned in it.
+    let width = band_width(width_slots as u32).max(banding.width_floor.unwrap_or(0));
     // The caption names the commit target: a window tile's own title;
     // an app tile's MRU-front window's title (committing the app
     // activates that window — the parent row's handle is that window,
@@ -1997,13 +2041,19 @@ fn finish_model(
         windowed.push(continuation_row());
     }
     let count = windowed.len() as u32;
+    // The title band's width is the widest row's own measure — columns ×
+    // TEXT_W on the Bitmap floor, measured ink on System — under the same
+    // ceiling: the band never exceeds MAX_COLS × TEXT_W (the compile-time
+    // pin above its formula). The card adds its chrome and, when the
+    // session carries one, the `width`/`min-width` floor — the floor only
+    // widens, so the ceiling caps the title's ink, never the card; rows
+    // stay left-aligned and the hint band right-anchors to the wider
+    // edge, the band's floored-width behavior on end.
+    let width = (2 * PAD_X + ICON + ICON_GAP + band + HINT_GAP + HINT_COLS * TEXT_W)
+        .max(windowing.width_floor.unwrap_or(0));
     Some(OverlayModel {
         rows: windowed,
-        // The title band's width is the widest row's own measure —
-        // columns × TEXT_W on the Bitmap floor, measured ink on System
-        // — under the same ceiling: the band never exceeds
-        // MAX_COLS × TEXT_W (the compile-time pin above its formula).
-        width: 2 * PAD_X + ICON + ICON_GAP + band + HINT_GAP + HINT_COLS * TEXT_W,
+        width,
         // The row gap lives between rows only; the bottom edge mirrors
         // the top. Height follows the profile's rhythm — width never
         // does (density has no width analogue).
@@ -2037,7 +2087,11 @@ fn continuation_row() -> RowModel {
 /// one-word verdict — a single inert row no input can address (the
 /// continuation-row precedent: no handle, no hint, nothing selected),
 /// so the session and the query both stand while nothing matches.
-pub fn no_matches_model(query: &str, profile: StyleProfile) -> Option<OverlayModel> {
+pub fn no_matches_model(
+    query: &str,
+    profile: StyleProfile,
+    width_floor: Option<u32>,
+) -> Option<OverlayModel> {
     let mut text = TextBackend::Bitmap;
     let (title, band) = compose_title("no matches", "", RowKind::Leaf, &mut text, 2);
     let row = RowModel {
@@ -2055,6 +2109,7 @@ pub fn no_matches_model(query: &str, profile: StyleProfile) -> Option<OverlayMod
         0,
         Windowing {
             rows: DEFAULT_ROWS,
+            width_floor,
             prev: None,
         },
         profile,
@@ -4053,6 +4108,32 @@ mod tests {
             StyleProfile::default(),
             Windowing {
                 rows: DEFAULT_ROWS,
+                width_floor: None,
+                prev: None,
+            },
+            TextBackend::Bitmap,
+        )
+    }
+
+    /// [`build`] with the session's width floor carried (`width` /
+    /// `min-width` resolved; `None` in `build` is the content card).
+    fn build_floored(
+        snap: &Snapshot,
+        selected: Handle,
+        scope: Scope,
+        width_floor: Option<u32>,
+    ) -> Option<OverlayModel> {
+        overlay_model(
+            snap,
+            selected,
+            scope,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            StyleProfile::default(),
+            Windowing {
+                rows: DEFAULT_ROWS,
+                width_floor,
                 prev: None,
             },
             TextBackend::Bitmap,
@@ -4302,6 +4383,7 @@ mod tests {
             StyleProfile::default(),
             Windowing {
                 rows: DEFAULT_ROWS,
+                width_floor: None,
                 prev: None,
             },
             TextBackend::Bitmap,
@@ -4339,6 +4421,7 @@ mod tests {
                 profile,
                 Windowing {
                     rows: DEFAULT_ROWS,
+                    width_floor: None,
                     prev: None,
                 },
                 TextBackend::Bitmap,
@@ -4371,6 +4454,7 @@ mod tests {
             profile,
             Windowing {
                 rows: DEFAULT_ROWS,
+                width_floor: None,
                 prev: None,
             },
             TextBackend::Bitmap,
@@ -4574,6 +4658,44 @@ mod tests {
             2 * PAD_X + ICON + ICON_GAP + 7 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
         );
         assert_eq!(model.height, 2 * PAD_Y + 3 * ROW_H + 2 * ROW_GAP);
+    }
+
+    #[test]
+    fn a_width_floor_widens_the_vertical_card_never_narrows_it() {
+        // The `width`/`min-width` contract on the vertical card: a
+        // floor below the content width sizes nothing (nothing ever
+        // clips), a floor above widens — rows stay left-aligned, the
+        // hint band re-anchors to the new right edge.
+        let snap = snapshot(
+            vec![toplevel(
+                1,
+                "WWWW",
+                "app.a",
+                &[1],
+                switcher::State::ACTIVATED,
+                2,
+            )],
+            Some(1),
+        );
+        let content = 2 * PAD_X + ICON + ICON_GAP + 4 * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W;
+        // A floor under the content width (which moved down with the
+        // 2026-11-09 one-column hint band) sizes nothing.
+        let under = build_floored(
+            &snap,
+            Handle(1),
+            Scope::CurrentWorkspace,
+            Some(content - 40),
+        )
+        .expect("eligible windows exist");
+        assert_eq!(under.width, content, "a floor below content sizes nothing");
+        let over = build_floored(
+            &snap,
+            Handle(1),
+            Scope::CurrentWorkspace,
+            Some(content + 96),
+        )
+        .expect("eligible windows exist");
+        assert_eq!(over.width, content + 96, "the floor above widens");
     }
 
     #[test]
@@ -5430,7 +5552,11 @@ mod tests {
             2,
             &Palette::dark(),
             StyleProfile::default(),
-            Banding { tiles, prev },
+            Banding {
+                tiles,
+                width_floor: None,
+                prev,
+            },
             TextBackend::Bitmap,
         )
     }
@@ -5532,6 +5658,57 @@ mod tests {
     }
 
     #[test]
+    fn a_width_floor_widens_the_band_and_recomposes_the_caption() {
+        // The floor only widens, on the band too: below the caption's
+        // own guarantee it sizes nothing; above it the card widens with
+        // the tiles left-aligned in the air, and the caption recomposes
+        // against the wider budget — a long title un-truncates, never
+        // overflows.
+        let snap = snapshot(
+            vec![toplevel(
+                1,
+                &"W".repeat(200),
+                "app.a",
+                &[1],
+                switcher::State::ACTIVATED,
+                2,
+            )],
+            Some(1),
+        );
+        let band = |floor: Option<u32>| {
+            overlay_model_horizontal(
+                &snap,
+                Handle(1),
+                Scope::CurrentWorkspace,
+                &no_icons(),
+                2,
+                &Palette::dark(),
+                StyleProfile::default(),
+                Banding {
+                    tiles: 3,
+                    width_floor: floor,
+                    prev: None,
+                },
+                TextBackend::Bitmap,
+            )
+            .expect("builds")
+        };
+        let content = band(None);
+        assert_eq!(content.width, CAPTION_FLOOR_W, "the shape's own floor");
+        assert_eq!(
+            band(Some(200)).width,
+            CAPTION_FLOOR_W,
+            "a floor below content sizes nothing"
+        );
+        let over = band(Some(800));
+        assert_eq!(over.width, 800, "the floor above widens");
+        assert!(
+            over.caption.chars().count() > content.caption.chars().count(),
+            "the caption recomposes into the wider budget"
+        );
+    }
+
+    #[test]
     fn auto_columns_fit_a_fraction_of_the_output_min_three() {
         // Auto: floor of two thirds of the invoking output's logical
         // width over the tile pitch, floored at three — pinned against
@@ -5554,6 +5731,27 @@ mod tests {
         // Pinned is the budget verbatim.
         assert_eq!(resolved_tiles(ColumnsSetting::Pinned(3), 1920), 3);
         assert_eq!(resolved_tiles(ColumnsSetting::Pinned(12), 640), 12);
+    }
+
+    #[test]
+    fn width_settings_resolve_against_the_output() {
+        // The three forms beside the tiles twin: `auto` stays
+        // content-sized (`None`), a percentage is the output's share in
+        // whole logical px, a pixel count is the floor verbatim — the
+        // daemon owns the one clamp left, a pixel count past the
+        // output.
+        assert_eq!(resolved_width(WidthSetting::Auto, 1920), None);
+        assert_eq!(resolved_width(WidthSetting::Percent(100), 1920), Some(1920));
+        assert_eq!(resolved_width(WidthSetting::Percent(66), 1920), Some(1267));
+        assert_eq!(resolved_width(WidthSetting::Percent(50), 1366), Some(683));
+        assert_eq!(resolved_width(WidthSetting::Px(640), 1920), Some(640));
+        assert_eq!(resolved_width(WidthSetting::Px(9999), 1920), Some(9999));
+        // An implausible reported output saturates rather than panicking
+        // the gesture path.
+        assert_eq!(
+            resolved_width(WidthSetting::Percent(100), u32::MAX),
+            Some(u32::MAX / 100)
+        );
     }
 
     #[test]
@@ -5892,6 +6090,7 @@ mod tests {
             StyleProfile::default(),
             Banding {
                 tiles: 2,
+                width_floor: None,
                 prev: None,
             },
             TextBackend::System {
@@ -6182,7 +6381,11 @@ mod tests {
             2,
             &Palette::dark(),
             StyleProfile::default(),
-            Windowing { rows, prev },
+            Windowing {
+                rows,
+                width_floor: None,
+                prev,
+            },
             TextBackend::Bitmap,
         )
     }
@@ -6211,6 +6414,7 @@ mod tests {
             StyleProfile::default(),
             Windowing {
                 rows: DEFAULT_ROWS,
+                width_floor: None,
                 prev: None,
             },
             TextBackend::Bitmap,
@@ -6426,6 +6630,7 @@ mod tests {
             StyleProfile::default(),
             Windowing {
                 rows: 3,
+                width_floor: None,
                 prev: None,
             },
             TextBackend::Bitmap,
@@ -9705,6 +9910,19 @@ mod tests {
         width_slots: usize,
         tiles: usize,
     ) -> Option<OverlayModel> {
+        build_strip_floored(snap, sequence, selected, width_slots, tiles, None)
+    }
+
+    /// [`build_strip`] with the session's width floor carried
+    /// (`width` / `min-width` resolved; `None` is the frozen grid).
+    fn build_strip_floored(
+        snap: &Snapshot,
+        sequence: &[usize],
+        selected: usize,
+        width_slots: usize,
+        tiles: usize,
+        width_floor: Option<u32>,
+    ) -> Option<OverlayModel> {
         let tree = crate::switcher::Grouping::new(
             &snap.toplevels,
             snap.active.expect("fixture has an active workspace"),
@@ -9720,7 +9938,11 @@ mod tests {
             2,
             &Palette::dark(),
             StyleProfile::default(),
-            Banding { tiles, prev: None },
+            Banding {
+                tiles,
+                width_floor,
+                prev: None,
+            },
             TextBackend::Bitmap,
         )
     }
@@ -9991,6 +10213,25 @@ mod tests {
     }
 
     #[test]
+    fn a_width_floor_widens_the_grouped_strip() {
+        // The same contract on the combined strip: the frozen grid
+        // keeps its slots, the floor buys the air around them, and a
+        // floor below the grid sizes nothing.
+        let (snap, closed, _open) = combined_fixture();
+        let grid = build_strip(&snap, &closed, 0, 4, 8).expect("eligible windows");
+        let under =
+            build_strip_floored(&snap, &closed, 0, 4, 8, Some(200)).expect("eligible windows");
+        assert_eq!(
+            under.width, grid.width,
+            "a floor below the frozen grid sizes nothing"
+        );
+        assert_eq!(grid.width, band_width(4), "the grid's own shape");
+        let over =
+            build_strip_floored(&snap, &closed, 0, 4, 8, Some(900)).expect("eligible windows");
+        assert_eq!(over.width, 900, "the floor above widens");
+    }
+
+    #[test]
     fn strip_model_keeps_plain_app_tiles_on_a_level1_selection() {
         // The closed shape: plain app tiles — the parent labelled by its
         // app_id with its count, the leaves by their titles — and the
@@ -10177,6 +10418,7 @@ mod tests {
             StyleProfile::default(),
             Windowing {
                 rows: DEFAULT_ROWS,
+                width_floor: None,
                 prev: None,
             },
             TextBackend::System {
@@ -10219,6 +10461,7 @@ mod tests {
             StyleProfile::default(),
             Windowing {
                 rows: DEFAULT_ROWS,
+                width_floor: None,
                 prev: None,
             },
             TextBackend::System {
@@ -10244,6 +10487,7 @@ mod tests {
             StyleProfile::default(),
             Windowing {
                 rows: DEFAULT_ROWS,
+                width_floor: None,
                 prev: None,
             },
             TextBackend::System {
@@ -10316,6 +10560,7 @@ mod tests {
             StyleProfile::default(),
             Windowing {
                 rows: DEFAULT_ROWS,
+                width_floor: None,
                 prev: None,
             },
             TextBackend::System {

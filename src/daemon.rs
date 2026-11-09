@@ -137,6 +137,14 @@ pub struct Switch {
     /// place that sees both) and frozen with everything else: an
     /// output change mid-gesture never re-windows the open band.
     tiles: usize,
+    /// The `width`/`min-width` settings collapsed to one floor against
+    /// the invoking output's logical width — resolved by the serve loop
+    /// at open (a pixel count past the output clamps back to it, one
+    /// diagnostic) and written onto the freshly built session right
+    /// after `session_step` opens it; frozen with everything else.
+    /// `None` sizes the card from content. Both layouts read it, and it
+    /// only ever widens — never past the output, never below content.
+    width_floor: Option<u32>,
     /// The frozen tree a grouped plain session walks: the partition of
     /// the eligible list at open, kept so every grouped input — Tab's
     /// linear steps, →/←'s level walks, the card's rows — addresses one
@@ -405,6 +413,10 @@ pub fn ring_step(
             layout,
             columns,
             tiles,
+            // Filled in by the serve loop the moment this session opens
+            // (see the field's note) — ring_step itself never sees the
+            // invoking output.
+            width_floor: None,
             tree,
             tree_sel: 0,
             query: String::new(),
@@ -1947,6 +1959,11 @@ fn step_and_show(
     icons: &mut crate::icons::Cache,
     expanded: &mut std::collections::HashSet<String>,
 ) {
+    // The card's width floor: an open session replays its frozen value
+    // (rewritten below with the same one), a fresh open resolves it
+    // beside the tiles — the serve loop is the one place that sees the
+    // invoking output.
+    let mut width_floor = open.as_ref().and_then(|session| session.width_floor);
     let (scope, palette, profile, rows, grouping, layout, columns, tiles, text) = match open {
         Some(open) => (
             open.scope,
@@ -2004,11 +2021,16 @@ fn step_and_show(
             // the invoking output's logical width (a 1080p
             // fallback when no output has reported one) and
             // freezes with the open.
-            let tiles = crate::ui::resolved_tiles(
-                settings.settings.columns,
-                session
-                    .output_logical_width()
-                    .unwrap_or(crate::ui::FALLBACK_OUTPUT_WIDTH),
+            let output_width = session
+                .output_logical_width()
+                .unwrap_or(crate::ui::FALLBACK_OUTPUT_WIDTH);
+            let tiles = crate::ui::resolved_tiles(settings.settings.columns, output_width);
+            // The card's width floor resolves beside it, once (the pair
+            // collapsing to one floor is `card_width_floor`'s, below).
+            width_floor = card_width_floor(
+                settings.settings.width,
+                settings.settings.min_width,
+                output_width,
             );
             if rows < configured_rows {
                 eprintln!(
@@ -2053,7 +2075,42 @@ fn step_and_show(
         tiles,
         expanded,
     );
+    // The width floor freezes like the tiles: `ring_step` builds the
+    // fresh session without it (it never sees the invoking output), so
+    // the serve loop — the one place that sees both — writes the
+    // resolved floor onto it here. A mid-gesture step replays the
+    // frozen value above and this write is a no-op.
+    if let Some(session) = open.as_mut() {
+        session.width_floor = width_floor;
+    }
     show_selection(session, gesture, open, snapshot, expanded, icons);
+}
+
+/// The session's card width floor: the `width`/`min-width` pair
+/// resolved against the invoking output's logical width, a pixel count
+/// past the output clamped back to it — one diagnostic naming the key;
+/// a percentage is parser-guaranteed 100 at most — and the pair
+/// collapsing to the wider floor. `None` (both `auto`) sizes the card
+/// from content. The floor only ever widens: the builders keep their
+/// own content floors beneath it.
+fn card_width_floor(
+    width: crate::ui::WidthSetting,
+    min_width: crate::ui::WidthSetting,
+    output_width: u32,
+) -> Option<u32> {
+    let resolve = |key: &str, setting: crate::ui::WidthSetting| {
+        crate::ui::resolved_width(setting, output_width).map(|px| {
+            if px > output_width {
+                eprintln!(
+                    "airlock daemon: {key} {px} clamps to the invoking output's {output_width}; the setting keeps its value"
+                );
+                output_width
+            } else {
+                px
+            }
+        })
+    };
+    resolve("width", width).max(resolve("min-width", min_width))
 }
 
 /// The session's text decision, resolved once at open: the zero-fonts
@@ -2147,6 +2204,7 @@ fn show_selection(
     let model = open.as_mut().and_then(|current| {
         let windowing = crate::ui::Windowing {
             rows: current.rows,
+            width_floor: current.width_floor,
             prev: current.viewport,
         };
         // The frozen decision builds what the frozen decision paints:
@@ -2159,7 +2217,11 @@ fn show_selection(
         // inert no-matches row instead of closing the session.
         if let Some(filtered) = &current.filtered {
             if filtered.handles().is_empty() {
-                return crate::ui::no_matches_model(&current.query, current.profile);
+                return crate::ui::no_matches_model(
+                    &current.query,
+                    current.profile,
+                    current.width_floor,
+                );
             }
             let matched = filtered.handles().to_vec();
             let pruned = Snapshot {
@@ -2194,6 +2256,7 @@ fn show_selection(
                             current.profile,
                             crate::ui::Banding {
                                 tiles: current.tiles,
+                                width_floor: current.width_floor,
                                 prev: current.viewport,
                             },
                             crate::ui::text_backend(&text, session.text_system()),
@@ -2240,6 +2303,7 @@ fn show_selection(
                 current.profile,
                 crate::ui::Banding {
                     tiles: current.tiles,
+                    width_floor: current.width_floor,
                     prev: current.viewport,
                 },
                 crate::ui::text_backend(&text, session.text_system()),
@@ -2283,6 +2347,7 @@ fn show_selection(
                             current.profile,
                             crate::ui::Banding {
                                 tiles: current.tiles,
+                                width_floor: current.width_floor,
                                 prev: current.viewport,
                             },
                             crate::ui::text_backend(&text, session.text_system()),
@@ -4323,6 +4388,7 @@ mod tests {
             layout: crate::ui::LayoutSetting::Vertical,
             columns: crate::ui::ColumnsSetting::Auto,
             tiles: TILES,
+            width_floor: None,
             tree: None,
             tree_sel: 0,
             query: String::new(),
@@ -4429,6 +4495,8 @@ mod tests {
             grouping: false,
             layout: crate::ui::LayoutSetting::Vertical,
             columns: crate::ui::ColumnsSetting::Auto,
+            width: crate::ui::WidthSetting::Auto,
+            min_width: crate::ui::WidthSetting::Auto,
             pair: None,
             selection: crate::ui::SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
@@ -7100,5 +7168,60 @@ mod tests {
             !opens_run(open.as_ref().expect("open"), &shrunk, 3),
             "b's lone live window opens nothing"
         );
+    }
+
+    #[test]
+    fn card_width_floor_resolves_the_pair_and_caps_at_the_output() {
+        use crate::ui::WidthSetting;
+        // Both auto: the content-sized card, no floor at all.
+        assert_eq!(
+            card_width_floor(WidthSetting::Auto, WidthSetting::Auto, 1920),
+            None
+        );
+        // A percentage is the output's share; a pixel count is verbatim.
+        assert_eq!(
+            card_width_floor(WidthSetting::Percent(100), WidthSetting::Auto, 1920),
+            Some(1920)
+        );
+        assert_eq!(
+            card_width_floor(WidthSetting::Auto, WidthSetting::Px(640), 1920),
+            Some(640)
+        );
+        // The pair collapses to the wider floor, whichever key carries it.
+        assert_eq!(
+            card_width_floor(WidthSetting::Percent(50), WidthSetting::Px(800), 1920),
+            Some(960)
+        );
+        assert_eq!(
+            card_width_floor(WidthSetting::Px(800), WidthSetting::Percent(50), 1920),
+            Some(960)
+        );
+        // A pixel count past the output rides back down to it.
+        assert_eq!(
+            card_width_floor(WidthSetting::Px(9999), WidthSetting::Auto, 1366),
+            Some(1366)
+        );
+        // A percentage is parser-guaranteed 100 at most, so never capped.
+        assert_eq!(
+            card_width_floor(WidthSetting::Percent(100), WidthSetting::Percent(100), 1366),
+            Some(1366)
+        );
+    }
+
+    #[test]
+    fn the_width_floor_freezes_across_down_and_up() {
+        // The freeze seam beside the tiles twin: the serve loop writes
+        // the resolved floor onto the freshly opened session and it
+        // rides the session's life — ↓ and ↑ reflow the strip inside
+        // the same floor, never re-deriving it.
+        let snap = combined_three_apps();
+        let (mut open, _expanded) = combined_session(&snap);
+        open.as_mut().expect("open").width_floor = Some(900);
+        let session = open.as_mut().expect("open");
+        session.tree_sel = 3; // b's parent tile
+        assert!(enter_band(session, &snap), "↓ opens the run");
+        assert_eq!(session.width_floor, Some(900), "the floor survives ↓");
+        assert!(exit_band(session), "↑ closes the run");
+        assert_eq!(session.width_floor, Some(900), "the floor survives ↑");
     }
 }

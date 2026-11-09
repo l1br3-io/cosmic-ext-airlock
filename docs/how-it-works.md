@@ -1,163 +1,184 @@
 # How the switcher behaves
 
-The full-fidelity description of the overlay and its gestures — the
+The full-fidelity description of the overlay and its gestures: the
 README keeps the short version. Per-workspace configuration lives in
 [settings.md](settings.md); the release-by-release verification of this
 behavior is the [hardware checklist](hardware-checklist.md).
 
 ## The keyboard gesture
 
-Hold **Alt** and tap **Tab**: an overlay lists the windows of the current
-workspace in most-recently-used order. **Tab** walks forward, **Shift+Tab**
-walks back, and the arrow keys step too — **Up** or **Left** back,
-**Down** or **Right** forward. Releasing **Alt** focuses the selection and
-dismisses the overlay; **Enter** confirms the same outcome without letting
-go of **Alt**. **Escape** dismisses without switching. A quick tap —
-released before the overlay even appears — still switches. **Ctrl+1**
-through **Ctrl+9** — keypad digits included — switch to that row's window
-at once, the same outcome as clicking it; the first nine rows show their
-key at the right edge, and deeper rows show none. Without **Ctrl**, the
-number row does nothing.
+Hold **Alt** and tap **Tab**: an overlay lists the windows of the
+current workspace in most-recently-used (MRU) order.
+
+- **Tab** walks forward, **Shift+Tab** walks back. The arrow keys step
+  too: **Up** or **Left** back, **Down** or **Right** forward.
+- Releasing **Alt** focuses the selection and dismisses the overlay.
+- **Enter** confirms the selection without letting go of **Alt**.
+- **Escape** dismisses without switching.
+- A tap released before the overlay appears still switches.
+- **Ctrl+1** through **Ctrl+9**, keypad digits included, switch to
+  that row's window. The first nine rows show their key at the right
+  edge; deeper rows show none. Without **Ctrl**, the number row does
+  nothing.
 
 ## The pointer gesture
 
 The mouse drives the same gesture while the overlay is up. Crossing
-between rows — or tiles, on the horizontal card — moves the selection
-with the cursor; wherever the pointer first lands — including resting
-right where the card appears — claims nothing. **Clicking** a row focuses that window and dismisses the overlay
-— the same outcome as releasing **Alt**. Resting the pointer on a
-window row reveals a small **×** badge on the row's icon; clicking the
-badge closes the window instead (see
+between rows, or tiles on the horizontal card, moves the selection
+with the cursor. Wherever the pointer rests when the overlay appears,
+including where the card itself appears, it selects nothing.
+
+**Clicking** a row focuses that window and dismisses the overlay: the
+same outcome as releasing **Alt**. Resting the pointer on a window row
+reveals a small **×** badge on the row's icon; clicking that closes the
+window instead (see
 [Closing windows](#closing-windows)). The **scroll wheel** steps the
-list one row per notch, forward or back, wrapping like Tab, and a slow
+list one row per notch, forward or back, wrapping like **Tab**. A slow
 scan never times the overlay out.
 
 ## The frozen list
 
 The list is frozen for the gesture: a window that opened after the
-overlay appeared is not on it, so neither the pointer, the wheel, nor a
+overlay appeared is not on it. Neither the pointer, the wheel, nor a
 number key can reach it mid-gesture.
 
 ## Grouped mode
 
 The `grouping = true` setting re-partitions the same list into a
-two-level tree: one entry per application — ordered by each app's most
-recently used window — with that app's whole window set nested beneath
-it, and a top-level row for each window COSMIC cannot attribute to any
-app and for each single-window app. Groups start collapsed; expanding
-one (**→**) is remembered for as long as the daemon runs. Committing an
-entry activates that app's most recently used window — the same window
-its first child shows.
+two-level tree: one entry per application, ordered by each app's most
+recently used window, with that app's whole window set nested beneath
+it. A top-level row stands for each window COSMIC cannot attribute to
+any app, and for each single-window app. Groups start collapsed;
+expanding one with **→** is remembered for as long as the daemon runs.
+Committing an entry activates that app's most recently used window.
 
-The keys re-bind to the tree, one walk: **Tab**, **↑/↓**, and the
-**wheel** are the same linear step — one visible row at a time,
-wrapping — through entries, leaves, and the windows of expanded groups
-alike; a collapsed group contributes only its entry, and nothing ever
-descends into a collapsed group. **→** expands and enters — landing one
-past the window you just left when it is your own app — **←** on a
-child returns to its entry (the group stays expanded), and on an
-expanded entry collapses it. **Ctrl+N** activates the Nth app entry's
-window. The pointer picks rows like the keyboard does, expanded
-entries included. The frozen-list rule holds for the tree: the window
-set never changes mid-gesture, only which of it stands expanded. The
-full table, including how a quick tap lands, lives in
+The keys re-bind to the tree, one walk:
+
+- **Tab**, **↑/↓**, and the **wheel** are the same linear step: one
+  visible row at a time, wrapping, through entries, leaves, and the
+  windows of expanded groups alike.
+- A collapsed group contributes only its entry.
+- **→** expands and enters, landing one past the window you just left
+  when it is your own app.
+- **←** on a child returns to its entry, and the group stays expanded;
+  on an expanded entry it collapses the group.
+- **Ctrl+N** activates the Nth app entry's window.
+
+The pointer picks rows like the keyboard does, expanded entries
+included. The frozen-list rule holds for the tree: the window set
+never changes mid-gesture, only what stands expanded. The full table,
+including how a fast tap lands, lives in
 [settings.md](settings.md#grouping).
 
 ## Type-to-filter
 
 While the card is up, typing filters it. Printable keys type straight
-through the held **Alt** — the query collects in a strip above the rows,
-each keystroke narrowing the card to the windows whose title or
-application name contains what you typed (case-insensitive), the
-selection landing on the first match. **Tab**, the arrows, and the
-wheel step the matches; **Enter** or releasing **Alt** switches to the
-selected one. It works in every mode — the flat list, the grouped tree
-(which flattens to its matching windows while a query stands), and the
-same-app view — because it narrows the list the gesture froze, whatever
-its shape. **Ctrl+N** keeps its chord; every other printable key,
-digits included, types — with one carve-out: **grave** in the grouped
-strip (grouping on the horizontal layout) steps the selected app's
-windows instead, and types only while a query stands — see
+through the held **Alt**: the query collects in a strip above the
+rows, and each keystroke narrows the card to the windows whose title
+or application name contains it, case-insensitive. The selection
+lands on the first match.
+
+- **Tab**, the arrows, and the wheel step the matches.
+- **Enter** or releasing **Alt** switches to the selected one.
+- **Backspace** erases the last character; on an empty query it does
+  nothing.
+- **Escape** clears a standing query first. Only an empty query
+  dismisses.
+
+It works in every mode: the flat list, the grouped tree, which
+flattens to its matching windows while a query stands, and the
+same-app view. **Ctrl+N** keeps its chord; every other printable key,
+digits included, types. One carve-out: **grave** in the grouped strip
+(grouping on the horizontal layout) steps the selected app's windows
+instead, and types only while a query stands. See
 [Grouping](settings.md#grouping).
 
-Editing and escaping: **Backspace** erases the last character (on an
-empty query it does nothing); **Escape** clears a standing query first
-and only an empty query dismisses. Clearing the query restores the
-card you had, keeping the window you had selected when it is still
-there. Nothing matches: the card keeps the query with a one-word
-verdict, and commits as a no-op. The query dies with the gesture —
-nothing persists, and the window list never re-derives mid-gesture.
+Clearing the query restores the card you had, keeping the window you
+had selected when it is still there. When nothing matches, the card
+keeps the query with a one-word verdict and commits as a no-op. The
+query dies with the gesture: nothing persists, and the window list
+never re-derives mid-gesture.
 
 ## Closing windows
 
-Windows close from the card without leaving the gesture. **Alt+minus**
-— the top-row minus or the keypad's — closes the selected row's window;
-on the pointer's side, resting on a window row reveals a small **×**
-badge on its icon's top-right corner, and clicking that badge closes the
-row's window instead of activating it. The horizontal band uses the
-same badge on its tiles: hovering a window tile reveals the **×** on
-the tile's icon, and clicking it closes the tile's window while the
-rest of the icon still activates. Every row closes exactly what it
-activates: a group entry closes its app's most recently used window —
-the same window the entry commits — and a query row closes the window
-it shows.
+Windows close from the card without leaving the gesture.
 
-After each close the selection moves off the closing window — to the
-next visible row, wrapping, when it rested there — and the card stays
-up, so one held gesture can prune a stack of windows — Alt+minus, Alt+minus, then Tab to what
-survives. Closing the last eligible window dismisses the overlay. The
-× is the pointer's affordance on window rows and tiles only — never
-group entries, app tiles, or the `…` rows — while Alt+minus works in
-every mode: the flat list, the grouped tree, the horizontal band and
-grouped strip, a standing query, and the same-app view. A
-window closed by someone else mid-gesture drops off the card the same
-way; closing never adds one back — the frozen-list rule holds.
+- **Alt+minus**, the top-row minus or the keypad's, closes the
+  selected row's window.
+- Clicking the **×** on a window row closes that row's window instead
+  of activating it. The **×** is a small knockout badge on the row's
+  icon's top-right corner; the horizontal band and grouped strip paint
+  the same badge on their tiles, so the pointer affordance is identical
+  in either layout and the rest of the row or tile still activates.
+
+Every row closes exactly what it activates: a group entry closes its
+app's most recently used window, a query row closes the window it
+shows.
+
+After each close the selection moves to the next visible row,
+wrapping, if it rested on the closing window. The card stays up, so
+one held gesture can prune a stack of windows: Alt+minus, Alt+minus,
+then Tab to what survives. Closing the last eligible window dismisses
+the overlay.
+
+The × is the pointer's affordance on window rows and tiles only: never
+group entries, app tiles, or the `…` rows. Alt+minus works in every
+mode, and through a standing query. A window someone else closes
+mid-gesture drops off the card the same way, and closing never adds one
+back: the frozen-list rule holds.
 
 ## The card
 
-Each row shows the window's application icon — resolved through the same
-desktop-entry and icon-theme pipeline the COSMIC launcher uses — next to
-its title; an application with no themed icon falls back to a generic
-window glyph. The card is a rounded rectangle with a hairline border, at
-most 688 px wide, with the selected row highlighted; text renders at
-12 px and stays sharp on HiDPI displays (the overlay renders at the
-output's scale). The `theme` setting picks the card — `auto` (the
-default) follows the desktop's dark/light preference; see
-[settings.md](settings.md#theme).
+Each row shows the window's application icon next to its title,
+resolved through the same desktop-entry and icon-theme pipeline the
+COSMIC launcher uses. An application with no themed icon falls back to
+a generic window glyph. The card is a rounded rectangle with a
+hairline border, at most 688 px wide, with the selected row
+highlighted. Text renders at 12 px and stays sharp on HiDPI displays:
+the overlay renders at the output's scale. The `theme` setting picks
+the card; `auto`, the default, follows the desktop's dark/light
+preference. See [settings.md](settings.md#theme).
 
 The `layout = "horizontal"` setting trades the column for a wide,
-short **band**: the same windows as compact icon-only tiles — each
-tile the app icon with its chord's digit — under one caption that
-names the selected window, ended by a `…` tile when the list outgrows
-the strip. Left and Right step the strip, Ctrl+N and the pointer
-address its tiles exactly as they address rows, and the `columns`
-setting sizes it: two-thirds of the invoking output (`"auto"`, the
-default) or a pinned 3–12 tiles. See
-[settings.md](settings.md#layout).
+short **band**: the same windows as compact, icon-only tiles, each
+tile the app icon with its chord's digit, under one caption that
+names the selected window, ended by a `…` tile when the list
+outgrows the strip.
+
+- **Left** and **Right** step the strip.
+- **Ctrl+N** and the pointer address its tiles exactly as they
+  address rows.
+
+The `columns` setting sizes it: two-thirds of the invoking output
+(`"auto"`, the default) or a pinned 3 to 12 tiles. Either way `width`
+and `min-width` can hold it at a floor — `"auto"` (the default,
+content-sized), `"100%"` for the whole output, or a pixel count. See
+[settings.md](settings.md#layout) and [settings.md](settings.md#width).
 
 ## Workspace scoping
 
 Only windows whose workspace set includes the current workspace are
-listed: sticky windows appear everywhere, minimized windows nowhere, and
-a window parked on another workspace can never be focused through
+listed: sticky windows appear everywhere, minimized windows nowhere,
+and a window parked on another workspace can never be focused through
 Airlock. The isolation is per-workspace configurable: a workspace can
-opt into the global switcher through a config file — see
+opt into the global switcher through a config file. See
 [settings.md](settings.md).
 
 ## The extra keys
 
-`airlock install` also claims three more keys. Hold **Alt** and tap
-**grave** (the key above Tab): the overlay lists only the current
-application's windows, MRU order — the same gesture, the same isolation
-rule (`isolated = false` widens the list to that application's windows
-everywhere). **Alt+Shift+grave** opens it stepping backwards. An
-application with fewer than two windows in scope does nothing — there is
-nothing to cycle. **Alt+Esc** switches to the MRU-second window under the
-same scope — the window a quick Alt+Tab tap would reach — with no overlay
-at all.
+`airlock install` also claims three more keys.
+
+- Hold **Alt** and tap **grave** (the key above **Tab**): the overlay
+  lists only the current application's windows in MRU order. The same
+  gesture, the same isolation rule; `isolated = false` widens the list
+  to that application's windows everywhere. An application with fewer
+  than two windows in scope does nothing.
+- **Alt+Shift+grave** opens it stepping backwards.
+- **Alt+Esc** switches to the MRU-second window under the same scope:
+  the window a fast Alt+Tab tap reaches, with no overlay.
 
 ## The daemon
 
-A small daemon keeps a live snapshot of the compositor state; the keybind
-stubs are milliseconds-thin and auto-start the daemon on first press. The
-overlay is software-rendered — no GPU required.
+A small daemon keeps a live snapshot of the compositor state; the
+keybind stubs are milliseconds-thin and auto-start the daemon on first
+press. The overlay is software-rendered: no GPU required.
