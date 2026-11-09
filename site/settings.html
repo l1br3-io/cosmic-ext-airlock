@@ -54,6 +54,8 @@ theme = "auto"         # match the desktop's dark/light mode (the default)
 rows = 8               # windows the card keeps in view (the default)
 layout = "vertical"    # the tall card; "horizontal" lays it out as tiles
 # columns = "auto"     # the band's tile budget; or a whole number 3–12
+# width = "auto"       # the card's width floor; "100%" fills the screen, or a pixel count
+# min-width = "auto"   # the card's never-below width; same values as width
 grouping = false       # the flat list (the default); true groups it by app
 
 [[workspace]]
@@ -260,6 +262,33 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       the next press.</p>
     </section>
 
+    <section id="width">
+      <h2>Width</h2>
+      <p><code>width</code> and <code>min-width</code> set a floor under
+      the card's width, with the same values and the same meaning on both
+      the vertical card and the horizontal band:</p>
+      <ul>
+        <li><strong><code>"auto"</code></strong> (the default): the card
+        sizes from its content, the widest title row on the vertical card,
+        the tile shape on the band. An unset key is <code>"auto"</code>.</li>
+        <li><strong><code>"100%"</code></strong>: the whole invoking
+        output's logical width. A percentage from <code>"1%"</code> to
+        <code>"100%"</code> is a share of that width.</li>
+        <li><strong>A whole number</strong>: that many logical pixels.</li>
+      </ul>
+      <p>The card grows to the larger of the two keys and its content: a
+      value below what the card needs changes nothing, so a title never
+      clips. A pixel count past the invoking output clamps back to the
+      output, keeping the card whole on the screen, and the daemon log
+      names the clamp.</p>
+      <p>On the horizontal band, <code>columns</code> still counts tiles: a
+      widened card keeps its tiles left-aligned with air on the right,
+      exactly as the caption floor already does for a short strip.</p>
+      <p>Both keys are read when a gesture starts and frozen for the
+      session like <code>columns</code>; an edit applies on the next
+      press.</p>
+    </section>
+
     <section id="grouping">
       <h2>Grouping</h2>
       <p><code>grouping = true</code> re-partitions the same MRU window
@@ -360,6 +389,13 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
         <li><strong>A bad <code>columns</code> value</strong> (anything
         but <code>"auto"</code> or a whole number 3–12) is named; the
         last-good settings apply.</li>
+        <li><strong>A bad <code>width</code> or <code>min-width</code>
+        value</strong> (anything but <code>"auto"</code>, a percentage
+        1–100, or a whole pixel count of 1 or more: <code>"0%"</code>,
+        <code>"101%"</code>, <code>0</code>, <code>"640"</code>) is named
+        per key; the last-good settings apply. A pixel count past the
+        output is not an error: it clamps to the output with a logged
+        note, and the setting keeps its value.</li>
         <li><strong>A bad <code>grouping</code> value</strong>
         (<code>grouping = 1</code>, <code>grouping = "yes"</code>) is named
         ("<code>grouping</code> must be a boolean"); the last-good settings
@@ -401,6 +437,13 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
         <code>columns = 12</code>; each applies on the next press. On
         <code>"auto"</code> the band refits when the gesture starts on a
         different-sized output</li>
+        <li>Set <code>width = "100%"</code>; the next
+        <kbd>Alt</kbd>+<kbd>Tab</kbd>'s card spans the output's logical
+        width, its rows or tiles left-aligned inside it. Set
+        <code>width = 400</code> on a card that needs more and the card
+        stays as wide as its content, the floor never clipping. A pixel
+        count past the output clamps to it and the daemon log names the
+        clamp</li>
         <li>Flip COSMIC's Appearance style (Round / Slightly-Round /
         Square); the next <kbd>Alt</kbd>+<kbd>Tab</kbd>'s corners already
         match, at 12 / 8 / 2 px</li>

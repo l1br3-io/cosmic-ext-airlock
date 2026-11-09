@@ -7,6 +7,15 @@ observe, not internal mechanics.
 
 ### Added
 
+- **The `width` and `min-width` settings** — hold either card at a
+  width floor: `"auto"` (the default) keeps today's content-sized
+  card, `"100%"` spans the invoking output's logical width, and any
+  percentage 1–100 or whole pixel count sets the floor. The card grows
+  to the larger of the two keys and its content, so a value below what
+  the card needs changes nothing and a title never clips; a pixel
+  count past the output clamps to it with a logged note. Rows and
+  tiles stay left-aligned in the air the floor buys, and the edit
+  live-applies at the next gesture.
 - **The `layout` setting — a horizontal switcher card** —
   `layout = "horizontal"` lays the same MRU list out as a wide band of
   tiles in a short card: each tile the window's app icon with its

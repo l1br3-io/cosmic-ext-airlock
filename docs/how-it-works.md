@@ -147,8 +147,10 @@ outgrows the strip.
   address rows.
 
 The `columns` setting sizes it: two-thirds of the invoking output
-(`"auto"`, the default) or a pinned 3 to 12 tiles. See
-[settings.md](settings.md#layout).
+(`"auto"`, the default) or a pinned 3 to 12 tiles. Either way `width`
+and `min-width` can hold it at a floor — `"auto"` (the default,
+content-sized), `"100%"` for the whole output, or a pixel count. See
+[settings.md](settings.md#layout) and [settings.md](settings.md#width).
 
 ## Workspace scoping
 

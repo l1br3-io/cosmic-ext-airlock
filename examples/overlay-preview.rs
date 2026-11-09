@@ -701,67 +701,79 @@ fn horizontal_scenarios(
                 ..RowModel::default()
             }
         };
-    let mut band = |list: &[String], sel: usize, tiles: usize| -> OverlayModel {
-        let count = list.len();
-        let viewport = ui::band_window(count, sel, tiles, None);
-        let mut rows = Vec::with_capacity(viewport.content + viewport.bottom as usize);
-        for position in 0..viewport.content {
-            let index = viewport.start + position;
-            rows.push(band_row(
-                &list[index],
-                icons[index % icons.len()].clone(),
-                index == sel,
-                position,
-            ));
-        }
-        if viewport.bottom {
-            rows.push(RowModel {
-                title: String::new(),
-                icon: None,
-                selected: false,
-                handle: None,
-                ..RowModel::default()
-            });
-        }
-        let slots = rows.len() as u32;
-        let width = ui::band_width(slots);
-        // The caption names the selected window — the flat band's
-        // commit target is always a window — composed through the
-        // shipped rule so the sheet judges the real truncation.
-        let caption = ui::compose_caption(&list[sel], width, text, scale);
-        OverlayModel {
-            rows,
-            width,
-            height: ui::band_card_height(),
-            viewport,
-            profile: ui::StyleProfile::default(),
-            horizontal: true,
-            query: None,
-            hovered: None,
-            caption,
-        }
-    };
+    let mut band =
+        |list: &[String], sel: usize, tiles: usize, floor: Option<u32>| -> OverlayModel {
+            let count = list.len();
+            let viewport = ui::band_window(count, sel, tiles, None);
+            let mut rows = Vec::with_capacity(viewport.content + viewport.bottom as usize);
+            for position in 0..viewport.content {
+                let index = viewport.start + position;
+                rows.push(band_row(
+                    &list[index],
+                    icons[index % icons.len()].clone(),
+                    index == sel,
+                    position,
+                ));
+            }
+            if viewport.bottom {
+                rows.push(RowModel {
+                    title: String::new(),
+                    icon: None,
+                    selected: false,
+                    handle: None,
+                    ..RowModel::default()
+                });
+            }
+            let slots = rows.len() as u32;
+            // The width floor (`width`/`min-width`, resolved) widens the
+            // card only; the tiles stay left-aligned in the air it buys.
+            let width = ui::band_width(slots).max(floor.unwrap_or(0));
+            // The caption names the selected window — the flat band's
+            // commit target is always a window — composed through the
+            // shipped rule so the sheet judges the real truncation.
+            let caption = ui::compose_caption(&list[sel], width, text, scale);
+            OverlayModel {
+                rows,
+                width,
+                height: ui::band_card_height(),
+                viewport,
+                profile: ui::StyleProfile::default(),
+                horizontal: true,
+                query: None,
+                hovered: None,
+                caption,
+            }
+        };
     // The caption-budget input: a title past the caption's budget at
     // the floor, so the one caption carries the card's whole `…`.
     let long = "Quarterly review — compiled notes and appendix three";
     let long_titles: Vec<String> = std::iter::repeat_n(long.to_string(), 5).collect();
     [
         // A lone window: one tile, selected, its badge the only hint.
-        band(&titles[..1], 0, 8),
+        band(&titles[..1], 0, 8, None),
         // Three whole tiles, the middle selected — the hint badge over
         // the selection fill at its tightest.
-        band(&titles[..3], 1, 3),
+        band(&titles[..3], 1, 3, None),
         // The working band (the 1920 auto budget): hints to nine,
         // dots past it.
-        band(&titles, 1, 8),
+        band(&titles, 1, 8, None),
         // A mid-band selection after a sweep: the follow window.
-        band(&titles, 9, 8),
+        band(&titles, 9, 8, None),
         // The pinned extremes: three tiles and twelve.
-        band(&titles, 0, ui::COLUMNS_MIN),
-        band(&titles, 0, ui::COLUMNS_MAX),
+        band(&titles, 0, ui::COLUMNS_MIN, None),
+        band(&titles, 0, ui::COLUMNS_MAX, None),
         // The over-budget title: the caption truncates it with the
         // real ellipsis, selection mid-band.
-        band(&long_titles, 2, 5),
+        band(&long_titles, 2, 5, None),
+        // The width floor (`width`/`min-width`): three tiles in a card
+        // widened past its shape — the tiles stay left-aligned, the
+        // caption composes into the whole floor's budget.
+        band(
+            &titles[..3],
+            1,
+            3,
+            Some(ui::CAPTION_FLOOR_W + 2 * ui::TILE_W),
+        ),
     ]
     .into_iter()
     .map(|model| Scenario {
@@ -965,7 +977,7 @@ fn scenarios(
         palette: base,
     });
     sheet.push(Scenario {
-        model: ui::no_matches_model("zzz", ui::StyleProfile::default())
+        model: ui::no_matches_model("zzz", ui::StyleProfile::default(), None)
             .expect("the verdict card renders"),
         palette: base,
     });
@@ -1216,6 +1228,22 @@ fn scenarios(
         ui::Palette::custom(0x00_2A_1E_30, 0x00_E8_E6_E0),
         DARK_SIDE_ACCENT,
     ));
+    // The width floor (`width`/`min-width`): a short content card
+    // widened by the floor — rows stay left-aligned, the hint band
+    // re-anchors to the wider right edge — judged beside its
+    // content-sized twin above.
+    let mut floored = sized(OverlayModel {
+        rows: vec![
+            row("Wide by setting", icons[1].clone(), true),
+            row("content stays left", icons[2].clone(), false),
+        ],
+        ..single()
+    });
+    floored.width += 4 * ui::TEXT_W;
+    sheet.push(Scenario {
+        model: floored,
+        palette: base,
+    });
     sheet
 }
 

@@ -37,6 +37,8 @@ theme = "auto"         # match the desktop's dark/light mode (the default)
 rows = 8               # windows the card keeps in view (the default)
 layout = "vertical"    # the tall card; "horizontal" lays it out as a band of tiles
 # columns = "auto"     # the band's tile budget; or a whole number 3–12 (the default: "auto")
+# width = "auto"       # the card's width floor; "100%" fills the screen, or a pixel count (the default: "auto")
+# min-width = "auto"   # the card's never-below width; same values as width (the default: "auto")
 grouping = false       # the flat list (the default); true groups it by app
 
 [[workspace]]
@@ -253,6 +255,31 @@ always reads, so the card never narrows below it.
 `columns` is read with `layout` when a gesture starts and frozen for
 the session like it — a pinned value live-applies on the next press.
 
+## Width
+
+`width` and `min-width` set a floor under the card's width — with the
+same values and the same meaning, on both the vertical card and the
+horizontal band:
+
+- **`"auto"`** (the default) — the card sizes from its content: the
+  widest title row on the vertical card, the tile shape on the band.
+  An unset key is `"auto"`.
+- **`"100%"`** — the whole invoking output's logical width. A
+  percentage from `"1%"` to `"100%"` is a share of that width.
+- **A whole number** — that many logical pixels.
+
+The card grows to the larger of the two keys and its content: a value
+below what the card needs changes nothing, so a title never clips. A
+pixel count past the invoking output clamps back to the output — the
+card stays whole on the screen — and the daemon log names the clamp.
+
+On the horizontal band, `columns` still counts tiles: a widened card
+keeps its tiles left-aligned with air on the right, exactly as the
+caption floor already does for a short strip.
+
+Both keys are read when a gesture starts and frozen for the session
+like `columns` — an edit applies on the next press.
+
 ## Grouping
 
 `grouping = true` re-partitions the same MRU window list into a
@@ -375,6 +402,13 @@ A bad config never breaks switching:
   3–12 (`columns = "many"`, `columns = 2`, `columns = 12.5`) — is
   named in one diagnostic ("`columns` must be \"auto\" or a whole
   number between 3 and 12") and the last-good settings apply.
+- **A bad `width` or `min-width` value** — anything but `"auto"`, a
+  percentage 1–100 (`"0%"`, `"101%"`), or a whole pixel count of 1 or
+  more (`0`, `-640`, `"640"`, `640.5`) — is named per key ("`width`
+  must be \"auto\", a percentage like \"100%\" (1–100), or a pixel
+  count (1 at least)") and the last-good settings apply. A pixel
+  count past the invoking output is not an error: it clamps to the
+  output with a logged note, and the setting keeps its value.
 - **A bad `grouping` value** — `grouping = 1`, `grouping = "yes"` —
   is named in a diagnostic ("`grouping` must be a boolean") and the
   last-good settings apply, like any malformed edit.
@@ -403,6 +437,11 @@ A bad config never breaks switching:
 - With the band open, set `columns = 3`, then `columns = 12` — each
   applies on the next press; on `"auto"` the band refits when the
   gesture starts on a different-sized output
+- Set `width = "100%"`; the next Alt+Tab's card spans the output's
+  logical width, its rows or tiles left-aligned inside it. Set
+  `width = 400` on a card that needs more and the card stays as wide
+  as its content — the floor never clips. A pixel count past the
+  output clamps to it and the daemon log names the clamp
 - Set `layout = "vertical"`; the next Alt+Tab is the tall card again,
   unchanged — and `grouping = true` renders the grouped card, vertical
   whatever `layout` says

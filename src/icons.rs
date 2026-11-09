@@ -880,6 +880,7 @@ mod tests {
             ui::StyleProfile::default(),
             ui::Windowing {
                 rows: ui::DEFAULT_ROWS,
+                width_floor: None,
                 prev: None,
             },
             ui::TextBackend::Bitmap,
@@ -902,6 +903,7 @@ mod tests {
             ui::StyleProfile::default(),
             ui::Windowing {
                 rows: ui::DEFAULT_ROWS,
+                width_floor: None,
                 prev: None,
             },
             ui::TextBackend::Bitmap,
