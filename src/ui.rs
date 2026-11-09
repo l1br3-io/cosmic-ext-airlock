@@ -2619,16 +2619,38 @@ pub fn render(
     if model.horizontal {
         // The one caption (glance-tiles G3, 2026-11-09): the commit
         // target's title, fixed top-center in the full text color —
-        // the line the card always reserves, empty or not. Centered
-        // ink; the paint loop's edge is the card's own padding,
-        // defense in depth behind the composer's budget.
+        // the line the card always reserves, empty or not. When the
+        // session carries a workspace label it rides the same line
+        // (workspace-label W3, 2026-11-09): the caption centers in the
+        // zone the label leaves — the composer's budget, mirrored here
+        // — and the label right-aligns into the card's own padding
+        // edge at its smaller cell, centered on the line. The paint
+        // loop's edge is the zone's end, defense in depth behind the
+        // composer's budget.
+        let label_cell = ws_label_cell_at(cell);
+        let zone = if model.workspace.is_empty() {
+            0
+        } else {
+            (match &mut text {
+                TextBackend::Bitmap => model.workspace.chars().count() as u32 * label_cell,
+                TextBackend::System { system, query } => system
+                    .shape(&model.workspace, *query, scale, label_cell as f32)
+                    .width_px
+                    .ceil() as u32,
+            }) + WS_LABEL_GAP
+        };
+        let span_end = lw.saturating_sub(TILE_PAD_X + zone);
+        // The centering span is the full width less the zone — `lw - zone`
+        // — so zone 0 reproduces the label-less paint exactly (the
+        // byte-identity pin); the composer's budget keeps the ink inside
+        // the card's padding within it.
+        let center_span = lw.saturating_sub(zone);
         match &mut text {
             TextBackend::Bitmap => {
                 let ink = model.caption.chars().count() as u32 * cell;
-                let edge = lw.saturating_sub(TILE_PAD_X);
-                let mut lx = lw.saturating_sub(ink) / 2;
+                let mut lx = center_span.saturating_sub(ink) / 2;
                 for ch in model.caption.chars() {
-                    if lx + cell > edge {
+                    if lx + cell > span_end {
                         break;
                     }
                     draw_glyph(
@@ -2655,10 +2677,52 @@ pub fn render(
                     stride,
                     scale,
                     palette.text,
-                    lw.saturating_sub(ink) / 2,
+                    center_span.saturating_sub(ink) / 2,
                     baseline,
-                    lw.saturating_sub(TILE_PAD_X),
+                    span_end,
                 );
+            }
+        }
+        // The label itself: one text color, the smaller cell, the
+        // right edge — the caption's quiet companion, never moving
+        // with the selection.
+        if !model.workspace.is_empty() {
+            let right = lw.saturating_sub(TILE_PAD_X);
+            let y = TILE_PAD_Y + (cell - label_cell) / 2;
+            match &mut text {
+                TextBackend::Bitmap => {
+                    let ink = model.workspace.chars().count() as u32 * label_cell;
+                    let mut lx = right - ink;
+                    for ch in model.workspace.chars() {
+                        draw_glyph(
+                            canvas,
+                            stride,
+                            glyph(ch),
+                            lx * scale,
+                            y * scale,
+                            label_cell * scale / GLYPH_W,
+                            palette.text,
+                        );
+                        lx += label_cell;
+                    }
+                }
+                TextBackend::System { system, query } => {
+                    let run = system.shape(&model.workspace, *query, scale, label_cell as f32);
+                    let ink = run.width_px.ceil() as u32;
+                    let baseline =
+                        y + crate::text::centering(run.ascent_px, run.descent_px, label_cell);
+                    paint_run(
+                        system,
+                        &run,
+                        canvas,
+                        stride,
+                        scale,
+                        palette.text,
+                        right - ink,
+                        baseline,
+                        right,
+                    );
+                }
             }
         }
         // One tile renderer, one band top: the flat band and the
@@ -2688,6 +2752,54 @@ pub fn render(
         );
         return;
     }
+    // The workspace label's line (workspace-label W3, 2026-11-09): the
+    // reserved twin above the query strip — the name right-aligned at
+    // the card's own padding edge, its smaller cell at the line's top,
+    // the row gap below it the separator. Every strip and row below
+    // shifts by its height, the same height `row_at` subtracts.
+    let label_line = if model.workspace.is_empty() {
+        0
+    } else {
+        let label_cell = ws_label_cell_at(cell);
+        let right = lw.saturating_sub(PAD_X);
+        let y = rhythm.pad_y;
+        match &mut text {
+            TextBackend::Bitmap => {
+                let ink = model.workspace.chars().count() as u32 * label_cell;
+                let mut lx = right - ink;
+                for ch in model.workspace.chars() {
+                    draw_glyph(
+                        canvas,
+                        stride,
+                        glyph(ch),
+                        lx * scale,
+                        y * scale,
+                        label_cell * scale / GLYPH_W,
+                        palette.text,
+                    );
+                    lx += label_cell;
+                }
+            }
+            TextBackend::System { system, query } => {
+                let run = system.shape(&model.workspace, *query, scale, label_cell as f32);
+                let ink = run.width_px.ceil() as u32;
+                let baseline =
+                    y + crate::text::centering(run.ascent_px, run.descent_px, label_cell);
+                paint_run(
+                    system,
+                    &run,
+                    canvas,
+                    stride,
+                    scale,
+                    palette.text,
+                    right - ink,
+                    baseline,
+                    right,
+                );
+            }
+        }
+        ws_label_height_at(rhythm, cell)
+    };
     // The query strip (`type-filter`): the query in the titles' own
     // column and voice — full text color, the session's frozen backend —
     // with a static caret bar for its terminal. The strip exists only
@@ -2696,7 +2808,7 @@ pub fn render(
     // one geometry.
     let strip = strip_height_at(&model.query, rhythm, cell);
     if let Some(query) = &model.query {
-        let strip_y = rhythm.pad_y + STRIP_PAD_Y;
+        let strip_y = rhythm.pad_y + label_line + STRIP_PAD_Y;
         let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * cell);
         let title_x = PAD_X + ICON + ICON_GAP;
         let text_end = match &mut text {
@@ -2759,7 +2871,8 @@ pub fn render(
         }
     }
     for (index, row) in model.rows.iter().enumerate() {
-        let top = rhythm.pad_y + strip + index as u32 * (rhythm.row_h + rhythm.row_gap);
+        let top =
+            rhythm.pad_y + label_line + strip + index as u32 * (rhythm.row_h + rhythm.row_gap);
         // Continuation row: the `…` glyph card-centered on the titles'
         // own line, in the muted derivation — the hint color, quieter
         // than any title and legible on both card fills and both
@@ -6852,6 +6965,103 @@ mod tests {
             stray += u32::from(probe(&canvas, model.width, lx, line_y) != background);
         }
         assert_eq!(stray, 0, "the caption is the only ink on its line");
+    }
+
+    // --- The workspace label's paint (workspace-label W3) ------------------
+
+    #[test]
+    fn the_workspace_label_paints_right_on_the_caption_line() {
+        // Right-aligned into the card's own right padding's edge, on the
+        // caption line's lower half — the smaller cell centers on the
+        // line the caption fills. Proven on the bitmap floor; the System
+        // face paints the same zone by the shaped twin.
+        let snap = band_snapshot(4);
+        let model = build_band(&snap, Handle(1), 4, None).expect("builds");
+        let mut text = TextBackend::Bitmap;
+        let labeled = with_workspace(model, "code", &mut text, 2);
+        let canvas = render_bitmap(&labeled);
+        let text_color = Palette::dark().text;
+        let label_cell = ws_label_cell_at(TEXT_H);
+        let ink = 4 * label_cell;
+        let y = TILE_PAD_Y + (TEXT_H - label_cell) / 2 + label_cell / 2;
+        let right = labeled.width - TILE_PAD_X;
+        let mut found = 0;
+        for lx in right - ink..right {
+            found += u32::from(probe(&canvas, labeled.width, lx, y) == text_color);
+        }
+        assert!(found > 0, "the label's ink paints in its zone");
+        // The clearing between the caption's zone and the label's holds
+        // nothing.
+        let zone_start = right - ink - WS_LABEL_GAP;
+        let mut stray = 0;
+        for lx in zone_start..zone_start + WS_LABEL_GAP {
+            stray += u32::from(probe(&canvas, labeled.width, lx, y) != Palette::dark().background);
+        }
+        assert_eq!(stray, 0, "the gap between caption zone and label is clean");
+    }
+
+    #[test]
+    fn the_vertical_card_paints_the_label_above_its_rows() {
+        // The reserved line above the first row carries the name,
+        // right-aligned at the card's own right padding; without the
+        // label the same line is bare — the default-off identity.
+        let plain = hit_model(2);
+        let mut text = TextBackend::Bitmap;
+        let labeled = with_workspace(plain.clone(), "ab", &mut text, 2);
+        let canvas = render_bitmap(&labeled);
+        let text_color = Palette::dark().text;
+        let label_cell = ws_label_cell_at(TEXT_H);
+        let ink = 2 * label_cell;
+        let right = labeled.width - PAD_X;
+        let y = labeled.profile.rhythm.pad_y + label_cell / 2;
+        let mut found = 0;
+        for lx in right - ink..right {
+            found += u32::from(probe(&canvas, labeled.width, lx, y) == text_color);
+        }
+        assert!(found > 0, "the label paints on its reserved line");
+        let bare = render_bitmap(&plain);
+        let mut none = 0;
+        for lx in right - ink..right {
+            none += u32::from(probe(&bare, plain.width, lx, y) == text_color);
+        }
+        assert_eq!(none, 0, "the default-off card paints nothing there");
+    }
+
+    #[test]
+    fn the_caption_centers_in_the_zone_the_label_leaves() {
+        // A full-length caption recomposes into the zone left of the
+        // label: its ink never crosses the clearing. The scan is the
+        // assertion — the rightmost ink on the caption's line stays
+        // left of the zone's start.
+        let long_title: String = "chapter".chars().cycle().take(80).collect();
+        let snap = Snapshot {
+            toplevels: vec![
+                toplevel(1, &long_title, "app.1", &[1], switcher::State::ACTIVATED, 3),
+                toplevel(2, "W02", "app.2", &[1], switcher::State::default(), 2),
+                toplevel(3, "W03", "app.3", &[1], switcher::State::default(), 1),
+            ],
+            workspaces: Default::default(),
+            active: Some(switcher::WorkspaceId(1)),
+        };
+        let model = build_band(&snap, Handle(1), 3, None).expect("builds");
+        let mut text = TextBackend::Bitmap;
+        let labeled = with_workspace(model, "code", &mut text, 2);
+        let canvas = render_bitmap(&labeled);
+        let text_color = Palette::dark().text;
+        let label_cell = ws_label_cell_at(TEXT_H);
+        let zone_start = labeled.width - TILE_PAD_X - 4 * label_cell - WS_LABEL_GAP;
+        let y = TILE_PAD_Y + TEXT_H / 2;
+        let mut rightmost = 0;
+        for lx in TILE_PAD_X..zone_start {
+            if probe(&canvas, labeled.width, lx, y) == text_color {
+                rightmost = lx;
+            }
+        }
+        assert!(rightmost > 0, "the caption paints at full length");
+        assert!(
+            rightmost < zone_start,
+            "the caption's ink stops at the clearing, never crossing it"
+        );
     }
 
     #[test]

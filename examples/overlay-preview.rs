@@ -759,71 +759,75 @@ fn horizontal_scenarios(
                 ..RowModel::default()
             }
         };
-    let mut band =
-        |list: &[String], sel: usize, tiles: usize, floor: Option<u32>| -> OverlayModel {
-            let count = list.len();
-            let viewport = ui::band_window(count, sel, tiles, None);
-            let mut rows = Vec::with_capacity(viewport.content + viewport.bottom as usize);
-            for position in 0..viewport.content {
-                let index = viewport.start + position;
-                rows.push(band_row(
-                    &list[index],
-                    icons[index % icons.len()].clone(),
-                    index == sel,
-                    position,
-                ));
-            }
-            if viewport.bottom {
-                rows.push(RowModel {
-                    title: String::new(),
-                    icon: None,
-                    selected: false,
-                    handle: None,
-                    ..RowModel::default()
-                });
-            }
-            let slots = rows.len() as u32;
-            // The width floor (`width`/`min-width`, resolved) widens the
-            // card only; the tiles stay left-aligned in the air it buys.
-            let width = ui::band_width(slots).max(floor.unwrap_or(0));
-            // The caption names the selected window — the flat band's
-            // commit target is always a window — composed through the
-            // shipped rule so the sheet judges the real truncation.
-            let caption = ui::compose_caption(&list[sel], width, text, scale);
-            OverlayModel {
-                workspace: String::new(),
-                rows,
-                width,
-                height: ui::band_card_height(),
-                viewport,
-                profile: ui::StyleProfile::default(),
-                horizontal: true,
-                query: None,
-                hovered: None,
-                caption,
-            }
-        };
+    let band = |list: &[String],
+                sel: usize,
+                tiles: usize,
+                floor: Option<u32>,
+                text: &mut ui::TextBackend<'_>|
+     -> OverlayModel {
+        let count = list.len();
+        let viewport = ui::band_window(count, sel, tiles, None);
+        let mut rows = Vec::with_capacity(viewport.content + viewport.bottom as usize);
+        for position in 0..viewport.content {
+            let index = viewport.start + position;
+            rows.push(band_row(
+                &list[index],
+                icons[index % icons.len()].clone(),
+                index == sel,
+                position,
+            ));
+        }
+        if viewport.bottom {
+            rows.push(RowModel {
+                title: String::new(),
+                icon: None,
+                selected: false,
+                handle: None,
+                ..RowModel::default()
+            });
+        }
+        let slots = rows.len() as u32;
+        // The width floor (`width`/`min-width`, resolved) widens the
+        // card only; the tiles stay left-aligned in the air it buys.
+        let width = ui::band_width(slots).max(floor.unwrap_or(0));
+        // The caption names the selected window — the flat band's
+        // commit target is always a window — composed through the
+        // shipped rule so the sheet judges the real truncation.
+        let caption = ui::compose_caption(&list[sel], width, text, scale);
+        OverlayModel {
+            workspace: String::new(),
+            rows,
+            width,
+            height: ui::band_card_height(),
+            viewport,
+            profile: ui::StyleProfile::default(),
+            horizontal: true,
+            query: None,
+            hovered: None,
+            caption,
+        }
+    };
     // The caption-budget input: a title past the caption's budget at
     // the floor, so the one caption carries the card's whole `…`.
     let long = "Quarterly review — compiled notes and appendix three";
     let long_titles: Vec<String> = std::iter::repeat_n(long.to_string(), 5).collect();
     let mut scenarios: Vec<Scenario> = [
         // A lone window: one tile, selected, its badge the only hint.
-        band(&titles[..1], 0, 8, None),
+        band(&titles[..1], 0, 8, None, text),
         // Three whole tiles, the middle selected — the hint badge over
         // the selection fill at its tightest.
-        band(&titles[..3], 1, 3, None),
+        band(&titles[..3], 1, 3, None, text),
         // The working band (the 1920 auto budget): hints to nine,
         // dots past it.
-        band(&titles, 1, 8, None),
+        band(&titles, 1, 8, None, text),
         // A mid-band selection after a sweep: the follow window.
-        band(&titles, 9, 8, None),
+        band(&titles, 9, 8, None, text),
         // The pinned extremes: three tiles and twelve.
-        band(&titles, 0, ui::COLUMNS_MIN, None),
-        band(&titles, 0, ui::COLUMNS_MAX, None),
+        band(&titles, 0, ui::COLUMNS_MIN, None, text),
+        band(&titles, 0, ui::COLUMNS_MAX, None, text),
         // The over-budget title: the caption truncates it with the
         // real ellipsis, selection mid-band.
-        band(&long_titles, 2, 5, None),
+        band(&long_titles, 2, 5, None, text),
         // The width floor (`width`/`min-width`): three tiles in a card
         // widened past its shape — the tiles stay left-aligned, the
         // caption composes into the whole floor's budget.
@@ -832,6 +836,7 @@ fn horizontal_scenarios(
             1,
             3,
             Some(ui::CAPTION_FLOOR_W + 2 * ui::TILE_W),
+            text,
         ),
     ]
     .into_iter()
@@ -844,10 +849,29 @@ fn horizontal_scenarios(
     // The × reveal (`close-window`): hovering a window tile paints the
     // close glyph in its top-right corner, beside the badge — never on
     // the `…` tile.
-    let mut hovered = band(&titles[..3], 1, 3, None);
+    let mut hovered = band(&titles[..3], 1, 3, None, text);
     hovered.hovered = Some(1);
     scenarios.push(Scenario {
         model: hovered,
+        palette: base,
+    });
+    // The workspace label (`workspace-label` W3): the name riding the
+    // caption line's right edge — judged beside the over-budget caption
+    // (the collision rule the seam buys) and with a name long enough to
+    // meet its cap.
+    let labeled = band(&long_titles, 2, 5, None, text);
+    scenarios.push(Scenario {
+        model: ui::with_workspace(labeled, "code", text, scale),
+        palette: base,
+    });
+    let long_named = band(&titles[..3], 1, 3, None, text);
+    scenarios.push(Scenario {
+        model: ui::with_workspace(
+            long_named,
+            "the workspace with the very long name",
+            text,
+            scale,
+        ),
         palette: base,
     });
     scenarios
@@ -1141,6 +1165,57 @@ fn scenarios(
     sheet.push(Scenario {
         model: ui::no_matches_model("zzz", ui::StyleProfile::default(), None)
             .expect("the verdict card renders"),
+        palette: base,
+    });
+    // The workspace label (`workspace-label` W3): the name on the
+    // reserved top line — the short name, the name at its cap, and the
+    // label above a standing query (both reserved lines together).
+    // Composed on the bitmap floor like the verdict card above it; the
+    // System face judges the same strings through --system-font.
+    let mut bitmap = ui::TextBackend::Bitmap;
+    sheet.push(Scenario {
+        model: ui::with_workspace(
+            sized(OverlayModel {
+                rows: vec![
+                    row("Labeled list", icons[1].clone(), true),
+                    row("Second window", icons[2].clone(), false),
+                ],
+                ..single()
+            }),
+            "code",
+            &mut bitmap,
+            2,
+        ),
+        palette: base,
+    });
+    sheet.push(Scenario {
+        model: ui::with_workspace(
+            sized(OverlayModel {
+                rows: vec![row("Long name", icons[3].clone(), true)],
+                ..single()
+            }),
+            "the workspace with the very long name",
+            &mut bitmap,
+            2,
+        ),
+        palette: base,
+    });
+    sheet.push(Scenario {
+        model: ui::with_query(
+            ui::with_workspace(
+                sized(OverlayModel {
+                    rows: vec![
+                        row("firefox — docs", icons[1].clone(), true),
+                        row("firefox — mail", icons[2].clone(), false),
+                    ],
+                    ..single()
+                }),
+                "web",
+                &mut bitmap,
+                2,
+            ),
+            "fir",
+        ),
         palette: base,
     });
     // The close family (`close-window`, CW2): the × badge revealed on
