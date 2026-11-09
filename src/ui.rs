@@ -393,12 +393,13 @@ pub const fn band_width(slots: u32) -> u32 {
 /// floored three-tile card's air.
 pub const CAPTION_FLOOR_W: u32 = 512;
 /// The workspace label's size step below the resolved text cell
-/// (workspace-label W2, 2026-11-09): the name reads smaller than the
-/// caption it shares the line with, one face and one color — the
+/// (workspace-label W2, 2026-11-09; 2 → 4 by the owner's −20 % call,
+/// 2026-11-10 — 10 → 8 at the default 12-px text): the name reads
+/// smaller than the card's own text, one face and one color — the
 /// hierarchy is size and position alone. The cell floors at
 /// [`FONT_SIZE_MIN`], so at the 8-px text size the label paints at the
 /// one size the card has.
-pub const WS_LABEL_STEP: u32 = 2;
+pub const WS_LABEL_STEP: u32 = 4;
 /// The workspace label's ink cap, in label cells (workspace-label W6,
 /// 2026-11-09 — column-relative since the numbered form grew a
 /// prefix): a name longer than the cap truncates with the real `…`,
@@ -1425,20 +1426,12 @@ impl OverlayModel {
         }
         let cell = self.profile.text.cell();
         let strip_top = band_strip_top_at(cell) as f64 * scale as f64;
-        // The label's own bottom line (workspace-label W7) bounds the
-        // band from below: tiles live in [strip_top, strip_top + cell),
-        // and the clearing and the label line under it address nothing —
-        // like the caption line above, no tile from there.
-        let strip_bottom = strip_top
-            + (tile_cell_h_at(cell)
-                + if self.workspace.is_empty() {
-                    0
-                } else {
-                    WS_LABEL_GAP
-                }) as f64
-                * scale as f64;
+        // The tiles' own cell bounds the band (workspace-label W8):
+        // everything below — the clearing, the label's line, the bottom
+        // padding — addresses nothing, like the caption line above.
+        let strip_bottom = strip_top + tile_cell_h_at(cell) as f64 * scale as f64;
         if y < strip_top || y >= strip_bottom {
-            return None; // the caption line, the clearing, or the label line
+            return None; // the caption line above, the label's territory below
         }
         // The single band admits every y inside the tile cell; x alone
         // picks the tile.
@@ -2658,7 +2651,10 @@ pub fn render(
         // the seam grew the card for it.
         if !model.workspace.is_empty() {
             let label_cell = ws_label_cell_at(cell);
-            let y = band_card_height_at(cell) + WS_LABEL_GAP;
+            // The tiles' bottom, the clearing, the line — then the
+            // card's own bottom padding beneath (the growth pays the
+            // clearing and the line; the padding was already there).
+            let y = band_strip_top_at(cell) + tile_cell_h_at(cell) + WS_LABEL_GAP;
             match &mut text {
                 TextBackend::Bitmap => {
                     let ink = model.workspace.chars().count() as u32 * label_cell;
@@ -2723,16 +2719,17 @@ pub fn render(
         return;
     }
     // The workspace label's line (workspace-label W3, 2026-11-09; the
-    // left edge W7): the reserved twin above the query strip — the
-    // name left-aligned at the text column's spine (the strip's own
-    // x), its smaller cell at the line's top, the row gap below it the
-    // separator. Every strip and row below shifts by its height, the
-    // same height `row_at` subtracts.
+    // thumbnail's edge since W8): the reserved twin above the query
+    // strip — the name left-aligned at `PAD_X`, the icon column's own
+    // left edge (the owner's eye, 2026-11-10), its smaller cell at the
+    // line's top, the row gap below it the separator. Every strip and
+    // row below shifts by its height, the same height `row_at`
+    // subtracts.
     let label_line = if model.workspace.is_empty() {
         0
     } else {
         let label_cell = ws_label_cell_at(cell);
-        let left = PAD_X + ICON + ICON_GAP;
+        let left = PAD_X;
         let y = rhythm.pad_y;
         match &mut text {
             TextBackend::Bitmap => {
@@ -6946,7 +6943,11 @@ mod tests {
         let text_color = Palette::dark().text;
         let label_cell = ws_label_cell_at(TEXT_H);
         let ink = 4 * label_cell;
-        let y = band_card_height() + WS_LABEL_GAP + label_cell / 2;
+        // The line: the tiles' bottom, the clearing, the label — and
+        // the card's own bottom padding beneath (the owner's eye,
+        // 2026-11-10: the label never hugs the card's edge).
+        let line_top = band_strip_top() + tile_cell_h_at(TEXT_H) + WS_LABEL_GAP;
+        let y = line_top + label_cell / 2;
         let left = (labeled.width - ink) / 2;
         let mut found = 0;
         for lx in left..left + ink {
@@ -6957,12 +6958,8 @@ mod tests {
         let mut stray = 0;
         for lx in (labeled.width / 4)..(labeled.width * 3 / 4) {
             stray += u32::from(
-                probe(
-                    &canvas,
-                    labeled.width,
-                    lx,
-                    band_card_height() + WS_LABEL_GAP / 2,
-                ) != Palette::dark().background,
+                probe(&canvas, labeled.width, lx, line_top - WS_LABEL_GAP / 2)
+                    != Palette::dark().background,
             );
         }
         assert_eq!(stray, 0, "the gap between tiles and label line is clean");
@@ -6973,9 +6970,9 @@ mod tests {
     #[test]
     fn the_vertical_card_paints_the_label_above_its_rows() {
         // The reserved line above the first row carries the name,
-        // left-aligned at the text column's spine — the query strip's
-        // own x; without the label the same line is bare — the
-        // default-off identity.
+        // left-aligned with the thumbnail — the icon column's own left
+        // edge (the owner's eye, 2026-11-10); without the label the
+        // same line is bare — the default-off identity.
         let plain = hit_model(2);
         let mut text = TextBackend::Bitmap;
         let labeled = with_workspace(plain.clone(), "ab", &mut text, 2);
@@ -6983,7 +6980,7 @@ mod tests {
         let text_color = Palette::dark().text;
         let label_cell = ws_label_cell_at(TEXT_H);
         let ink = 2 * label_cell;
-        let left = PAD_X + ICON + ICON_GAP;
+        let left = PAD_X;
         let y = labeled.profile.rhythm.pad_y + label_cell / 2;
         let mut found = 0;
         for lx in left..left + ink {
