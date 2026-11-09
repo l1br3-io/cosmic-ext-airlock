@@ -115,9 +115,13 @@ command fails on credentials, that's their step, not yours.) After:
 verify the version exists —
 
 ```
-curl -s https://crates.io/api/v1/crates/cosmic-ext-airlock \
+curl -s -A 'airlock-release-verify' https://crates.io/api/v1/crates/cosmic-ext-airlock \
   | grep -o '"num":"<ver>"'
 ```
+
+The User-Agent is load-bearing: crates.io drops UA-less requests to an
+empty body, which a bare grep reports as "not indexed" — a false red
+(observed 2026-11-09 during the v0.4.0 run).
 
 **6 — Post-publish verification.** The README's install promise is now
 true; prove it without touching the desktop's own install:
