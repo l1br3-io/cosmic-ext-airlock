@@ -23,6 +23,32 @@
   <url type="homepage">https://github.com/l1br3-io/cosmic-ext-airlock</url>
   <url type="bugtracker">https://github.com/l1br3-io/cosmic-ext-airlock/issues</url>
   <releases>
+    <release version="0.3.0" date="2026-11-09">
+      <description>
+        <ul>
+          <li>New: the `width` and `min-width` settings — hold either
+              card at a width floor (`"auto"`, `"100%"`, a percentage,
+              or pixels); the card grows to the larger of the keys and
+              its content, and the edit applies at the next gesture.</li>
+          <li>New: the `layout` setting — `"horizontal"` lays the list
+              out as a wide band of tiles in a short card; `columns`
+              sizes the band (3–12, or `"auto"`).</li>
+          <li>New: the `font` setting and real typography — titles
+              paint the desktop's interface font by default, any
+              installed family overrides it, and Unicode titles render
+              their real glyphs instead of folding to ASCII.</li>
+          <li>New: app grouping (a two-level tree on `grouping = true`),
+              type-to-filter while the card is up, close-window via
+              Alt+minus or the hover ×, and a commented starter config
+              on install.</li>
+          <li>New: the card follows the desktop's corner style and
+              interface density — radius and row rhythm, no keys.
+              Changed: grouped rows show a bare digit and pip counts.
+              Fixed: config edits apply at the next gesture, and
+              Alt+Shift+` steps the app's windows backwards.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-11-07">
       <description>
         <ul>
