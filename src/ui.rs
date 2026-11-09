@@ -411,8 +411,10 @@ pub const WS_LABEL_MAX_COLS: u32 = 14;
 /// Clearing around the label's line (workspace-label W2, 2026-11-09;
 /// its own line since W7): below the tiles on the horizontal cards,
 /// above the first row on the vertical ones — the caption gap's own
-/// double 8-grid step.
-pub const WS_LABEL_GAP: u32 = 16;
+/// double 8-grid step. 16 → 24 by the owner's eye (2026-11-10): W8's
+/// padded bottom put the line 16 px under the tiles and that read as
+/// touching — one more 8-grid step is just enough air.
+pub const WS_LABEL_GAP: u32 = 24;
 /// The workspace label's text cell at one text size — the resolved
 /// cell minus [`WS_LABEL_STEP`], floored at [`FONT_SIZE_MIN`].
 pub const fn ws_label_cell_at(cell: u32) -> u32 {
@@ -5616,6 +5618,10 @@ mod tests {
         let caption = model.caption.clone();
         let mut text = TextBackend::Bitmap;
         let labeled = with_workspace(model, "code", &mut text, 2);
+        assert_eq!(
+            WS_LABEL_GAP, 24,
+            "the owner's just-enough clearing, 2026-11-10"
+        );
         assert_eq!(
             labeled.height,
             height + WS_LABEL_GAP + ws_label_cell_at(TEXT_H),
