@@ -404,13 +404,10 @@ pub const WS_LABEL_STEP: u32 = 2;
 /// `…`, and the label never widens the card — it loses to the width
 /// the shapes already chose. Working value; the preview sheet freezes
 /// it (W3).
-// The bin's daemon wiring lands in W4 (the lib's tests carry it first).
-#[allow(dead_code)]
 pub const WS_LABEL_MAX_W: u32 = 128;
 /// Clearing between the caption's ink zone and the label's, the
 /// caption gap's own double 8-grid step (workspace-label W2,
 /// 2026-11-09) — on the shared line the two never touch.
-#[allow(dead_code)] // WS_LABEL_MAX_W's note
 pub const WS_LABEL_GAP: u32 = 16;
 /// The workspace label's text cell at one text size — the resolved
 /// cell minus [`WS_LABEL_STEP`], floored at [`FONT_SIZE_MIN`].
@@ -2307,7 +2304,6 @@ fn compose_caption_budgeted(
 /// the real `…` — the caption composer's own vocabulary at the label's
 /// smaller cell — returned with its measured ink width, the zone the
 /// caption's budget loses.
-#[allow(dead_code)] // W4's daemon seam; the model tests carry it first
 fn compose_workspace(
     name: &str,
     text: &mut TextBackend<'_>,
@@ -2495,7 +2491,6 @@ pub fn ws_label_height_at(rhythm: Rhythm, cell: u32) -> u32 {
 /// caption recomposes against the budget the label's zone takes, so a
 /// full-length caption never collides with it. The empty name is the
 /// identity: the default-off card is unchanged.
-#[allow(dead_code)] // W4's daemon seam; the model tests carry it first
 pub fn with_workspace(
     mut model: OverlayModel,
     name: &str,

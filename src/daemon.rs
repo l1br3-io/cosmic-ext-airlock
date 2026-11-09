@@ -93,6 +93,13 @@ impl Mru {
 pub struct Switch {
     ring: switcher::Ring,
     workspace: WorkspaceId,
+    /// The session's workspace label (workspace-label W4, 2026-11-09):
+    /// the invoking workspace's name — or "Workspace N" — derived once
+    /// at open beside the scope and frozen for the session's life;
+    /// empty whenever `show_workspace` is off. Written by the serve
+    /// loop the moment the session opens, exactly the `width_floor`
+    /// pattern: `ring_step` never sees the settings.
+    workspace_label: String,
     scope: Scope,
     /// The app a same-app session lists windows of, or `None` for a plain
     /// Alt+Tab session. Chosen once at open and never re-derived: fresh
@@ -403,6 +410,9 @@ pub fn ring_step(
         *open = Some(Switch {
             ring: switcher::Ring::new(handles),
             workspace: active,
+            // Filled in by the serve loop beside the width floor the
+            // moment this session opens — see the field's note.
+            workspace_label: String::new(),
             scope,
             app: None,
             palette,
@@ -1367,6 +1377,25 @@ fn resolve_scope(snapshot: &Snapshot, settings: &settings::Settings) -> Scope {
         })
 }
 
+/// The session's workspace label, derived once at open from the same
+/// lookup the scope resolves by (workspace-label W4, 2026-11-09): the
+/// invoking workspace's compositor name, or the synthesized
+/// "Workspace N" — the 1-based position `index` rules count — when
+/// COSMIC reports none. Empty whenever the setting is off or the
+/// active workspace is unresolvable: no label, the unchanged card.
+fn workspace_label(snapshot: &Snapshot, settings: &settings::Settings) -> String {
+    if !settings.show_workspace {
+        return String::new();
+    }
+    snapshot
+        .active
+        .and_then(|active| settings::active_workspace(&snapshot.workspaces, active))
+        .map_or_else(String::new, |active| match active.name {
+            Some(name) => name.to_owned(),
+            None => format!("Workspace {}", active.position),
+        })
+}
+
 /// Whether the overlay should close itself right now.
 ///
 /// The idle deadline backs up lost input (a grab that stopped delivering
@@ -1978,8 +2007,13 @@ fn step_and_show(
     // The card's width floor: an open session replays its frozen value
     // (rewritten below with the same one), a fresh open resolves it
     // beside the tiles — the serve loop is the one place that sees the
-    // invoking output.
+    // invoking output. The workspace label freezes by the same rule:
+    // replayed frozen, derived fresh only at open.
     let mut width_floor = open.as_ref().and_then(|session| session.width_floor);
+    let mut label = match open {
+        Some(open) => open.workspace_label.clone(),
+        None => String::new(),
+    };
     let (scope, palette, profile, rows, grouping, layout, columns, tiles, text) = match open {
         Some(open) => (
             open.scope,
@@ -1994,6 +2028,10 @@ fn step_and_show(
         ),
         None => {
             settings.refresh();
+            // Derived beside the scope from the same active-workspace
+            // lookup — empty whenever the setting is off — and frozen
+            // onto the session below like every open-path value.
+            label = workspace_label(snapshot, &settings.settings);
             // `auto` asks the system once per open — two small file reads
             // at most — and pinned values never touch the disk at all; a
             // present `card`/`text` pair pins the card over every
@@ -2097,9 +2135,12 @@ fn step_and_show(
     // fresh session without it (it never sees the invoking output), so
     // the serve loop — the one place that sees both — writes the
     // resolved floor onto it here. A mid-gesture step replays the
-    // frozen value above and this write is a no-op.
+    // frozen value above and this write is a no-op. The workspace
+    // label rides the same write (W4): frozen at open, replayed as the
+    // same string every step after.
     if let Some(session) = open.as_mut() {
         session.width_floor = width_floor;
+        session.workspace_label = label;
     }
     show_selection(session, gesture, open, snapshot, expanded, icons);
 }
@@ -2403,6 +2444,21 @@ fn show_selection(
             let observed = open.as_ref().and_then(|session| session.hovered);
             let mut model = model;
             model.hovered = hovered_row(&model, observed);
+            // The workspace label rides the shown card from the frozen
+            // string (workspace-label W4): applied once here — the
+            // builders hand back fresh models every rebuild — through
+            // the same backend decision that shaped the card.
+            if let Some(current) = open.as_ref()
+                && !current.workspace_label.is_empty()
+            {
+                let text = current.text.clone();
+                model = crate::ui::with_workspace(
+                    model,
+                    &current.workspace_label,
+                    &mut crate::ui::text_backend(&text, session.text_system()),
+                    scale,
+                );
+            }
             // The key map rides the shown card: flat, vertical grouped,
             // or the grouped-horizontal combination (tree × horizontal).
             // The text decision rides it too — the overlay freezes what
@@ -4401,6 +4457,7 @@ mod tests {
         let confined = Switch {
             ring: open.ring.clone(),
             workspace: WorkspaceId(1),
+            workspace_label: String::new(),
             scope: Scope::CurrentWorkspace,
             app: None,
             palette: Palette::dark(),
@@ -4543,6 +4600,73 @@ mod tests {
             resolve_scope(&unknown, &not_isolated),
             Scope::CurrentWorkspace
         );
+    }
+
+    // --- The workspace label's derivation (workspace-label W4) -----------
+
+    /// Two workspaces in coordinates order: the named first, the
+    /// unnamed second — the label's whole vocabulary in one snapshot.
+    fn labeled_snapshot() -> Snapshot {
+        Snapshot {
+            toplevels: Vec::new(),
+            workspaces: vec![
+                crate::switcher::Workspace {
+                    id: WorkspaceId(1),
+                    name: "code".to_owned(),
+                    coordinates: vec![0, 0],
+                },
+                crate::switcher::Workspace {
+                    id: WorkspaceId(2),
+                    name: String::new(),
+                    coordinates: vec![0, 1],
+                },
+            ],
+            active: Some(WorkspaceId(2)),
+        }
+    }
+
+    #[test]
+    fn the_workspace_label_names_the_active_workspace() {
+        let mut snap = labeled_snapshot();
+        snap.active = Some(WorkspaceId(1));
+        let settings = crate::settings::Settings {
+            show_workspace: true,
+            ..crate::settings::Settings::default()
+        };
+        assert_eq!(workspace_label(&snap, &settings), "code");
+    }
+
+    #[test]
+    fn the_workspace_label_synthesizes_the_position_for_an_unnamed_workspace() {
+        let settings = crate::settings::Settings {
+            show_workspace: true,
+            ..crate::settings::Settings::default()
+        };
+        // The unnamed second workspace in coordinates order: the same
+        // 1-based position `index` rules count.
+        assert_eq!(
+            workspace_label(&labeled_snapshot(), &settings),
+            "Workspace 2"
+        );
+    }
+
+    #[test]
+    fn the_workspace_label_stays_empty_when_the_setting_is_off() {
+        assert_eq!(
+            workspace_label(&labeled_snapshot(), &crate::settings::Settings::default()),
+            ""
+        );
+    }
+
+    #[test]
+    fn the_workspace_label_is_empty_without_an_active_workspace() {
+        let mut snap = labeled_snapshot();
+        snap.active = None;
+        let settings = crate::settings::Settings {
+            show_workspace: true,
+            ..crate::settings::Settings::default()
+        };
+        assert_eq!(workspace_label(&snap, &settings), "");
     }
 
     /// Unique disposable directory (no tempfile dependency).
