@@ -4,24 +4,60 @@
 # Full reference: docs/settings.md in the source checkout, or
 # https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md
 
-# theme = "auto"      # card color: "auto" (match the desktop), "dark", "light"
-# rows = 8            # windows the card keeps in view on a long list: 3–10
-# font_size = 12      # card text size, logical px: 8–24 (the default: 12)
+# --- Card colors ------------------------------------------------------
 
-# grouping = false    # true: group the list by app — a two-level tree,
-#                     # collapsed by default
-# scoped_cycling = false  # with grouping = true: keep Alt+Tab inside the
-#                     # entered group; false (the default) cycles every
-#                     # app, an expanded group's entry a plain divider
+# theme = "auto"        # card color: "auto" (follow the desktop's dark/
+                        # light mode), "dark", or "light"
+# card = "#1E2126"      # a fixed card/text pair — overrides any `theme`.
+# text = "#F2F4F8"      # Both keys or neither; 6-digit hex ("#" optional,
+                        # case-insensitive); the pair must measure 4.5:1
+                        # contrast or more.
+# selection = "accent"  # the selection band: "accent" (the desktop's
+                        # accent color) or "neutral" (the shipped band)
+
+# --- Card shape -------------------------------------------------------
+
+# layout = "vertical"   # the card's axis: "vertical" (the tall column of
+                        # rows) or "horizontal" (a band of icon-only tiles)
+# columns = "auto"      # the horizontal band's tile budget: "auto" (fit
+                        # the screen) or a whole number 3–12; the vertical
+                        # card ignores it
+# width = "auto"        # the card's width floor: "auto" (content-sized),
+                        # a percentage like "100%" (1–100), or a pixel
+                        # count (1 at least). A floor below the content
+                        # changes nothing — a title never clips; a pixel
+                        # count past the screen clamps to it.
+# min-width = "auto"    # the never-below width, same values as `width`;
+                        # the two collapse to the wider floor
+
+# --- The list ---------------------------------------------------------
+
+# rows = 8              # windows the vertical card keeps in view on a
+                        # long list: 3–10 (the `…` continuation rows ride
+                        # on top of the budget, never inside it)
+# grouping = false      # true: group the list by app — a two-level tree,
+                        # collapsed by default
+
+# --- Type -------------------------------------------------------------
+
+# font = "Fira Sans"    # a font family name, exactly as your font picker
+                        # shows it; unset (the default): follow the COSMIC
+                        # interface font. Any string parses — an installed
+                        # family paints, a missing one logs and falls back.
+# font_size = 12        # card text size, logical px: 8–24 (the default:
+                        # 12). Icons, paddings, and gaps stay fixed.
+
+# --- Workspace rules --------------------------------------------------
 
 # Rules below opt a workspace OUT of isolation. Workspaces without an
 # entry keep the default: Alt+Tab sees only that workspace's windows.
 # Match by name or by 1-based position — never both keys in one rule.
+# Duplicate references resolve last-wins.
 #
 # [[workspace]]
-# name = "code"       # a workspace COSMIC reports with exactly this name
-# isolated = false    # false: Alt+Tab here cycles every window, MRU
+# name = "code"         # a workspace COSMIC reports with exactly this name
+# isolated = false      # false: Alt+Tab here cycles every window, MRU
 #
 # [[workspace]]
-# index = 2           # the 2nd workspace in COSMIC's order, named or not
+# index = 2             # the 2nd workspace in COSMIC's order, named or not
 # isolated = false
