@@ -1274,8 +1274,8 @@ struct Step {
 }
 
 /// Live settings state: the parsed rules plus the source that watches
-/// them. Refreshed only at session open — one stat per invocation, so
-/// nothing on the gesture path blocks on file reads.
+/// them. Refreshed only at session open — one bounded read per
+/// invocation, so nothing on the gesture path blocks on file reads.
 struct LiveSettings {
     source: SettingsSource,
     settings: settings::Settings,
@@ -1284,7 +1284,8 @@ struct LiveSettings {
 impl LiveSettings {
     /// Startup load: read once (missing file means defaults, silently;
     /// anything else diagnostic-worthy degrades to defaults too), then
-    /// seed the mtime so the first gesture does not re-read for nothing.
+    /// seed the change baseline so the first gesture does not re-read
+    /// for nothing.
     fn load() -> Self {
         let mut source = SettingsSource::new();
         let settings = match source.read() {
@@ -1299,15 +1300,23 @@ impl LiveSettings {
         Self { source, settings }
     }
 
-    /// One-stat reload check: adopt a changed file, fall back to defaults
+    /// One-read reload check: adopt a changed file, fall back to defaults
     /// when it is gone, and keep last-good settings on a malformed read —
-    /// settings can never break switching.
+    /// settings can never break switching. An adoption says so once per
+    /// edit with the two shape-determining keys, so a config that seems
+    /// ignored can be traced in the journal: no line, no change seen.
     fn refresh(&mut self) {
         match self.source.check() {
             Reload::Unchanged => {}
             Reload::NotPresent => self.settings = settings::Settings::default(),
             Reload::Changed => match self.source.read() {
-                Ok(fresh) => self.settings = fresh,
+                Ok(fresh) => {
+                    eprintln!(
+                        "airlock daemon: config change adopted: layout={:?} grouping={}",
+                        fresh.layout, fresh.grouping
+                    );
+                    self.settings = fresh;
+                }
                 Err(ReadError::Missing) => self.settings = settings::Settings::default(),
                 Err(error) => {
                     eprintln!("airlock daemon: keeping last-good settings: {error}");

@@ -6,8 +6,8 @@
 
 use std::fmt;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use crate::switcher::{Scope, Workspace, WorkspaceId};
 use crate::ui::{self, ColumnsSetting, LayoutSetting, SelectionSetting, ThemeSetting};
@@ -510,9 +510,9 @@ impl std::error::Error for SettingsError {}
 pub enum Reload {
     /// No config file exists; defaults apply.
     NotPresent,
-    /// Same mtime as the last check; the loaded settings still apply.
+    /// Same bytes as the last check; the loaded settings still apply.
     Unchanged,
-    /// New file or new mtime; read and parse again.
+    /// New file or new content; read and parse again.
     Changed,
 }
 
@@ -546,12 +546,21 @@ impl fmt::Display for ReadError {
 
 impl std::error::Error for ReadError {}
 
-/// Resolves the config path and answers "did it change?" with one stat,
-/// so the daemon can reload cheaply on the gesture path without a watcher
-/// dependency.
+/// Resolves the config path and answers "did it change?" with one
+/// bounded read, so the daemon can reload cheaply on the gesture path
+/// without a watcher dependency.
+///
+/// The comparison is **content, never metadata** (2026-11-09): an mtime
+/// alone misses edits on filesystems with coarse or stale timestamps —
+/// VM shares (9p, virtiofs) are the known offenders — and a boolean
+/// flip like `grouping = true` → `false` never moves a byte count
+/// either. Worse, a filesystem whose `modified()` reads as an error
+/// used to count as *absence*, resetting every gesture to defaults.
+/// Bytes cannot lie; the config is a few hundred of them, read at
+/// session open where icon rasterization already costs more.
 pub struct SettingsSource {
     path: Option<PathBuf>,
-    last_mtime: Option<SystemTime>,
+    last_content: Option<Vec<u8>>,
 }
 
 impl SettingsSource {
@@ -568,7 +577,7 @@ impl SettingsSource {
         );
         Self {
             path: dir.map(|dir| dir.join("airlock/config.toml")),
-            last_mtime: None,
+            last_content: None,
         }
     }
 
@@ -577,29 +586,35 @@ impl SettingsSource {
     pub(crate) fn at(path: PathBuf) -> Self {
         Self {
             path: Some(path),
-            last_mtime: None,
+            last_content: None,
         }
     }
 
-    /// One-stat reload check. Remembers the mtime it reports, so an
-    /// unchanged file is cheap to skip and a malformed re-read keeps
-    /// last-good settings until the file actually changes again.
+    /// One-read reload check. Remembers the bytes it reads, so an
+    /// unchanged file is cheap to compare and a malformed re-read keeps
+    /// last-good settings until the file actually changes again. A
+    /// transient I/O error reads as [`Reload::Unchanged`] — the next
+    /// check retries, and settings never churn on a flaky read.
     pub fn check(&mut self) -> Reload {
-        let mtime = self
-            .path
-            .as_deref()
-            .and_then(|path| fs::metadata(path).ok())
-            .and_then(|metadata| metadata.modified().ok());
-        match mtime {
-            None => {
-                self.last_mtime = None;
+        let Some(path) = self.path.as_deref() else {
+            return Reload::NotPresent;
+        };
+        match read_capped(path) {
+            Ok(bytes) => {
+                if self.last_content.as_ref() == Some(&bytes) {
+                    Reload::Unchanged
+                } else {
+                    self.last_content = Some(bytes);
+                    Reload::Changed
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.last_content = None;
                 Reload::NotPresent
             }
-            Some(seen) if self.last_mtime == Some(seen) => Reload::Unchanged,
-            Some(seen) => {
-                self.last_mtime = Some(seen);
-                Reload::Changed
-            }
+            // Any other read failure keeps the baseline: absence was
+            // never proven, so the loaded settings stand.
+            Err(_) => Reload::Unchanged,
         }
     }
 
@@ -624,6 +639,17 @@ impl SettingsSource {
         let bytes = fs::read(path).map_err(ReadError::Io)?;
         Settings::parse(&bytes).map_err(ReadError::Malformed)
     }
+}
+
+/// The file's first [`MAX_CONFIG_BYTES`] bytes — all the change
+/// detection needs: every config the parse accepts is smaller, and an
+/// oversize file's prefix still moves when its bytes do (the parse
+/// keeps rejecting it either way).
+fn read_capped(path: &Path) -> std::io::Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_CONFIG_BYTES).read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 /// XDG rule shared with the installer: absolute `$XDG_CONFIG_HOME`, else
@@ -1771,6 +1797,25 @@ isolated = false
         assert_eq!(source.check(), Reload::Changed);
 
         std::fs::write(&path, b"[[workspace]]\nname = \"b\"\n").expect("rewrite");
+        assert_eq!(source.check(), Reload::Changed);
+    }
+
+    #[test]
+    fn check_compares_bytes_not_metadata() {
+        // The reload trigger is content (2026-11-09): rewriting
+        // identical bytes — a fresh mtime over the old content — stays
+        // Unchanged, while a same-length edit, the boolean flip that
+        // never moves a byte count or a coarse timestamp, still reports
+        // Changed. An mtime-only check missed both classes on
+        // coarse-granularity filesystems.
+        let dir = TempDir::new("content-based");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, b"grouping = true\n").expect("write");
+        let mut source = SettingsSource::at(path.clone());
+        assert_eq!(source.check(), Reload::Changed);
+        std::fs::write(&path, b"grouping = true\n").expect("identical rewrite");
+        assert_eq!(source.check(), Reload::Unchanged);
+        std::fs::write(&path, b"grouping = false\n").expect("same-length flip");
         assert_eq!(source.check(), Reload::Changed);
     }
 
