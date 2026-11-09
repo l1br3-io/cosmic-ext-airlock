@@ -3,7 +3,7 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
-## [Unreleased]
+## [0.4.1] — 2026-11-10
 
 ### Changed
 

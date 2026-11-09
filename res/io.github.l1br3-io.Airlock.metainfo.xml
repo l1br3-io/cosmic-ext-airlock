@@ -23,6 +23,22 @@
   <url type="homepage">https://github.com/l1br3-io/cosmic-ext-airlock</url>
   <url type="bugtracker">https://github.com/l1br3-io/cosmic-ext-airlock/issues</url>
   <releases>
+    <release version="0.4.1" date="2026-11-10">
+      <description>
+        <ul>
+          <li>Changed: on the grouped horizontal card, Alt+Tab from
+              inside an app's open window run now steps the run's
+              windows one at a time instead of jumping to the next app
+              tile and closing the run; the run closes only when the
+              walk steps off its edge.</li>
+          <li>Changed: pressing ` on an already-expanded app entry
+              collapses the group in place instead of opening it again;
+              a collapsed entry still opens on the most recently used
+              window, **Shift+`** on the last. Inside a group the key
+              cycles windows as before.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-11-09">
       <description>
         <ul>
