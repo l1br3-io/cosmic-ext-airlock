@@ -345,6 +345,7 @@ fn geometry_cells(
                 cell.push(Scenario {
                     model: sized_profile(
                         OverlayModel {
+                            workspace: String::new(),
                             rows: vec![
                                 row("Selected on top", icons[1].clone(), true),
                                 row("Unselected", icons[2].clone(), false),
@@ -617,6 +618,7 @@ fn combined_scenarios(
         };
         let caption = ui::compose_caption(commit, width, text, scale);
         OverlayModel {
+            workspace: String::new(),
             rows,
             width,
             height: ui::band_card_height(),
@@ -789,6 +791,7 @@ fn horizontal_scenarios(
             // shipped rule so the sheet judges the real truncation.
             let caption = ui::compose_caption(&list[sel], width, text, scale);
             OverlayModel {
+                workspace: String::new(),
                 rows,
                 width,
                 height: ui::band_card_height(),
@@ -917,6 +920,7 @@ fn windowed(
     let shown = rows.len() as u32;
     let cell = profile.text.cell();
     OverlayModel {
+        workspace: String::new(),
         rows,
         width: 2 * ui::PAD_X
             + ui::ICON
@@ -976,6 +980,7 @@ fn font_size_scenarios(
         Scenario {
             model: sized_profile(
                 OverlayModel {
+                    workspace: String::new(),
                     rows: vec![
                         entry_row(
                             &format!("{}…", "W".repeat(cols as usize)),
@@ -996,6 +1001,7 @@ fn font_size_scenarios(
         model: ui::with_query(
             sized_profile(
                 OverlayModel {
+                    workspace: String::new(),
                     rows: vec![
                         entry_row("firefox — docs", icons[2].clone(), true, 1),
                         entry_row("firefox — mail", icons[3].clone(), false, 2),
@@ -1023,6 +1029,7 @@ fn font_size_scenarios(
     );
     sheet.push(Scenario {
         model: OverlayModel {
+            workspace: String::new(),
             rows,
             width,
             height: ui::band_card_height_at(cell),
@@ -1048,10 +1055,12 @@ fn scenarios(
     let elided = format!("{}…", "W".repeat(ui::MAX_COLS as usize - 1));
     let mut sheet = vec![
         OverlayModel {
+            workspace: String::new(),
             rows: vec![row("Solo window", icons[0].clone(), false)],
             ..single()
         },
         OverlayModel {
+            workspace: String::new(),
             rows: vec![
                 row("Selected on top", icons[1].clone(), true),
                 row("Unselected", icons[2].clone(), false),
@@ -1059,6 +1068,7 @@ fn scenarios(
             ..single()
         },
         OverlayModel {
+            workspace: String::new(),
             rows: vec![
                 row("MRU first", icons[3].clone(), false),
                 row("Middle - selection", icons[4].clone(), true),
@@ -1074,6 +1084,7 @@ fn scenarios(
         // The same-app view (Alt+grave): one application, repeated icon,
         // titles carry the disambiguation.
         OverlayModel {
+            workspace: String::new(),
             rows: vec![
                 row("main.rs — airlock", icons[5].clone(), true),
                 row("overlay-preview.rs — airlock", icons[5].clone(), false),
@@ -1084,6 +1095,7 @@ fn scenarios(
         // Rev 2's no-collision judgment: the widest title a card carries
         // beside its right-aligned hint, plus a selected hinted row.
         OverlayModel {
+            workspace: String::new(),
             rows: vec![
                 row(&elided, icons[8].clone(), false),
                 row("Short title", icons[9].clone(), true),
@@ -1104,6 +1116,7 @@ fn scenarios(
     sheet.push(Scenario {
         model: ui::with_query(
             sized(OverlayModel {
+                workspace: String::new(),
                 rows: vec![
                     row("firefox — docs", icons[1].clone(), true),
                     row("firefox — mail", icons[2].clone(), false),
@@ -1117,6 +1130,7 @@ fn scenarios(
     sheet.push(Scenario {
         model: ui::with_query(
             sized(OverlayModel {
+                workspace: String::new(),
                 rows: vec![row("invoice.xlsx", icons[0].clone(), true)],
                 ..single()
             }),
@@ -1135,6 +1149,7 @@ fn scenarios(
     // hovered header that never reveals. Judged like every scenario on
     // both polarities.
     let mut close_leaf = sized(OverlayModel {
+        workspace: String::new(),
         rows: vec![
             row("MRU first", icons[3].clone(), false),
             entry_row("Middle - selection", icons[4].clone(), true, 2),
@@ -1381,6 +1396,7 @@ fn scenarios(
     // re-anchors to the wider right edge — judged beside its
     // content-sized twin above.
     let mut floored = sized(OverlayModel {
+        workspace: String::new(),
         rows: vec![
             row("Wide by setting", icons[1].clone(), true),
             row("content stays left", icons[2].clone(), false),
@@ -1464,6 +1480,7 @@ fn entry_row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool, n: usize
 fn tree_card(rows: Vec<RowModel>, selected: usize) -> OverlayModel {
     let shown = rows.len() as u32;
     let mut model = OverlayModel {
+        workspace: String::new(),
         rows,
         ..OverlayModel::default()
     };

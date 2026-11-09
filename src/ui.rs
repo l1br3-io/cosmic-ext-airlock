@@ -392,6 +392,36 @@ pub const fn band_width(slots: u32) -> u32 {
 /// 528 that buys the full 40 is the G4 sheet's call, judged beside a
 /// floored three-tile card's air.
 pub const CAPTION_FLOOR_W: u32 = 512;
+/// The workspace label's size step below the resolved text cell
+/// (workspace-label W2, 2026-11-09): the name reads smaller than the
+/// caption it shares the line with, one face and one color — the
+/// hierarchy is size and position alone. The cell floors at
+/// [`FONT_SIZE_MIN`], so at the 8-px text size the label paints at the
+/// one size the card has.
+pub const WS_LABEL_STEP: u32 = 2;
+/// The workspace label's ink cap, logical px (workspace-label W2,
+/// 2026-11-09): a name longer than the cap truncates with the real
+/// `…`, and the label never widens the card — it loses to the width
+/// the shapes already chose. Working value; the preview sheet freezes
+/// it (W3).
+// The bin's daemon wiring lands in W4 (the lib's tests carry it first).
+#[allow(dead_code)]
+pub const WS_LABEL_MAX_W: u32 = 128;
+/// Clearing between the caption's ink zone and the label's, the
+/// caption gap's own double 8-grid step (workspace-label W2,
+/// 2026-11-09) — on the shared line the two never touch.
+#[allow(dead_code)] // WS_LABEL_MAX_W's note
+pub const WS_LABEL_GAP: u32 = 16;
+/// The workspace label's text cell at one text size — the resolved
+/// cell minus [`WS_LABEL_STEP`], floored at [`FONT_SIZE_MIN`].
+pub const fn ws_label_cell_at(cell: u32) -> u32 {
+    let stepped = cell.saturating_sub(WS_LABEL_STEP);
+    if stepped < FONT_SIZE_MIN {
+        FONT_SIZE_MIN
+    } else {
+        stepped
+    }
+}
 /// Inset of the badge from a tile's side.
 pub const TILE_TEXT_PAD: u32 = 8;
 /// The strip's top edge inside the card at one text size: the top
@@ -1330,6 +1360,14 @@ pub struct OverlayModel {
     /// not this holds text. Empty on every vertical card (they paint
     /// nothing of it).
     pub caption: String,
+    /// The workspace label (workspace-label W2, 2026-11-09): the
+    /// invoking workspace's name — or its synthesized "Workspace N" —
+    /// truncated to [`WS_LABEL_MAX_W`] with the real `…`. Empty on
+    /// every default-off card; when it stands, the vertical cards
+    /// reserve its line above the first row and the horizontal caption
+    /// composes against the budget its zone takes. Written once at
+    /// open, through [`with_workspace`], and frozen with the session.
+    pub workspace: String,
 }
 
 impl OverlayModel {
@@ -1350,10 +1388,16 @@ impl OverlayModel {
         // The rhythm the model rendered under, not the default's. The
         // query strip, when one stands, shifts every row down by its
         // height — the strip zone itself is the top padding's twin: no
-        // row, no selection.
+        // row, no selection. The workspace label's line, when one
+        // stands, sits above the strip and shifts with the same rule.
         let rhythm = self.profile.rhythm;
         let strip = strip_height_at(&self.query, rhythm, self.profile.text.cell()) as f64;
-        let y_px = y / scale as f64 - rhythm.pad_y as f64 - strip;
+        let label = if self.workspace.is_empty() {
+            0.0
+        } else {
+            ws_label_height_at(rhythm, self.profile.text.cell()) as f64
+        };
+        let y_px = y / scale as f64 - rhythm.pad_y as f64 - label - strip;
         let pitch = (rhythm.row_h + rhythm.row_gap) as f64;
         if y_px < 0.0 || y_px >= self.rows.len() as f64 * pitch {
             return None; // card padding above the first row / below the last
@@ -1884,6 +1928,7 @@ pub fn overlay_model_horizontal(
         profile.text,
     );
     Some(OverlayModel {
+        workspace: String::new(),
         rows,
         width,
         height: band_card_height_at(profile.text.cell()),
@@ -2136,6 +2181,7 @@ pub fn overlay_model_grouped_horizontal(
         None => String::new(),
     };
     Some(OverlayModel {
+        workspace: String::new(),
         rows,
         width,
         height: band_card_height_at(profile.text.cell()),
@@ -2231,14 +2277,54 @@ pub fn compose_caption_at(
     scale: u32,
     text_profile: TextProfile,
 ) -> String {
+    compose_caption_budgeted(label, width - 2 * TILE_PAD_X, text, scale, text_profile)
+}
+
+/// [`compose_caption_at`] against a caller-set ink budget — the
+/// workspace label's seam recomposes the caption against the budget its
+/// zone leaves (workspace-label W2, 2026-11-09); every other caller
+/// derives the budget from the card's width.
+fn compose_caption_budgeted(
+    label: &str,
+    budget: u32,
+    text: &mut TextBackend<'_>,
+    scale: u32,
+    text_profile: TextProfile,
+) -> String {
     let cell = text_profile.cell();
-    let budget = width - 2 * TILE_PAD_X;
     match text {
         TextBackend::Bitmap => truncate_cols(fold_title(label), budget / cell),
         TextBackend::System { system, query } => {
             system
                 .shape_budgeted(label, *query, scale, budget as f32, cell as f32)
                 .0
+        }
+    }
+}
+
+/// The workspace label's composition (workspace-label W2, 2026-11-09):
+/// the invoking workspace's name truncated to [`WS_LABEL_MAX_W`] with
+/// the real `…` — the caption composer's own vocabulary at the label's
+/// smaller cell — returned with its measured ink width, the zone the
+/// caption's budget loses.
+#[allow(dead_code)] // W4's daemon seam; the model tests carry it first
+fn compose_workspace(
+    name: &str,
+    text: &mut TextBackend<'_>,
+    scale: u32,
+    text_profile: TextProfile,
+) -> (String, u32) {
+    let cell = ws_label_cell_at(text_profile.cell());
+    match text {
+        TextBackend::Bitmap => {
+            let folded = truncate_cols(fold_title(name), WS_LABEL_MAX_W / cell);
+            let width = folded.chars().count() as u32 * cell;
+            (folded, width)
+        }
+        TextBackend::System { system, query } => {
+            let (display, run) =
+                system.shape_budgeted(name, *query, scale, WS_LABEL_MAX_W as f32, cell as f32);
+            (display, run.width_px.ceil() as u32)
         }
     }
 }
@@ -2280,6 +2366,7 @@ fn finish_model(
     let width = (2 * PAD_X + ICON + ICON_GAP + band + HINT_GAP + HINT_COLS * cell)
         .max(windowing.width_floor.unwrap_or(0));
     Some(OverlayModel {
+        workspace: String::new(),
         rows: windowed,
         width,
         // The row gap lives between rows only; the bottom edge mirrors
@@ -2389,6 +2476,52 @@ pub fn with_query(mut model: OverlayModel, query: &str) -> OverlayModel {
     let cell = model.profile.text.cell();
     model.height += strip_height_at(&Some(query.to_string()), model.profile.rhythm, cell);
     model.query = Some(strip_text(query, model.profile.text.title_cols()));
+    model
+}
+
+/// The workspace label's line at one rhythm and text size — the label's
+/// own (smaller) cell plus the row gap, the strip's twin separator
+/// (workspace-label W2, 2026-11-09).
+pub fn ws_label_height_at(rhythm: Rhythm, cell: u32) -> u32 {
+    ws_label_cell_at(cell) + rhythm.row_gap
+}
+
+/// Sets `model`'s workspace label and pays for its line (workspace-label
+/// W2, 2026-11-09) — the `with_query` seam's twin, pure so the height
+/// math and the empty-name identity pin headlessly. The vertical cards
+/// reserve the label's line above the first row (`row_at` walks past it
+/// like the strip's); the horizontal cards keep their height — the
+/// label rides the caption line the card already reserves — and the
+/// caption recomposes against the budget the label's zone takes, so a
+/// full-length caption never collides with it. The empty name is the
+/// identity: the default-off card is unchanged.
+#[allow(dead_code)] // W4's daemon seam; the model tests carry it first
+pub fn with_workspace(
+    mut model: OverlayModel,
+    name: &str,
+    text: &mut TextBackend<'_>,
+    scale: u32,
+) -> OverlayModel {
+    if name.is_empty() {
+        return model;
+    }
+    let (label, width) = compose_workspace(name, text, scale, model.profile.text);
+    model.workspace = label;
+    if model.horizontal {
+        let budget = model
+            .width
+            .saturating_sub(2 * TILE_PAD_X)
+            .saturating_sub(width + WS_LABEL_GAP);
+        // Recomposition, not re-derivation: the caption string is the
+        // commit target's already-composed title, and the truncation is
+        // prefix-budgeted in both backends — re-truncating it against
+        // the smaller budget is the same compose the builder would have
+        // made had it known the zone.
+        model.caption =
+            compose_caption_budgeted(&model.caption, budget, text, scale, model.profile.text);
+    } else {
+        model.height += ws_label_height_at(model.profile.rhythm, model.profile.text.cell());
+    }
     model
 }
 
@@ -5329,6 +5462,98 @@ mod tests {
         );
     }
 
+    // --- The workspace label's seam (workspace-label W2) ------------------
+
+    #[test]
+    fn with_workspace_off_returns_the_model_unchanged() {
+        // The empty name is the identity — the default-off card is
+        // byte-for-byte today's, the no-config pin.
+        let plain = hit_model(2);
+        let mut text = TextBackend::Bitmap;
+        let sealed = with_workspace(plain.clone(), "", &mut text, 2);
+        assert_eq!(sealed, plain);
+    }
+
+    #[test]
+    fn with_workspace_reserves_the_vertical_top_line() {
+        let plain = hit_model(2);
+        let height = plain.height;
+        let mut text = TextBackend::Bitmap;
+        let labeled = with_workspace(plain, "code", &mut text, 2);
+        let rhythm = labeled.profile.rhythm;
+        assert_eq!(
+            labeled.height,
+            height + ws_label_cell_at(TEXT_H) + rhythm.row_gap,
+            "the label's line is the strip's twin: its own cell plus the row gap"
+        );
+        assert_eq!(labeled.workspace, "code");
+    }
+
+    #[test]
+    fn with_workspace_shifts_row_at_past_the_line() {
+        // The label's line is the top padding's twin too: no row lives
+        // in it, and every row's zone moves down by exactly its height.
+        let plain = hit_model(2);
+        let rhythm = plain.profile.rhythm;
+        let line = ws_label_cell_at(TEXT_H) + rhythm.row_gap;
+        let mut text = TextBackend::Bitmap;
+        let labeled = with_workspace(plain, "code", &mut text, 2);
+        // The old row-0 zone is now label territory: no row.
+        assert_eq!(labeled.row_at(4.0, (rhythm.pad_y + 1) as f64, 1), None);
+        // Row 0 moved down by the line.
+        assert_eq!(
+            labeled.row_at(4.0, (rhythm.pad_y + line + 1) as f64, 1),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn with_workspace_truncates_a_long_name_at_its_cap() {
+        let mut text = TextBackend::Bitmap;
+        let labeled = with_workspace(hit_model(2), &"n".repeat(200), &mut text, 2);
+        let cell = ws_label_cell_at(TEXT_H);
+        assert_eq!(
+            labeled.workspace.chars().count() as u32,
+            WS_LABEL_MAX_W / cell,
+            "the cap holds, the ellipsis inside it"
+        );
+        assert!(labeled.workspace.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn with_workspace_shrinks_the_horizontal_caption_budget() {
+        // A full-length caption must lose the label's zone: the seam
+        // recomposes it against the reduced budget, so the two never
+        // collide on the caption line.
+        let long_title: String = "chapter".chars().cycle().take(80).collect();
+        let snap = Snapshot {
+            toplevels: vec![
+                toplevel(1, &long_title, "app.1", &[1], switcher::State::ACTIVATED, 3),
+                toplevel(2, "W02", "app.2", &[1], switcher::State::default(), 2),
+                toplevel(3, "W03", "app.3", &[1], switcher::State::default(), 1),
+            ],
+            workspaces: Default::default(),
+            active: Some(switcher::WorkspaceId(1)),
+        };
+        let model = build_band(&snap, Handle(1), 3, None).expect("eligible windows exist");
+        let plain = model.caption.chars().count();
+        assert!(plain > 12, "the fixture's caption is at full length");
+        let mut text = TextBackend::Bitmap;
+        let labeled = with_workspace(model, "code", &mut text, 2);
+        let zone = 4 * ws_label_cell_at(TEXT_H) + WS_LABEL_GAP; // "code" at its cell
+        let budget = (CAPTION_FLOOR_W - 2 * TILE_PAD_X - zone) / TEXT_H;
+        assert_eq!(
+            labeled.caption.chars().count() as u32,
+            budget,
+            "the caption recomposes against the zone-reduced budget"
+        );
+        assert!(
+            labeled.caption.chars().count() < plain,
+            "the zone costs the caption columns"
+        );
+        assert!(labeled.caption.ends_with('\u{2026}'));
+    }
+
     #[test]
     fn row_hints_address_exactly_one_through_nine() {
         // Entries 1..9 are addressable and hinted; entry 10 onward
@@ -6458,6 +6683,7 @@ mod tests {
             })
             .collect();
         OverlayModel {
+            workspace: String::new(),
             rows,
             width: band_width(counts.len() as u32),
             height: band_card_height(),
@@ -7716,6 +7942,7 @@ mod tests {
     /// hit-testing. Bands run PAD_Y + i·(ROW_H + ROW_GAP) … + ROW_H.
     fn hit_model(rows: usize) -> OverlayModel {
         OverlayModel {
+            workspace: String::new(),
             rows: (0..rows)
                 .map(|index| RowModel {
                     title: "W".into(),
@@ -8551,6 +8778,7 @@ mod tests {
             argb: vec![solid; (ICON * 2 * ICON * 2) as usize],
         };
         let model = OverlayModel {
+            workspace: String::new(),
             rows: vec![RowModel {
                 title: "Titled".into(),
                 icon: Some(Rc::new(icon)),
@@ -8591,6 +8819,7 @@ mod tests {
             argb: vec![0xFF_FF_00_FF; 64],
         };
         let model = OverlayModel {
+            workspace: String::new(),
             rows: vec![RowModel {
                 title: String::new(),
                 icon: Some(Rc::new(bogus)),
@@ -8864,6 +9093,7 @@ mod tests {
         // top, middle, and bottom of a five-row list.
         for selected in [0usize, 2, 4] {
             let model = OverlayModel {
+                workspace: String::new(),
                 rows: (0..5)
                     .map(|index| RowModel {
                         title: "W".repeat(8),
@@ -8925,6 +9155,7 @@ mod tests {
         // rows ten and deeper stay silent, and the silence is accurate —
         // nine rows are addressable, nine are hinted.
         let model = OverlayModel {
+            workspace: String::new(),
             rows: (0..12)
                 .map(|index| RowModel {
                     title: format!("Window {index}"),
@@ -8965,6 +9196,7 @@ mod tests {
         // The chord rides the row's own text line: the same centering
         // math as the title, never lower or higher.
         let model = OverlayModel {
+            workspace: String::new(),
             rows: vec![RowModel {
                 title: "Solo".into(),
                 icon: None,
@@ -9003,6 +9235,7 @@ mod tests {
         // its hint — over the band the chord reads in the same muted
         // color as every unselected row's.
         let model = OverlayModel {
+            workspace: String::new(),
             rows: vec![
                 RowModel {
                     title: "Top".into(),
@@ -9054,6 +9287,7 @@ mod tests {
         // glyph cell — the strip between them is pure card fill, and the
         // moved clip guard cost the title nothing.
         let model = OverlayModel {
+            workspace: String::new(),
             rows: vec![RowModel {
                 title: "W".repeat(MAX_COLS as usize),
                 icon: None,
@@ -9108,6 +9342,7 @@ mod tests {
         // catches pathological regressions, not millisecond drift. At
         // scale 2 the canvas is 4× the pixels of the pre-refresh card.
         let model = OverlayModel {
+            workspace: String::new(),
             rows: (0..10)
                 .map(|i| RowModel {
                     title: "W".repeat(MAX_COLS as usize),

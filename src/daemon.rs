@@ -2475,6 +2475,7 @@ mod tests {
     /// this seam.
     fn overlay_model(handles: &[u64]) -> OverlayModel {
         OverlayModel {
+            workspace: String::new(),
             rows: handles
                 .iter()
                 .map(|&handle| RowModel {
@@ -3403,6 +3404,7 @@ mod tests {
 
         // Rows [h1, …, h3]: the middle slot is a continuation affordance.
         let model = OverlayModel {
+            workspace: String::new(),
             rows: vec![
                 RowModel {
                     handle: Some(Handle(1)),
@@ -3675,6 +3677,7 @@ mod tests {
 
         // Rows [h1, …, h3]: the middle slot is a continuation affordance.
         let model = OverlayModel {
+            workspace: String::new(),
             rows: vec![
                 RowModel {
                     handle: Some(Handle(1)),
@@ -5965,6 +5968,7 @@ mod tests {
         // end, or a row whose window is no longer there, reveals
         // nothing — a stale index never offers a wrong window's close.
         let model = OverlayModel {
+            workspace: String::new(),
             rows: vec![RowModel {
                 handle: Some(Handle(1)),
                 ..RowModel::default()
