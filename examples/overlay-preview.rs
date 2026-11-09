@@ -141,7 +141,8 @@ fn main() {
         } else {
             &band_light
         };
-        let mut sheet = combined_scenarios(base, icons);
+        let mut text = text_backend(&mut text_system);
+        let mut sheet = combined_scenarios(base, icons, &mut text, scale);
         // Both polarities judge the strip, the horizontal family's
         // rule.
         let other = if base.is_dark {
@@ -154,7 +155,7 @@ fn main() {
         } else {
             &band_light
         };
-        sheet.extend(combined_scenarios(other, other_icons));
+        sheet.extend(combined_scenarios(other, other_icons, &mut text, scale));
         write_sheet(&path, &sheet, scale, &mut text_system);
         return;
     }
@@ -166,7 +167,8 @@ fn main() {
         };
         let band_dark = band_icons(scale, &ui::Palette::dark());
         let band_light = band_icons(scale, &ui::Palette::light());
-        let mut sheet = horizontal_scenarios(base, icons);
+        let mut text = text_backend(&mut text_system);
+        let mut sheet = horizontal_scenarios(base, icons, &mut text, scale);
         // Both polarities judge the band: the same tiles in the other
         // palette's tint, the band scenarios' arrangement.
         let other = if base.is_dark {
@@ -179,7 +181,7 @@ fn main() {
         } else {
             &band_light
         };
-        sheet.extend(horizontal_scenarios(other, other_icons));
+        sheet.extend(horizontal_scenarios(other, other_icons, &mut text, scale));
         write_sheet(&path, &sheet, scale, &mut text_system);
         return;
     }
@@ -475,7 +477,12 @@ fn band_icons(scale: u32, palette: &ui::Palette) -> Vec<Option<Rc<IconBitmap>>> 
 /// sequence behind one `band_window`, hints in reading order. GH1's
 /// working tokens; GH2's sheet freezes the hierarchy values on
 /// scenarios of this shape.
-fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Vec<Scenario> {
+fn combined_scenarios(
+    base: ui::Palette,
+    icons: &[Option<Rc<IconBitmap>>],
+    text: &mut ui::TextBackend<'_>,
+    scale: u32,
+) -> Vec<Scenario> {
     let tile = |title: &str,
                 icon: Option<Rc<IconBitmap>>,
                 selected: bool,
@@ -504,11 +511,11 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
     // Some((true, pos)) — the open run, that window. The strip derives:
     // the focused app's tile is replaced in place by its run exactly
     // while a window holds the selection (`inplace-strip`).
-    let combined = |apps: &[(&str, usize)],
-                    focused: usize,
-                    windows: &[&str],
-                    selected: Option<(bool, usize)>,
-                    tiles: usize|
+    let mut combined = |apps: &[(&str, usize)],
+                        focused: usize,
+                        windows: &[&str],
+                        selected: Option<(bool, usize)>,
+                        tiles: usize|
      -> OverlayModel {
         let open = matches!(selected, Some((true, _)));
         let mut full: Vec<RowModel> = Vec::new();
@@ -559,16 +566,19 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
         // the strip shows now.
         let open_len = apps.len() + windows.len() - 1;
         let width_slots = apps.len().min(tiles).max(open_len.min(tiles));
-        // The caption names the commit target: the open run's selected
+        let width = ui::band_width(width_slots as u32);
+        // The caption names the commit target — the open run's selected
         // window, the focused app's MRU-front window on a closed app
-        // tile.
-        let caption = match selected {
-            Some((true, position)) => windows[position].to_string(),
-            _ => windows[0].to_string(),
+        // tile — composed through the shipped rule, so the sheet
+        // judges the real truncation.
+        let commit = match selected {
+            Some((true, position)) => windows[position],
+            _ => windows[0],
         };
+        let caption = ui::compose_caption(commit, width, text, scale);
         OverlayModel {
             rows,
-            width: ui::band_width(width_slots as u32),
+            width,
             height: ui::band_card_height(),
             viewport,
             profile: ui::StyleProfile::default(),
@@ -657,14 +667,24 @@ fn switcher_row_kind(count: usize) -> RowKind {
     }
 }
 
-/// The horizontal band family (card-layout): the flat band as
+/// The horizontal band family (glance-tiles): the flat band as
 /// `overlay_model_horizontal` composes it — `band_window` over the
-/// selection, the trailing `…` tile, the tile grid's width — at CL4's
-/// acceptance counts (one, three, the 1920-auto eight, the pinned
-/// twelve), a swept mid-band selection, and the 48-column title every
-/// tile clamps to its own budget. The tokens these render froze on
-/// this sheet, 2026-11-08, every value kept as built.
-fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Vec<Scenario> {
+/// selection, the trailing `…` tile, the floored tile grid's width —
+/// at the acceptance counts (one, three, the 1920-auto seventeen, the
+/// pinned twelve), a swept mid-band selection, and the over-budget
+/// title the caption truncates with a real `…`. Frozen on the G4
+/// sheet, 2026-11-09: both families judged over both polarities and
+/// both text faces — every token kept as built except the pips, which
+/// grew 4 → 6 (both judgments named them the weakest element); the
+/// caption zone's air and the muted badge-over-fill kept as shipped
+/// (the caption is content, and the muted hint over a fill is the
+/// vertical card's own frozen vocabulary).
+fn horizontal_scenarios(
+    base: ui::Palette,
+    icons: &[Option<Rc<IconBitmap>>],
+    text: &mut ui::TextBackend<'_>,
+    scale: u32,
+) -> Vec<Scenario> {
     let titles: Vec<String> = (0..16)
         .map(|index| format!("Window {index} — the band case"))
         .collect();
@@ -681,7 +701,7 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
                 ..RowModel::default()
             }
         };
-    let band = |list: &[String], sel: usize, tiles: usize| -> OverlayModel {
+    let mut band = |list: &[String], sel: usize, tiles: usize| -> OverlayModel {
         let count = list.len();
         let viewport = ui::band_window(count, sel, tiles, None);
         let mut rows = Vec::with_capacity(viewport.content + viewport.bottom as usize);
@@ -704,21 +724,26 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
             });
         }
         let slots = rows.len() as u32;
+        let width = ui::band_width(slots);
+        // The caption names the selected window — the flat band's
+        // commit target is always a window — composed through the
+        // shipped rule so the sheet judges the real truncation.
+        let caption = ui::compose_caption(&list[sel], width, text, scale);
         OverlayModel {
             rows,
-            width: ui::band_width(slots),
+            width,
             height: ui::band_card_height(),
             viewport,
             profile: ui::StyleProfile::default(),
             horizontal: true,
             query: None,
             hovered: None,
-            caption: list[sel].clone(),
+            caption,
         }
     };
-    // The 48-column clamp input: the tile's own budget (eleven columns
-    // at the frozen pitch) ellipsizes every tile that carries it.
-    let long = "This title is exactly forty-eight columns long —";
+    // The caption-budget input: a title past the caption's budget at
+    // the floor, so the one caption carries the card's whole `…`.
+    let long = "Quarterly review — compiled notes and appendix three";
     let long_titles: Vec<String> = std::iter::repeat_n(long.to_string(), 5).collect();
     [
         // A lone window: one tile, selected, its badge the only hint.
@@ -734,7 +759,8 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
         // The pinned extremes: three tiles and twelve.
         band(&titles, 0, ui::COLUMNS_MIN),
         band(&titles, 0, ui::COLUMNS_MAX),
-        // The 48-column title: every tile clamps it, selection mid-band.
+        // The over-budget title: the caption truncates it with the
+        // real ellipsis, selection mid-band.
         band(&long_titles, 2, 5),
     ]
     .into_iter()

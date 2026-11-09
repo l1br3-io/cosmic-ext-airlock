@@ -266,8 +266,20 @@ pub const COLUMNS_MAX: usize = 12;
 // the per-tile title lines' place. The pip decomposition is the
 // owner's pick the same day (the cell grows a pip territory under the
 // icon so the pips sit in their own space, GNOME-arrow style, never
-// painted over the icon); every value below is the working row the G4
-// preview sheet freezes.
+// painted over the icon).
+//
+// Frozen 2026-11-09 on the G4 sheet — both horizontal families
+// (combined and flat) over both polarities and both text faces, the
+// acceptance scenarios (1/3/12 tiles, the swept selection, the
+// truncated edge, both strip shapes, the over-budget caption) — every
+// value kept as built except the pips: both sheet judgments named
+// them the weakest element at 4 px, so PIP_SIDE grew to 6 (2.25× the
+// ink) inside the same 12-px territory and the re-judged sheet
+// passed. The caption floor's air over short strips reads calm; the
+// muted hint over a selection fill stays the vertical card's own
+// frozen vocabulary (2.4–2.9:1, measured — the badge digits' ratios);
+// the light palette's fill is pre-existing through two freezes and
+// out of this module's byte-identity boundary.
 
 /// One tile's width, logical px — the compact slot of the research
 /// record's candidate geometry (a 48-px icon in a 64-px cell), on the
@@ -290,19 +302,24 @@ pub const TILE_PAD_X: u32 = 24;
 pub const TILE_PAD_Y: u32 = 32;
 /// Clearing between the badge row and the icon.
 pub const TILE_BADGE_GAP: u32 = 4;
-/// Clearing between the icon's bottom and the pip row — the pip
-/// territory's breathing half, one 8-grid step (glance-tiles G1,
-/// 2026-11-09: the owner's pip decomposition).
-pub const PIP_GAP: u32 = 8;
-/// One count pip's side, logical px — a 4-px dot, the compact grid's
-/// own half-step (the caret hair's family; a smaller dot vanishes at
-/// the 200 % VM, a larger reads as a button). Saturates at three pips
-/// (Unity/GNOME/dash-to-dock precedent, research record R4).
-pub const PIP_SIDE: u32 = 4;
+/// Clearing between the icon's bottom and the pip row (glance-tiles
+/// G1, 2026-11-09: the owner's pip decomposition). 6 after the G4
+/// sheet: the territory stays 12 (the cell stays 76, the card 168)
+/// while the dot itself grows to its judged legibility.
+pub const PIP_GAP: u32 = 6;
+/// One count pip's side, logical px. Saturates at three pips
+/// (Unity/GNOME/dash-to-dock precedent, research record R4). Frozen
+/// at 6 on the G4 sheet, 2026-11-09: the working 4 read as texture at
+/// glance scale — both sheet judgments named the pips the weakest
+/// element, gone against the selection fill and the light backdrop —
+/// and 6 (2.25× the ink) holds the muted color's contrast on both
+/// fills where 4 demanded a squint.
+pub const PIP_SIDE: u32 = 6;
 /// Pitch between pip centers, logical px — `PIP_SIDE` plus a 4-px
-/// clear between neighbors; three pips span 20 px centered on the
-/// tile's line (glance-tiles G2, 2026-11-09).
-pub const PIP_STEP: u32 = 8;
+/// clear between neighbors; three pips span 26 px centered on the
+/// tile's line. Re-frozen beside [`PIP_SIDE`] on the G4 sheet,
+/// 2026-11-09.
+pub const PIP_STEP: u32 = 10;
 /// The tile's content cell: badge row, icon, pip territory — no title
 /// line. The selection fill's extent; the pip row is structural on
 /// every tile (pips paint only on multi-window app tiles), so the
@@ -1788,8 +1805,10 @@ fn compose_title(
 /// commit target's display title, truncated to the card's caption
 /// budget — the card's width minus its horizontal padding — with the
 /// real `…` in both backends (the row composer's truncation
-/// vocabulary, the budget the card instead of a title band).
-fn compose_caption(label: &str, width: u32, text: &mut TextBackend<'_>, scale: u32) -> String {
+/// vocabulary, the budget the card instead of a title band). The
+/// preview sheet composes through the same rule, so its captions judge
+/// the shipped truncation.
+pub fn compose_caption(label: &str, width: u32, text: &mut TextBackend<'_>, scale: u32) -> String {
     let budget = width - 2 * TILE_PAD_X;
     match text {
         TextBackend::Bitmap => truncate_cols(fold_title(label), budget / TEXT_W),
