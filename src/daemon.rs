@@ -928,15 +928,22 @@ fn exit_band(session: &mut Switch) -> bool {
 /// another app (that walk is ←/→ and Tab). A one-window app holds no
 /// dead end: entering from its tile selects it, stepping from it stays
 /// put. While a query stands the session is flat (the flatten-on-query
-/// rule), so the press types the backtick instead — the level lives
-/// here, keeping `key_input` pure. Returns whether a session was
-/// touched.
+/// rule), so the press types the key's own char instead — the backtick
+/// bare, `~` shifted — the level lives here, keeping `key_input` pure.
+/// Returns whether a session was touched.
 fn step_window(open: &mut Option<Switch>, snapshot: &Snapshot, direction: Direction) -> bool {
     if open
         .as_ref()
         .is_some_and(|session| session.filtered.is_some())
     {
-        return type_into(open, snapshot, '`');
+        // The char rides the direction: the shifted press (Previous)
+        // types `~`, the bare one the backtick — the query keeps
+        // receiving what the key prints, whichever keysym delivered it.
+        let ch = match direction {
+            Direction::Next => '`',
+            Direction::Previous => '~',
+        };
+        return type_into(open, snapshot, ch);
     }
     let Some(session) = open.as_mut() else {
         return false;
@@ -6658,8 +6665,10 @@ mod tests {
     #[test]
     fn combined_grave_falls_through_to_the_query() {
         // While a query stands the session is flat (flatten-on-query),
-        // so the press types the backtick instead of walking — the
-        // level lives in the daemon, key_input stays pure.
+        // so the press types the key's own char instead of walking —
+        // the backtick bare, `~` shifted (the keysym Alt+Shift+` really
+        // delivers) — the level lives in the daemon, key_input stays
+        // pure.
         let snap = grouped_two_apps();
         let (mut open, _expanded) = combined_session(&snap);
         open.as_mut().expect("open").tree_sel = 1;
@@ -6669,6 +6678,12 @@ mod tests {
         assert_eq!(session.query, "b`", "the backtick appended");
         assert!(session.filtered.is_some(), "still a querying session");
         assert_eq!(session.tree_sel, 1, "the walk never ran");
+        assert!(step_window(&mut open, &snap, Direction::Previous));
+        assert_eq!(
+            open.as_ref().expect("open").query,
+            "b`~",
+            "the tilde appended"
+        );
     }
 
     #[test]

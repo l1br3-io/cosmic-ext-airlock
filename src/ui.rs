@@ -3656,14 +3656,18 @@ pub fn key_input(
         // top row or keypad. Shift+minus — the underscore keysym — is a
         // printable, not the key.
         Keysym::minus | Keysym::KP_Subtract if alt_held => (GestureKey::Close, shift_held),
-        // The key above Tab (keysym `grave`) steps the focused app's
-        // windows in the combination — GNOME's model — and only there:
-        // flat and vertical-grouped sessions keep typing it into the
-        // query (the type-filter contract). The daemon resolves the
-        // level — an app tile opens on the MRU-front window, a window
-        // tile steps within the app — and reroutes to the type-into
-        // path while a query stands.
-        Keysym::grave if matches!(mode, GroupedHorizontal) => (
+        // The key above Tab (`` `` ``) steps the focused app's windows in
+        // the combination — GNOME's model — and only there: flat and
+        // vertical-grouped sessions keep typing it into the query (the
+        // type-filter contract). Both of the key's keysyms map: the
+        // compositor reports the level-resolved symbol, so Shift+` on a
+        // US layout arrives as `asciitilde`, never `grave` — matching
+        // `grave` alone left Alt+Shift+`'s backwards step unmatchable at
+        // runtime (the shifted-printable twin of the underscore arm
+        // below). The daemon resolves the level — an app tile opens on
+        // the MRU-front window, a window tile steps within the app — and
+        // reroutes to the type-into path while a query stands.
+        Keysym::grave | Keysym::asciitilde if matches!(mode, GroupedHorizontal) => (
             GestureKey::StepWindow(if shift_held {
                 Direction::Previous
             } else {
@@ -9518,6 +9522,36 @@ mod tests {
                 shift: true
             }
         );
+        // The runtime form of Alt+Shift+`: the compositor reports the
+        // level-resolved keysym, so the shifted press arrives as
+        // `asciitilde` on US layouts — the arm must match it too, or
+        // the backwards step is unreachable (2026-11-09).
+        assert_eq!(
+            key_input(
+                Keysym::asciitilde,
+                true,
+                false,
+                false,
+                KeyMode::GroupedHorizontal
+            ),
+            GestureInput::Press {
+                key: GestureKey::StepWindow(Direction::Previous),
+                shift: true
+            }
+        );
+        assert_eq!(
+            key_input(
+                Keysym::asciitilde,
+                false,
+                false,
+                false,
+                KeyMode::GroupedHorizontal
+            ),
+            GestureInput::Press {
+                key: GestureKey::StepWindow(Direction::Next),
+                shift: false
+            }
+        );
         for mode in [KeyMode::Flat, KeyMode::Grouped] {
             assert_eq!(
                 key_input(Keysym::grave, false, false, false, mode),
@@ -9526,6 +9560,14 @@ mod tests {
                     shift: false
                 },
                 "{mode:?} keeps typing the backtick"
+            );
+            assert_eq!(
+                key_input(Keysym::asciitilde, true, false, false, mode),
+                GestureInput::Press {
+                    key: GestureKey::Type('~'),
+                    shift: true
+                },
+                "{mode:?} keeps typing the tilde"
             );
         }
         // The gesture machine forwards the window step like the app step.
@@ -9542,10 +9584,11 @@ mod tests {
 
     #[test]
     fn grave_leaves_the_printable_arm_byte_for_byte() {
-        // The carve-out is grave alone: every other printable keysym maps
-        // to Type(char) through every mode, exactly as before — the
-        // table pins the neighbors beside grave on the US layout and the
-        // printable mainstays alike.
+        // The carve-out is the key above Tab — `grave` and its shifted
+        // `asciitilde` twin, and in the combination alone: every other
+        // printable keysym maps to Type(char) through every mode, exactly
+        // as before — the table pins the neighbors beside grave on the US
+        // layout and the printable mainstays alike.
         let table = [
             (Keysym::apostrophe, '\''),
             (Keysym::minus, '-'),
