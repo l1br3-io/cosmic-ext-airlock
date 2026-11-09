@@ -89,8 +89,8 @@ It works in every mode: the flat list, the grouped tree, which
 flattens to its matching windows while a query stands, and the
 same-app view. **Ctrl+N** keeps its chord; every other printable key,
 digits included, types. One carve-out: **grave** in a grouped card —
-the vertical tree or the horizontal strip — steps the selected app's
-windows instead, and types only while a query stands. See
+the vertical tree or the horizontal strip — toggles the selected app's
+group open or closed instead, and types only while a query stands. See
 [Grouping](settings.md#grouping).
 
 Clearing the query restores the card you had, keeping the window you

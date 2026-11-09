@@ -3863,15 +3863,17 @@ pub enum GestureKey {
     /// *within* the focused band in that mode. The daemon resolves it
     /// against the frozen tree.
     StepApp(Direction),
-    /// The key above Tab (keysym `grave`, `` ` `` on US layouts) in the
-    /// grouped-horizontal card: from an app tile, open that app's
-    /// windows on its MRU-front window; from a window tile, step to
-    /// the next/previous window of the same app, wrapping within the
-    /// app — GNOME's model, never crossing into another app (that walk
-    /// is ←/→ and Tab). The daemon resolves it against the session
-    /// state — the selection's level is invisible to this pure map, and
-    /// a standing query reroutes it to the type-into path there.
-    StepWindow(Direction),
+    /// The key above Tab (keysym `grave`, `` ` `` on US layouts) in
+    /// either grouped card: toggle the focused app's group open or
+    /// closed. On a closed app tile or entry it opens the app's windows
+    /// on its MRU-front window (Shift on the last); on an open group it
+    /// collapses the group — the vertical tree drops the app from its
+    /// persistent expansion set, the strip closes its derived run. The
+    /// daemon resolves it against the session state — the selection's
+    /// level and the app's expanded flag are invisible to this pure
+    /// map, and a standing query reroutes it to the type-into path
+    /// there.
+    ToggleGroup(Direction),
     /// The handle-carrying twin of the select family, produced only
     /// by the wayland boundary at event receipt: the window of the row
     /// the user addressed. `None` — a continuation row, or a row past
@@ -4007,13 +4009,12 @@ pub enum GestureOutput {
     /// tile (band 1) from anywhere. The daemon resolves it against the
     /// frozen tree.
     StepApp(Direction),
-    /// The key above Tab in the grouped-horizontal card: open the
-    /// selected app's windows on its MRU-front window from an app
-    /// tile, or step within the selected app's windows with wrap from
-    /// a window tile. The daemon holds the selection's level and the
-    /// app's window set; a standing query reroutes the press to the
-    /// type-into path, keeping this map pure.
-    StepWindow(Direction),
+    /// The key above Tab in either grouped card: open the selected
+    /// app's windows on its MRU-front window from a closed entry, or
+    /// collapse the open group back to its entry. The daemon holds the
+    /// selection's level and the app's expanded flag; a standing query
+    /// reroutes the press to the type-into path, keeping this map pure.
+    ToggleGroup(Direction),
     /// A character types into the session's query (`type-filter`): the
     /// daemon narrows the card's frozen window set by it and reselects
     /// the first match.
@@ -4094,10 +4095,10 @@ impl Gesture {
                 // band's tiles — a distinct output so the daemon can
                 // route it.
                 GestureKey::StepApp(direction) => GestureOutput::StepApp(direction),
-                // The key above Tab steps the focused app's windows —
-                // forwarded the same way; the daemon holds the level
-                // and the app's window set.
-                GestureKey::StepWindow(direction) => GestureOutput::StepWindow(direction),
+                // The key above Tab toggles the focused app's group —
+                // forwarded the same way; the daemon holds the level,
+                // the window set, and the expanded flag.
+                GestureKey::ToggleGroup(direction) => GestureOutput::ToggleGroup(direction),
                 // The query edits (`type-filter`): session state, not a
                 // row address — forwarded for the daemon to apply.
                 GestureKey::Type(ch) => GestureOutput::Type(ch),
@@ -4222,7 +4223,7 @@ pub enum KeyMode {
 /// steps one visible row like ↓/↑ — headers included, collapsed
 /// children never; → expands and enters ([`GestureKey::EnterChild`]), ←
 /// exits or collapses ([`GestureKey::ExitParent`]); the key above Tab
-/// steps the focused app's windows ([`GestureKey::StepWindow`]); Ctrl+N
+/// toggles the focused app's group ([`GestureKey::ToggleGroup`]); Ctrl+N
 /// addresses level-1 entries ([`GestureKey::SelectApp`]). Flat mode
 /// keeps the flat mapping byte for byte — Tab and ←/→ step rows —
 /// pinned by the flat regression tests. The boundary passes the live
@@ -4233,7 +4234,7 @@ pub enum KeyMode {
 /// tiles, ↓ enters band 2 from an app tile ([`GestureKey::EnterChild`]),
 /// ↑ exits band 2 to its app tile ([`GestureKey::ExitParent`]), Tab
 /// steps apps from anywhere ([`GestureKey::StepApp`]), the key above
-/// Tab steps the focused app's windows ([`GestureKey::StepWindow`],
+/// Tab toggles the focused app's group ([`GestureKey::ToggleGroup`],
 /// grave alone — every other keysym still types), and Ctrl+N
 /// addresses the visible tiles in reading order ([`GestureKey::Select`]
 /// — band 1 left→right then band 2 left→right, exactly as the card
@@ -4295,20 +4296,20 @@ pub fn key_input(
         // top row or keypad. Shift+minus — the underscore keysym — is a
         // printable, not the key.
         Keysym::minus | Keysym::KP_Subtract if alt_held => (GestureKey::Close, shift_held),
-        // The key above Tab (`` `` ``) steps the focused app's windows in
-        // every grouped card — the strip and the vertical tree alike,
-        // GNOME's model — and only there: flat sessions keep typing it
-        // into the query (the type-filter contract). Both of the key's
-        // keysyms map: the compositor reports the level-resolved symbol,
-        // so Shift+` on a US layout arrives as `asciitilde`, never
-        // `grave` — matching `grave` alone left Alt+Shift+`'s backwards
-        // step unmatchable at runtime (the shifted-printable twin of the
-        // underscore arm below). The daemon resolves the level — an app
-        // tile opens on the MRU-front window, a window tile steps within
-        // the app — and reroutes to the type-into path while a query
-        // stands.
+        // The key above Tab (`` `` ``) toggles the focused app's group
+        // in every grouped card — the strip and the vertical tree alike —
+        // and only there: flat sessions keep typing it into the query
+        // (the type-filter contract). Both of the key's keysyms map: the
+        // compositor reports the level-resolved symbol, so Shift+` on a
+        // US layout arrives as `asciitilde`, never `grave` — matching
+        // `grave` alone left Alt+Shift+` unmatchable at runtime (the
+        // shifted-printable twin of the underscore arm below). The
+        // daemon resolves the flag — a closed entry opens on the
+        // MRU-front window (Shift on the last), an open group collapses
+        // back to its entry — and reroutes to the type-into path while a
+        // query stands.
         Keysym::grave | Keysym::asciitilde if matches!(mode, GroupedHorizontal | Grouped) => (
-            GestureKey::StepWindow(if shift_held {
+            GestureKey::ToggleGroup(if shift_held {
                 Direction::Previous
             } else {
                 Direction::Next
@@ -10972,48 +10973,49 @@ mod tests {
     }
 
     #[test]
-    fn grave_steps_windows_in_the_grouped_cards() {
-        // The key above Tab (keysym `grave`, ` on US layouts) is the
-        // within-app step in every grouped card — the strip and the
-        // vertical tree, GNOME's model — and only there: flat sessions
-        // keep typing it into the query, the type-filter contract
-        // untouched.
+    fn grave_toggles_the_group_in_the_grouped_cards() {
+        // The key above Tab (keysym `grave`, ` on US layouts) toggles
+        // the focused group in every grouped card — the strip and the
+        // vertical tree — and only there: flat sessions keep typing it
+        // into the query, the type-filter contract untouched. The
+        // direction still picks the landing window when opening.
         for mode in [KeyMode::GroupedHorizontal, KeyMode::Grouped] {
             assert_eq!(
                 key_input(Keysym::grave, false, false, false, mode),
                 GestureInput::Press {
-                    key: GestureKey::StepWindow(Direction::Next),
+                    key: GestureKey::ToggleGroup(Direction::Next),
                     shift: false
                 },
-                "{mode:?} steps forward on the bare key"
+                "{mode:?} opens forward on the bare key"
             );
             assert_eq!(
                 key_input(Keysym::grave, true, false, false, mode),
                 GestureInput::Press {
-                    key: GestureKey::StepWindow(Direction::Previous),
+                    key: GestureKey::ToggleGroup(Direction::Previous),
                     shift: true
                 },
-                "{mode:?} steps backwards on Shift"
+                "{mode:?} opens backwards on Shift"
             );
             // The runtime form of Alt+Shift+`: the compositor reports
             // the level-resolved keysym, so the shifted press arrives
             // as `asciitilde` on US layouts — the arm must match it
-            // too, or the backwards step is unreachable (2026-11-09).
+            // too, or the backwards landing window is unreachable
+            // (2026-11-09).
             assert_eq!(
                 key_input(Keysym::asciitilde, true, false, false, mode),
                 GestureInput::Press {
-                    key: GestureKey::StepWindow(Direction::Previous),
+                    key: GestureKey::ToggleGroup(Direction::Previous),
                     shift: true
                 },
-                "{mode:?} steps backwards on the shifted keysym"
+                "{mode:?} opens backwards on the shifted keysym"
             );
             assert_eq!(
                 key_input(Keysym::asciitilde, false, false, false, mode),
                 GestureInput::Press {
-                    key: GestureKey::StepWindow(Direction::Next),
+                    key: GestureKey::ToggleGroup(Direction::Next),
                     shift: false
                 },
-                "{mode:?} steps forward on the bare shifted keysym"
+                "{mode:?} opens forward on the bare shifted keysym"
             );
         }
         assert_eq!(
@@ -11032,15 +11034,15 @@ mod tests {
             },
             "Flat keeps typing the tilde"
         );
-        // The gesture machine forwards the window step like the app step.
+        // The gesture machine forwards the toggle like the app step.
         let mut gesture = Gesture::default();
         gesture.feed(GestureInput::Invoke(Direction::Next));
         assert_eq!(
             gesture.feed(GestureInput::Press {
-                key: GestureKey::StepWindow(Direction::Next),
+                key: GestureKey::ToggleGroup(Direction::Next),
                 shift: false
             }),
-            GestureOutput::StepWindow(Direction::Next)
+            GestureOutput::ToggleGroup(Direction::Next)
         );
     }
 

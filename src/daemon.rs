@@ -944,20 +944,26 @@ fn exit_band(session: &mut Switch) -> bool {
 }
 
 /// The key above Tab (`` ` ``) in a grouped card — the strip and the
-/// vertical tree alike: the within-app walk. From an app tile or entry,
-/// open that app's windows — Next on the MRU-front window (↓'s twin),
-/// Previous on the last; the vertical tree expands the app for the
-/// opening (the persistent state, →'s twin) while the strip derives its
-/// run from the selection alone. From a window tile or row, step the
-/// focused app's windows with wrap, never crossing into another app
-/// (that walk is ←/→ and Tab). A one-window app holds no dead end:
-/// entering from its tile selects it, stepping from it stays put. A
-/// flat session never reaches here — the key types into its query — and
-/// while a query stands anywhere the press types the key's own char
-/// instead (the flatten-on-query rule): the backtick bare, `~` shifted
-/// — the level lives here, keeping `key_input` pure. Returns whether a
-/// session was touched.
-fn step_window(
+/// vertical tree alike: toggle the selected app's group open or closed.
+///
+/// The expanded flag decides the press. The vertical tree's flag is the
+/// persistent expansion set (`→`'s state, kept across gestures); the
+/// strip's is derived — its run is open exactly while a child holds the
+/// selection. On a closed entry the press opens the group, landing on
+/// the MRU-front window (Next) or the last (Previous); the vertical tree
+/// writes the set, the strip derives its run from the selection alone
+/// and must never write that state. On an open group the press closes it
+/// and selects the entry heading it: the vertical tree drops the app
+/// from the set (in place when the entry holds the selection, from a
+/// child row by moving to the entry), the strip's run closes by
+/// derivation. A leaf has no group to toggle: the press selects its one
+/// window and otherwise stays put — no dead end. A flat session never
+/// reaches here — the key types into its query — and while a query
+/// stands anywhere the press types the key's own char instead (the
+/// flatten-on-query rule): the backtick bare, `~` shifted — the level
+/// lives here, keeping `key_input` pure. Returns whether a session was
+/// touched.
+fn toggle_group(
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
     expanded: &mut std::collections::HashSet<String>,
@@ -979,32 +985,37 @@ fn step_window(
     let Some(session) = open.as_mut() else {
         return false;
     };
-    // A tree is the grouped card this walk lives in; a flat session
+    // A tree is the grouped card this key lives in; a flat session
     // (plain or same-app) never sees the key mapped here.
     let Some(tree) = session.tree.as_ref() else {
         return false;
     };
-    let on_window = tree
-        .rows()
-        .get(session.tree_sel)
-        .is_some_and(|row| row.kind == switcher::RowKind::Child);
-    // The focused app: the selection's parent when a window row holds
-    // it, the selection itself when an app row does.
-    let focused = if on_window {
-        tree.parent_of(session.tree_sel).unwrap_or(session.tree_sel)
-    } else {
-        session.tree_sel
+    let Some(row) = tree.rows().get(session.tree_sel) else {
+        return false;
     };
-    let windows = strip_windows(tree, snapshot, session.scope, focused);
-    if on_window {
-        if windows.is_empty() {
+    // An open group: a child holds the selection (in the vertical tree
+    // that means its entry is in the set; in the strip the run derives
+    // from this selection). Close it and select the entry heading it.
+    if row.kind == switcher::RowKind::Child {
+        let Some(parent) = tree.parent_of(session.tree_sel) else {
             return false;
+        };
+        if !session.is_combined() {
+            expanded.remove(&tree.rows()[parent].app_id);
         }
-        // A one-window set stays put (`step_in`'s len < 2 rule) — the
-        // no-dead-end guarantee, both directions alike.
-        session.tree_sel = step_in(&windows, session.tree_sel, direction);
+        session.tree_sel = parent;
         return true;
     }
+    let app = row.app_id.clone();
+    if !session.is_combined() && row.kind == switcher::RowKind::Parent && expanded.remove(&app) {
+        // Already open, entry selected: collapse in place — the entry
+        // keeps the selection and its children leave the card.
+        return true;
+    }
+    // Closed: open onto the MRU-front (Next) or the last (Previous)
+    // live window. The vertical tree expands for it (the persistent
+    // state → shares); the strip derives its run and never writes it.
+    let windows = strip_windows(tree, snapshot, session.scope, session.tree_sel);
     let target = match direction {
         Direction::Next => windows.first().copied(),
         Direction::Previous => windows.last().copied(),
@@ -1012,17 +1023,8 @@ fn step_window(
     let Some(target) = target else {
         return false;
     };
-    // The vertical tree opens by expanding — the persistent state →
-    // shares. The strip derives its run from the selection alone and
-    // must never write that state: a horizontal gesture bleeding
-    // expansion into the next vertical card would change what it shows.
-    if !session.is_combined()
-        && matches!(
-            tree.rows().get(focused).map(|row| row.kind),
-            Some(switcher::RowKind::Parent)
-        )
-    {
-        expanded.insert(tree.rows()[focused].app_id.clone());
+    if !session.is_combined() && row.kind == switcher::RowKind::Parent {
+        expanded.insert(app);
     }
     session.tree_sel = target;
     true
@@ -1618,11 +1620,12 @@ pub fn run() -> Result<(), RunError> {
                         );
                     }
                 }
-                GestureOutput::StepWindow(direction) => {
-                    // The key above Tab: the within-app walk, or the
-                    // type-into fallthrough while a query stands (the
-                    // walk fn owns that decision).
-                    if step_window(&mut open, &snapshot, &mut expanded, direction) {
+                GestureOutput::ToggleGroup(direction) => {
+                    // The key above Tab: toggle the selected app's
+                    // group open or closed, or the type-into
+                    // fallthrough while a query stands (the toggle fn
+                    // owns that decision).
+                    if toggle_group(&mut open, &snapshot, &mut expanded, direction) {
                         show_selection(
                             &mut session,
                             &mut gesture,
@@ -6856,7 +6859,7 @@ mod tests {
         for (parent, front, last) in [(0usize, 1usize, 2usize), (3, 4, 5), (6, 7, 8)] {
             let session = open.as_mut().expect("open");
             session.tree_sel = parent;
-            assert!(step_window(
+            assert!(toggle_group(
                 &mut open,
                 &snap,
                 &mut expanded,
@@ -6868,7 +6871,7 @@ mod tests {
                 "the MRU-front window"
             );
             open.as_mut().expect("open").tree_sel = parent;
-            assert!(step_window(
+            assert!(toggle_group(
                 &mut open,
                 &snap,
                 &mut expanded,
@@ -6884,21 +6887,30 @@ mod tests {
     }
 
     #[test]
-    fn combined_grave_steps_within_the_app_and_wraps() {
-        // From a window tile the walk stays inside the focused app's
-        // window set, wrapping at both ends — never onto another app's
-        // rows (that walk is ←/→ and Tab).
+    fn combined_grave_collapses_the_open_run() {
+        // From a window tile the run is open by derivation, so the same
+        // key closes it back to the app tile — the strip holds no
+        // expansion state — and the next press opens it again on the
+        // direction's window.
         let snap = grouped_two_apps();
         let (mut open, mut expanded) = combined_session(&snap);
-        open.as_mut().expect("open").tree_sel = 1; // a's front child
-        assert!(step_window(
+        open.as_mut().expect("open").tree_sel = 2; // a's second child
+        assert!(toggle_group(
             &mut open,
             &snap,
             &mut expanded,
             Direction::Next
         ));
-        assert_eq!(open.as_ref().expect("open").tree_sel, 2, "a's second");
-        assert!(step_window(
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            0,
+            "back to the app tile"
+        );
+        assert!(
+            expanded.is_empty(),
+            "the strip never writes expansion state"
+        );
+        assert!(toggle_group(
             &mut open,
             &snap,
             &mut expanded,
@@ -6907,29 +6919,31 @@ mod tests {
         assert_eq!(
             open.as_ref().expect("open").tree_sel,
             1,
-            "wraps to the front"
+            "reopens on the front"
         );
-        assert!(step_window(
+        assert!(toggle_group(
             &mut open,
             &snap,
             &mut expanded,
             Direction::Previous
         ));
-        assert_eq!(open.as_ref().expect("open").tree_sel, 2, "Shift wraps back");
-        for _ in 0..4 {
-            assert!(step_window(
-                &mut open,
-                &snap,
-                &mut expanded,
-                Direction::Next
-            ));
-            let session = open.as_ref().expect("open");
-            assert!(
-                session.tree_sel == 1 || session.tree_sel == 2,
-                "never crosses into b's rows (at {})",
-                session.tree_sel
-            );
-        }
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            0,
+            "closes again from the front"
+        );
+        assert!(toggle_group(
+            &mut open,
+            &snap,
+            &mut expanded,
+            Direction::Previous
+        ));
+        assert_eq!(
+            open.as_ref().expect("open").tree_sel,
+            2,
+            "reopens on the last"
+        );
+        assert!(expanded.is_empty(), "still no expansion state");
     }
 
     #[test]
@@ -6943,7 +6957,7 @@ mod tests {
         let (mut open, mut expanded) = combined_session(&snap);
         open.as_mut().expect("open").tree_sel = 1;
         assert!(type_into(&mut open, &snap, 'b'));
-        assert!(step_window(
+        assert!(toggle_group(
             &mut open,
             &snap,
             &mut expanded,
@@ -6953,7 +6967,7 @@ mod tests {
         assert_eq!(session.query, "b`", "the backtick appended");
         assert!(session.filtered.is_some(), "still a querying session");
         assert_eq!(session.tree_sel, 1, "the walk never ran");
-        assert!(step_window(
+        assert!(toggle_group(
             &mut open,
             &snap,
             &mut expanded,
@@ -6974,7 +6988,7 @@ mod tests {
         let lone = grouped_lone_parent();
         let (mut open, mut expanded) = combined_session(&lone);
         open.as_mut().expect("open").tree_sel = 3; // c's leaf tile
-        assert!(step_window(
+        assert!(toggle_group(
             &mut open,
             &lone,
             &mut expanded,
@@ -6985,7 +6999,7 @@ mod tests {
             3,
             "selects its one window"
         );
-        assert!(step_window(
+        assert!(toggle_group(
             &mut open,
             &lone,
             &mut expanded,
@@ -6996,7 +7010,7 @@ mod tests {
             3,
             "stays put from the window"
         );
-        assert!(step_window(
+        assert!(toggle_group(
             &mut open,
             &lone,
             &mut expanded,
@@ -7011,16 +7025,17 @@ mod tests {
 
     #[test]
     fn vertical_grave_opens_the_apps_windows_from_its_entry() {
-        // The same key in the vertical tree: from an app entry the press
-        // opens that app's windows — Next on the MRU-front window,
-        // Shift on the last — and the group expands for it, the state
-        // → shares, persisting past the gesture.
+        // From a collapsed app entry the press opens that app's windows
+        // — Next on the MRU-front window, Shift on the last — and the
+        // group expands for it, the state → shares, persisting past the
+        // gesture. Pressing again collapses: the flag decides.
         let snap = grouped_two_apps();
         let (mut open, mut expanded) = grouped_session(&snap);
         for (parent, front, last) in [(0usize, 1usize, 2usize), (3, 4, 5)] {
+            expanded.clear();
             open.as_mut().expect("open").tree_sel = parent;
             assert!(!expanded.contains(tree_app(&open, parent)));
-            assert!(step_window(
+            assert!(toggle_group(
                 &mut open,
                 &snap,
                 &mut expanded,
@@ -7035,8 +7050,22 @@ mod tests {
                 expanded.contains(tree_app(&open, parent)),
                 "the group opened"
             );
+            // The same entry press, now expanded, collapses in place.
             open.as_mut().expect("open").tree_sel = parent;
-            assert!(step_window(
+            assert!(toggle_group(
+                &mut open,
+                &snap,
+                &mut expanded,
+                Direction::Next
+            ));
+            assert_eq!(
+                open.as_ref().expect("open").tree_sel,
+                parent,
+                "the entry holds the selection"
+            );
+            assert!(expanded.is_empty(), "the group collapsed");
+            // Reopened backwards onto the last window.
+            assert!(toggle_group(
                 &mut open,
                 &snap,
                 &mut expanded,
@@ -7047,25 +7076,22 @@ mod tests {
                 last,
                 "Shift opens on the last"
             );
+            assert!(expanded.contains(tree_app(&open, parent)));
         }
     }
 
     #[test]
-    fn vertical_grave_steps_within_the_app_and_wraps() {
-        // From a window row the walk stays inside the focused app's
-        // window set, wrapping at both ends — never onto another app's
-        // rows (that walk is ←/→ and the linear Tab).
+    fn vertical_grave_collapses_from_a_child() {
+        // A child row is visible only while its group is expanded, so
+        // the key there closes the group and selects the entry the
+        // children nest under — the vertical twin of the strip's run
+        // closing.
         let snap = grouped_two_apps();
         let (mut open, mut expanded) = grouped_session(&snap);
-        open.as_mut().expect("open").tree_sel = 1; // a's front child
-        assert!(step_window(
-            &mut open,
-            &snap,
-            &mut expanded,
-            Direction::Next
-        ));
-        assert_eq!(open.as_ref().expect("open").tree_sel, 2, "a's second");
-        assert!(step_window(
+        open.as_mut().expect("open").tree_sel = 2; // a's last child
+        expanded.insert(tree_app(&open, 2).to_string());
+        assert!(expanded.contains(tree_app(&open, 2)));
+        assert!(toggle_group(
             &mut open,
             &snap,
             &mut expanded,
@@ -7073,30 +7099,21 @@ mod tests {
         ));
         assert_eq!(
             open.as_ref().expect("open").tree_sel,
-            1,
-            "wraps to the front"
+            0,
+            "the child's entry holds the selection"
         );
-        assert!(step_window(
+        assert!(expanded.is_empty(), "the group closed");
+
+        // A second press on the now-collapsed entry reopens onto the
+        // front window.
+        assert!(toggle_group(
             &mut open,
             &snap,
             &mut expanded,
-            Direction::Previous
+            Direction::Next
         ));
-        assert_eq!(open.as_ref().expect("open").tree_sel, 2, "Shift wraps back");
-        for _ in 0..4 {
-            assert!(step_window(
-                &mut open,
-                &snap,
-                &mut expanded,
-                Direction::Next
-            ));
-            let session = open.as_ref().expect("open");
-            assert!(
-                session.tree_sel == 1 || session.tree_sel == 2,
-                "never crosses into b's rows (at {})",
-                session.tree_sel
-            );
-        }
+        assert_eq!(open.as_ref().expect("open").tree_sel, 1);
+        assert!(expanded.contains(tree_app(&open, 0)));
     }
 
     #[test]
@@ -7108,7 +7125,7 @@ mod tests {
         let (mut open, mut expanded) = grouped_session(&snap);
         open.as_mut().expect("open").tree_sel = 1;
         assert!(type_into(&mut open, &snap, 'b'));
-        assert!(step_window(
+        assert!(toggle_group(
             &mut open,
             &snap,
             &mut expanded,
@@ -7118,7 +7135,7 @@ mod tests {
         assert_eq!(session.query, "b`", "the backtick appended");
         assert!(session.filtered.is_some(), "still a querying session");
         assert_eq!(session.tree_sel, 1, "the walk never ran");
-        assert!(step_window(
+        assert!(toggle_group(
             &mut open,
             &snap,
             &mut expanded,
@@ -7139,7 +7156,7 @@ mod tests {
         let lone = grouped_lone_parent();
         let (mut open, mut expanded) = grouped_session(&lone);
         open.as_mut().expect("open").tree_sel = 3; // c's leaf row
-        assert!(step_window(
+        assert!(toggle_group(
             &mut open,
             &lone,
             &mut expanded,
@@ -7150,7 +7167,7 @@ mod tests {
             3,
             "selects its one window"
         );
-        assert!(step_window(
+        assert!(toggle_group(
             &mut open,
             &lone,
             &mut expanded,
