@@ -25,9 +25,9 @@ The mouse drives the same gesture while the overlay is up. Crossing
 between rows — or tiles, on the horizontal card — moves the selection
 with the cursor; wherever the pointer first lands — including resting
 right where the card appears — claims nothing. **Clicking** a row focuses that window and dismisses the overlay
-— the same outcome as releasing **Alt**. On the column card, resting
-the pointer on a window row reveals an **×** at its right edge —
-clicking that closes the window instead (see
+— the same outcome as releasing **Alt**. Resting the pointer on a
+window row reveals a small **×** badge on the row's icon; clicking the
+badge closes the window instead (see
 [Closing windows](#closing-windows)). The **scroll wheel** steps the
 list one row per notch, forward or back, wrapping like Tab, and a slow
 scan never times the overlay out.
@@ -92,20 +92,24 @@ nothing persists, and the window list never re-derives mid-gesture.
 
 Windows close from the card without leaving the gesture. **Alt+minus**
 — the top-row minus or the keypad's — closes the selected row's window;
-on the pointer's side, resting on a window row reveals an **×** at its
-right edge (in the strip where that row's key hint sits), and clicking
-the × closes that row's window instead of activating it. Every row
-closes exactly what it activates: a group entry closes its app's most
-recently used window — the same window the entry commits — and a query
-row closes the window it shows.
+on the pointer's side, resting on a window row reveals a small **×**
+badge on its icon's top-right corner, and clicking that badge closes the
+row's window instead of activating it. The horizontal band uses the
+same badge on its tiles: hovering a window tile reveals the **×** on
+the tile's icon, and clicking it closes the tile's window while the
+rest of the icon still activates. Every row closes exactly what it
+activates: a group entry closes its app's most recently used window —
+the same window the entry commits — and a query row closes the window
+it shows.
 
 After each close the selection moves off the closing window — to the
 next visible row, wrapping, when it rested there — and the card stays
 up, so one held gesture can prune a stack of windows — Alt+minus, Alt+minus, then Tab to what
 survives. Closing the last eligible window dismisses the overlay. The
-× is the column card's affordance — window rows only, never group
-entries or the `…` rows — while Alt+minus works in every mode: the flat
-list, the grouped tree, a standing query, and the same-app view. A
+× is the pointer's affordance on window rows and tiles only — never
+group entries, app tiles, or the `…` rows — while Alt+minus works in
+every mode: the flat list, the grouped tree, the horizontal band and
+grouped strip, a standing query, and the same-app view. A
 window closed by someone else mid-gesture drops off the card the same
 way; closing never adds one back — the frozen-list rule holds.
 
@@ -115,7 +119,7 @@ Each row shows the window's application icon — resolved through the same
 desktop-entry and icon-theme pipeline the COSMIC launcher uses — next to
 its title; an application with no themed icon falls back to a generic
 window glyph. The card is a rounded rectangle with a hairline border, at
-most 748 px wide, with the selected row highlighted; text renders at
+most 688 px wide, with the selected row highlighted; text renders at
 12 px and stays sharp on HiDPI displays (the overlay renders at the
 output's scale). The `theme` setting picks the card — `auto` (the
 default) follows the desktop's dark/light preference; see

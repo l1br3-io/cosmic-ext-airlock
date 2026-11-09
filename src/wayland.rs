@@ -884,10 +884,10 @@ impl App {
     /// The window a press at `position` closes (`close-window`): the
     /// ×-zone hit-test evaluated against the live model at event
     /// receipt — the same (x, y, scale) the row hit-test uses, so the
-    /// zone is exactly the band the user saw — resolved to the row's
-    /// own handle. `None` off the zone, on a header or continuation
-    /// row, on the horizontal band, or with no overlay mapped: the
-    /// press activates as today.
+    /// zone is exactly what the user saw (a vertical row's hint band, a
+    /// horizontal tile's top-right corner) — resolved to the row's own
+    /// handle. `None` off the zone, on a header or continuation row, or
+    /// with no overlay mapped: the press activates as today.
     fn overlay_close_target_at(&self, position: (f64, f64)) -> Option<Handle> {
         let overlay = self.overlay.as_ref()?;
         let (x, y) = position;

@@ -595,7 +595,7 @@ fn combined_scenarios(
         "Key table — the axis map",
         "Notes",
     ];
-    [
+    let mut scenarios: Vec<Scenario> = [
         // The closed strip: app tiles only, the selection on the
         // editor's tile mid-list.
         combined(
@@ -654,7 +654,23 @@ fn combined_scenarios(
         model,
         palette: base,
     })
-    .collect()
+    .collect();
+    // The × reveal on the open run (`close-window`): pointer presence
+    // paints the close glyph in the hovered window tile's top-right
+    // corner — never on an app tile or the `…` tile.
+    let mut hovered = combined(
+        &[("Files", 2), ("Editor", 5), ("Terminal", 3)],
+        1,
+        &editor_windows,
+        Some((true, 1)),
+        8,
+    );
+    hovered.hovered = Some(1);
+    scenarios.push(Scenario {
+        model: hovered,
+        palette: base,
+    });
+    scenarios
 }
 
 /// The tile kind an app tile carries for preview purposes: a parent when
@@ -745,7 +761,7 @@ fn horizontal_scenarios(
     // the floor, so the one caption carries the card's whole `…`.
     let long = "Quarterly review — compiled notes and appendix three";
     let long_titles: Vec<String> = std::iter::repeat_n(long.to_string(), 5).collect();
-    [
+    let mut scenarios: Vec<Scenario> = [
         // A lone window: one tile, selected, its badge the only hint.
         band(&titles[..1], 0, 8),
         // Three whole tiles, the middle selected — the hint badge over
@@ -768,7 +784,18 @@ fn horizontal_scenarios(
         model,
         palette: base,
     })
-    .collect()
+    .collect();
+
+    // The × reveal (`close-window`): hovering a window tile paints the
+    // close glyph in its top-right corner, beside the badge — never on
+    // the `…` tile.
+    let mut hovered = band(&titles[..3], 1, 3);
+    hovered.hovered = Some(1);
+    scenarios.push(Scenario {
+        model: hovered,
+        palette: base,
+    });
+    scenarios
 }
 
 fn row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
@@ -969,11 +996,11 @@ fn scenarios(
             .expect("the verdict card renders"),
         palette: base,
     });
-    // The close family (`close-window`, CW2): the × revealed under the
-    // pointer — a hovered leaf (a hinted row: its band yields to the
-    // ×), a hovered child under its unhovered parent, and the hovered
-    // header that never reveals. Judged like every scenario on both
-    // polarities.
+    // The close family (`close-window`, CW2): the × badge revealed on
+    // the icon under the pointer — a hovered leaf (its hint stays put
+    // beside it), a hovered child under its unhovered parent, and the
+    // hovered header that never reveals. Judged like every scenario on
+    // both polarities.
     let mut close_leaf = sized(OverlayModel {
         rows: vec![
             row("MRU first", icons[3].clone(), false),
@@ -1282,9 +1309,9 @@ fn entry_row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool, n: usize
     }
 }
 
-/// Composes one grouped card, sized the way `overlay_model` sizes it:
-/// the title budget carries the child indent and the parent badge
-/// columns beside the titles themselves.
+/// Composes one grouped card, sized the way `overlay_model_grouped`
+/// sizes it: the title budget carries the child's indent pixels and the
+/// parent's caret columns beside the titles themselves.
 fn tree_card(rows: Vec<RowModel>, selected: usize) -> OverlayModel {
     let shown = rows.len() as u32;
     let mut model = OverlayModel {
@@ -1292,24 +1319,18 @@ fn tree_card(rows: Vec<RowModel>, selected: usize) -> OverlayModel {
         ..OverlayModel::default()
     };
     model.rows[selected].selected = true;
-    let cols = model
+    let band = model
         .rows
         .iter()
         .map(|row| {
-            row.title.chars().count() as u32
-                + (row.kind == cosmic_ext_airlock::switcher::RowKind::Child) as u32
-                    * (ui::TREE_INDENT / ui::TEXT_W)
-                + (row.kind == cosmic_ext_airlock::switcher::RowKind::Parent) as u32
-                    * ui::BADGE_COLS
+            row.title.chars().count() as u32 * ui::TEXT_W
+                + (row.kind == RowKind::Child) as u32 * ui::TREE_INDENT
+                + (row.kind == RowKind::Parent) as u32 * ui::CHEVRON_COLS * ui::TEXT_W
         })
         .max()
-        .unwrap_or(1);
-    model.width = 2 * ui::PAD_X
-        + ui::ICON
-        + ui::ICON_GAP
-        + cols * ui::TEXT_W
-        + ui::HINT_GAP
-        + ui::HINT_COLS * ui::TEXT_W;
+        .unwrap_or(ui::TEXT_W);
+    model.width =
+        2 * ui::PAD_X + ui::ICON + ui::ICON_GAP + band + ui::HINT_GAP + ui::HINT_COLS * ui::TEXT_W;
     model.height = ui::card_height(shown);
     model
 }

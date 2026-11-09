@@ -64,8 +64,9 @@ same-application cycling gesture the platform default does not offer.
   the Ctrl+N hint band), exact-AA corners, HiDPI buffer scale;
   previewable headless via `cargo run --example overlay-preview --
   out.png`. Re-decided 2026-11-07 (`overlay-density`): **12-px text,
-  ≤748-px card** (measured: 48 title columns at 12 px plus the hint
-  band). The 16-px figure above never shipped — the owner re-pinned
+  ≤688-px card** (measured: 48 title columns at 12 px plus the
+  single-digit hint band). The 16-px figure above never shipped — the
+  owner re-pinned
   8 px on 2026-11-02 judging on the 200 % VM (16 physical px), then
   found the same value tiny on a 100 % output (8 physical) and moved to
   the middle step. The card keeps `rows` windows in view on a long

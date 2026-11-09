@@ -58,9 +58,9 @@
       selection; wherever the pointer first lands, including right where the
       card appears, claims nothing. <strong>Clicking</strong> a row focuses
       that window and dismisses the overlay, like releasing <kbd>Alt</kbd>.
-      On the column card, resting the pointer on a window row reveals an
-      <strong>×</strong> at its right edge; clicking it closes the window
-      instead (see <a href="#closing-windows">Closing windows</a>). The
+      Resting the pointer on a window row reveals a small
+      <strong>×</strong> badge on the row's icon; clicking it closes the
+      window instead (see <a href="#closing-windows">Closing windows</a>). The
       <strong>scroll wheel</strong> steps the list one row per notch,
       forward or back, wrapping like <kbd>Tab</kbd>, and a slow scan never
       times the overlay out.</p>
@@ -126,19 +126,22 @@
       <p>Windows close from the card without leaving the gesture.
       <strong>Alt+minus</strong> (top-row or keypad) closes the selected
       row's window; on the pointer's side, resting on a window row reveals
-      an <strong>×</strong> at its right edge, in the strip where that row's
-      key hint sits, and clicking it closes that row's window instead of
-      activating it. Every row closes exactly what it activates: a group
-      entry closes its app's most recently used window, the same window the
-      entry commits, and a query row closes the window it shows.</p>
+      a small <strong>×</strong> badge on the row's icon's top-right
+      corner, and clicking it closes that row's window instead of
+      activating it. The horizontal band paints the same badge on its
+      tiles, so the pointer affordance is identical in either layout.
+      Every row closes exactly what it activates: a group entry closes its
+      app's most recently used window, the same window the entry commits,
+      and a query row closes the window it shows.</p>
       <p>After each close the selection moves to the next visible row,
       wrapping when it rested there, and the card stays up, so one held
       gesture can prune a stack of windows: Alt+minus, Alt+minus, then
       <kbd>Tab</kbd> to what survives. Closing the last eligible window
-      dismisses the overlay. The × is the column card's affordance, on
-      window rows only, never on group entries or the
+      dismisses the overlay. The × is the pointer's affordance on window
+      rows and tiles only, never on group entries, app tiles, or the
       <code>…</code> rows; Alt+minus works in every mode: the flat list, the
-      grouped tree, a standing query, and the same-app view. A window
+      grouped tree, the horizontal band and grouped strip, a standing
+      query, and the same-app view. A window
       closed by someone else mid-gesture drops off the same way; closing
       never adds one back.</p>
     </section>
@@ -148,7 +151,7 @@
       same desktop-entry and icon-theme pipeline the COSMIC launcher uses,
       next to its title; an application with no themed icon falls back to a
       generic window glyph. The card is a rounded rectangle with a hairline
-      border, at most 748 px wide, with the selected row highlighted; text
+      border, at most 688 px wide, with the selected row highlighted; text
       renders at 12 px and stays sharp on HiDPI displays (the overlay renders
       at the output's scale). <code>theme</code> picks the card;
       <code>auto</code> (the default) follows the desktop's dark/light

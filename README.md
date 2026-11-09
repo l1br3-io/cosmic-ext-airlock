@@ -37,7 +37,7 @@ pipeline the COSMIC launcher uses) beside its title.
 - Pointer: hover moves the selection, click switches, the wheel steps the
   list
 - **Ctrl+N** (1–9, keypad too) switches to the Nth window at once, like a
-  click; each row shows its key
+  click; each row shows its digit
 - A long list never grows the card: `rows` windows stay in view (8 by
   default) with `…` rows marking the truncated edges, and stepping
   walks the whole list — see
@@ -52,7 +52,8 @@ pipeline the COSMIC launcher uses) beside its title.
   tiles — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#layout)
 - **App grouping** (`grouping = true`) turns the list into a per-app tree:
-  collapsed app entries that commit their most recently used window, → to
+  collapsed app entries that commit their most recently used window, with
+  window-count pips below the app name and an inline caret; → to
   expand one (remembered across gestures) and ← to collapse; Tab, arrows,
   and the wheel walk the visible rows linearly — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#grouping)
@@ -72,8 +73,9 @@ pipeline the COSMIC launcher uses) beside its title.
   app name, case-insensitive, first match selected; Backspace edits,
   Escape clears before it dismisses. Works in every mode
 - **Close windows from the card**: Alt+minus closes the selected row's
-  window and the card stays up for the next; hovering a window row
-  reveals an × at its right edge that closes on click. A group entry
+  window and the card stays up for the next; hovering a window row or
+  horizontal window tile reveals a small × badge on its icon's top-right
+  corner that closes on click. A group entry
   closes its app's front window — every row closes what it activates
 - Titles render in the desktop's own interface font — real glyphs,
   real accents, fallback chains for CJK and emoji — at the card's

@@ -133,12 +133,12 @@ pub const BORDER: u32 = 1;
 /// keeps the title territory at 660 logical px — within reach of
 /// cosmic-launcher's 596 fixed switcher width and the cross-platform
 /// consensus cap of ~600 (research record §2.6, §2.10); the full card,
-/// hint band included, is 748. Re-pinned 2026-11-07 with the 12-px text
-/// from the 8-px era's 64 columns (596 territory, 660 card): the band
-/// consensus holds, the column budget pays for the larger glyphs. The
-/// hint band rides on top of the cap rather than under it (rev 2's
-/// recorded decision: the card widens by the band, the title budget does
-/// not fund it).
+/// hint band included, is 688 since the 2026-11-09 digit re-pin.
+/// Re-pinned 2026-11-07 with the 12-px text from the 8-px era's 64
+/// columns (596 territory, 660 card): the band consensus holds, the
+/// column budget pays for the larger glyphs. The hint band rides on top
+/// of the cap rather than under it (rev 2's recorded decision: the card
+/// widens by the band, the title budget does not fund it).
 pub const MAX_COLS: u32 = 48;
 
 /// Gap between the title band's right edge and the hint band, logical
@@ -148,10 +148,14 @@ pub const MAX_COLS: u32 = 48;
 /// (2026-11-04) before freezing.
 pub const HINT_GAP: u32 = 16;
 
-/// Reserved hint columns (the longest label, `Ctrl+9`). Structural:
-/// every card carries the band regardless of row count; only rows 1..9
-/// paint in it.
-pub const HINT_COLS: u32 = 6; // len("Ctrl+9")
+/// Reserved hint columns (the longest label, a single digit `9`).
+/// Structural: every card carries the band regardless of row count;
+/// only rows 1..9 paint in it. Re-pinned 2026-11-09 (owner, in-thread)
+/// from the full `Ctrl+9` chord, which repeated on every row and read
+/// as a table column of metadata. The vertical cards now share the
+/// horizontal tiles' bare-digit vocabulary; the reservation shrank
+/// 6 → 1 column and the card narrowed with it.
+pub const HINT_COLS: u32 = 1; // len("9")
 
 /// The query strip's breathing above its text, logical px
 /// (`type-filter`). One 4-grid step, the HINT_GAP family; the strip's
@@ -179,43 +183,29 @@ pub const STRIP_CARET_W: u32 = 2;
 /// LV3 pattern).
 pub const TREE_INDENT: u32 = 16;
 
-/// Title-band columns reserved after a parent row's title for the
-/// count chip: a two-digit chip (2 × `TEXT_W` + 2 × [`BADGE_PAD_X`])
-/// plus its [`BADGE_GAP`] clearing fits with columns to spare.
-/// Re-pinned 2026-11-08 (owner, in-thread) when the muted `×N` text
-/// became the chip — the budget widened from 3 columns so the chip
-/// always shows beside even a max-length title.
-pub const BADGE_COLS: u32 = 4;
+/// Title-band columns reserved after a parent row's title for its
+/// disclosure caret and its clearing: the 8-px caret plus one
+/// [`CHEVRON_GAP`]. Re-pinned 2026-11-09 (owner, in-thread) from the
+/// numeric count chip and then from the inline pips: the pips moved
+/// below the app name, so they take no title width, and only the caret
+/// remains on the title line. Two columns, down from five, give parent
+/// titles back three columns.
+pub const CHEVRON_COLS: u32 = 2;
 
-/// The count chip's geometry, logical px: height on the 8-grid (two
-/// steps), horizontal padding around the digit, the clearing between
-/// title end and chip, and the corner radius — half the height, the
-/// pill the selection band's [`BAND_RADIUS`] rounding already
-/// established. The chip fills with the text color and cuts its digit
-/// in the card's own background: the palette's pair, so it reads on
-/// both polarities without a new color. Frozen 2026-11-08 on the GR4
-/// sheet: the pill reads at metadata weight beside the 32-px icons,
-/// and the one-step [`BADGE_GAP`] clearing holds — widening it would
-/// spend a title column on every parent ([`BADGE_COLS`] grows with
-/// it), a trade the sheet judged not worth the nit.
-pub const BADGE_H: u32 = 16;
-/// See [`BADGE_H`]: horizontal padding around the digit, logical px.
-pub const BADGE_PAD_X: u32 = 4;
-/// See [`BADGE_H`]: clearing between the title's last column and the
-/// chip, logical px — one 8-grid step.
-pub const BADGE_GAP: u32 = 8;
-/// See [`BADGE_H`]: corner radius — half the height, a full pill.
-pub const BADGE_RADIUS: u32 = 8;
+/// Clearing between a parent's title and its disclosure caret, logical
+/// px — one 8-grid step. The count pips no longer spend this gap: they
+/// sit below the title, in the row's own bottom padding.
+pub const CHEVRON_GAP: u32 = 8;
 
-/// The disclosure chevron's draw scale: the 8×8 solid-triangle glyphs
-/// paint at 2× = 16 logical px — exactly the [`HINT_GAP`] column the
-/// chevron owns — centered on the row's midline, in the full text
-/// color. Re-pinned 2026-11-08 (owner, in-thread): the muted `>`/`v`
-/// text glyphs were not noticeable; a solid triangle is the disclosure
-/// vocabulary the icon rows already speak (the [`WINDOW_GLYPH`]
-/// family), and 16 px holds its weight beside 12-px text without
-/// competing with the 32-px icons.
-pub const CHEVRON_SCALE: u32 = 2;
+/// The disclosure chevron's draw scale: the 8×8 caret glyphs paint at
+/// 1× = 8 logical px, inline beside the parent's title. Re-pinned
+/// 2026-11-09 (owner, in-thread): the 2× solid triangle floating alone
+/// in the hint-gap column read as a play button, disconnected from the
+/// row it described. The mark moved onto the title line and shrank; it
+/// reads as tree structure, not a control. The hand-drawn glyph keeps
+/// a two-pixel stroke, so 8 px still holds its weight where the old
+/// muted `>`/`v` text glyphs failed.
+pub const CHEVRON_SCALE: u32 = 1;
 
 /// Windows the card keeps in view on a long list when the config sets
 /// no `rows` — the setting's default. The budget counts *windows*, not
@@ -301,7 +291,7 @@ pub const TILE_PAD_X: u32 = 24;
 /// the title lines used to.
 pub const TILE_PAD_Y: u32 = 32;
 /// Clearing between the badge row and the icon.
-pub const TILE_BADGE_GAP: u32 = 4;
+pub const TILE_PARENT_GAP: u32 = 4;
 /// Clearing between the icon's bottom and the pip row (glance-tiles
 /// G1, 2026-11-09: the owner's pip decomposition). 6 after the G4
 /// sheet: the territory stays 12 (the cell stays 76, the card 168)
@@ -324,7 +314,7 @@ pub const PIP_STEP: u32 = 10;
 /// line. The selection fill's extent; the pip row is structural on
 /// every tile (pips paint only on multi-window app tiles), so the
 /// cell never varies per tile.
-pub const TILE_CELL_H: u32 = TEXT_H + TILE_BADGE_GAP + TILE_ICON + PIP_GAP + PIP_SIDE;
+pub const TILE_CELL_H: u32 = TEXT_H + TILE_PARENT_GAP + TILE_ICON + PIP_GAP + PIP_SIDE;
 /// Clearing between the caption line and the strip's badge row, two
 /// 8-grid steps (glance-tiles G1, 2026-11-09).
 pub const CAPTION_GAP: u32 = 16;
@@ -366,6 +356,12 @@ pub const TILE_TEXT_PAD: u32 = 8;
 /// frame whether or not the caption has text.
 pub const fn band_strip_top() -> u32 {
     TILE_PAD_Y + TEXT_H + CAPTION_GAP
+}
+/// The icon's top edge inside a tile, logical px: the strip top, the
+/// badge row, and its clearing — the line `render_band` blits from and
+/// the vertical anchor of the tile's × badge.
+pub const fn band_icon_top() -> u32 {
+    band_strip_top() + TEXT_H + TILE_PARENT_GAP
 }
 /// `auto`'s share of the invoking output's logical width — the spec's
 /// ~66 % working range, two thirds exactly; frozen on the CL4 sheet
@@ -882,9 +878,20 @@ const _: () = {
     assert!(ICON.is_multiple_of(8));
     assert!(ICON_GAP.is_multiple_of(4));
     assert!(HINT_GAP.is_multiple_of(4));
-    // The × fits the band it claims, on the 4-grid like every mark.
-    assert!((GLYPH_W * CLOSE_SCALE).is_multiple_of(4));
-    assert!(GLYPH_W * CLOSE_SCALE <= HINT_COLS * TEXT_W);
+    // A parent row's disclosure caret and its clearing fit the
+    // CHEVRON_COLS budget — the render guard is defense in depth, this
+    // is the reservation's truth. (The count pips sit below the title
+    // and spend no title width.)
+    assert!(CHEVRON_GAP + GLYPH_W * CHEVRON_SCALE <= CHEVRON_COLS * TEXT_W);
+    // The × badge, shared by both cards: the 8-px ink keeps 2 px of
+    // knockout on every side, the hit territory forgives the small
+    // target, and the whole badge stays on its icon's corner.
+    assert!(CLOSE_BADGE.is_multiple_of(4));
+    assert!(CLOSE_BADGE_HIT.is_multiple_of(4));
+    assert!(GLYPH_W * CLOSE_BADGE_SCALE + 2 * 2 == CLOSE_BADGE);
+    assert!(CLOSE_BADGE_RADIUS < CLOSE_BADGE);
+    assert!(CLOSE_BADGE_HIT >= CLOSE_BADGE);
+    assert!(CLOSE_BADGE_HIT <= ICON && CLOSE_BADGE_HIT <= TILE_ICON);
     assert!(STRIP_PAD_Y.is_multiple_of(4));
     assert!(STRIP_CARET_GAP.is_multiple_of(4));
     assert!(STRIP_CARET_W == 2);
@@ -970,30 +977,44 @@ const ELLIPSIS_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x2A, 0x00]
 /// baseline.
 const MIDDLE_DOT_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00];
 
-/// Solid disclosure triangle, collapsed (points right) — the grouped
-/// parent's expansion mark, drawn at [`CHEVRON_SCALE`] in the text
-/// color. Solid, not a stroked `>`: the mark must read as structure at
-/// a glance, which is weight, not line art.
-const CHEVRON_RIGHT_GLYPH: [u8; 8] = [0x00, 0x06, 0x1E, 0x7E, 0x7E, 0x1E, 0x06, 0x00];
+/// Disclosure caret, collapsed (points right) — the grouped parent's
+/// expansion mark, drawn at [`CHEVRON_SCALE`] in the text color. A
+/// two-pixel-stroke caret, not the filled triangle of the first
+/// grouping pass: inline on the title line the caret reads as tree
+/// structure, where the solid wedge read as a media control.
+const CHEVRON_RIGHT_GLYPH: [u8; 8] = [0x00, 0x0C, 0x18, 0x30, 0x30, 0x18, 0x0C, 0x00];
 
-/// Solid disclosure triangle, expanded (points down) — the right
-/// glyph rotated a quarter turn.
-const CHEVRON_DOWN_GLYPH: [u8; 8] = [0x00, 0x7E, 0x7E, 0x3C, 0x3C, 0x18, 0x18, 0x00];
+/// Disclosure caret, expanded (points down) — the right glyph rotated a
+/// quarter turn and centered on the cell.
+const CHEVRON_DOWN_GLYPH: [u8; 8] = [0x00, 0x00, 0x42, 0x66, 0x3C, 0x18, 0x00, 0x00];
 
 /// The close affordance's × (`close-window`): two 2-px diagonal arms
 /// meeting at a 2×2 center — the chevron family's solid weight, hand
 /// drawn like every glyph in the vocabulary, never a typed character.
 const CLOSE_GLYPH: [u8; 8] = [0xC3, 0xE7, 0x66, 0x3C, 0x3C, 0x66, 0xE7, 0xC3];
 
-/// The ×'s draw scale — the chevron's own 2 (16 logical px), so the
-/// affordance holds the row's weight class beside the disclosure
-/// marks, not the hints' text size: it is an action target the pointer
-/// aims at, not metadata.
-const CLOSE_SCALE: u32 = 2;
+/// The × badge's side, logical px — a 12-px knockout at the icon's
+/// top-right corner, shared by the vertical rows and the horizontal
+/// tiles so the pointer affordance is identical in either layout. The
+/// knockout (the card background) separates the mark from a colorful
+/// icon, so it reads on every app, and the mark stays secondary to the
+/// thumbnail it closes.
+const CLOSE_BADGE: u32 = 12;
+/// The badge's corner radius, logical px — one third of its side, the
+/// small-chip rounding that keeps the knockout from reading as a
+/// square hole cut in the icon.
+const CLOSE_BADGE_RADIUS: u32 = 4;
+/// The × ink's draw scale inside the badge: the 8×8 glyph at 1×
+/// (8 logical px), leaving 2 px of knockout on every side.
+const CLOSE_BADGE_SCALE: u32 = 1;
+/// The badge's click territory, logical px — the 12-px badge plus 2 px
+/// of forgiveness on its left and bottom edges, so the small target
+/// stays reachable without widening what the eye reads as the button.
+const CLOSE_BADGE_HIT: u32 = 16;
 
 /// The number chord a row advertises in its hint band — the single
 /// source of "which N selects this row" for both the renderer (the
-/// painted label) and the input map (the wired key): Ctrl+N addresses
+/// painted digit) and the input map (the wired key): Ctrl+N addresses
 /// level-1 entries, and a row with no hint (`None`, rows past nine,
 /// continuation rows, and — since rev 5 — every group child) is not
 /// number-addressed.
@@ -1013,18 +1034,12 @@ impl RowHint {
         (index < MAX_HINTS).then_some(RowHint::Ctrl(index + 1))
     }
 
-    /// The label the hint band paints, right-aligned in the reserved
-    /// `HINT_COLS` territory — the vertical cards' full chord.
-    fn label(self) -> String {
-        match self {
-            RowHint::Ctrl(n) => format!("Ctrl+{n}"),
-        }
-    }
-
-    /// The compact tile's badge label: the bare digit, `1`..`9` —
-    /// "Ctrl+9" is six bitmap columns against the four a 64-px tile
-    /// funds (glance-tiles G2, 2026-11-09). The digit stays wired to
-    /// the same reading-order ordinal `label()` spells out.
+    /// The label both cards paint: the bare digit, `1`..`9`. "Ctrl+9"
+    /// is six bitmap columns against the one column the hint band
+    /// reserves (and the four a 64-px tile funds) — glance-tiles G2,
+    /// 2026-11-09; the vertical band followed on 2026-11-09 when the
+    /// full chord repeated on every row read as a table column. The
+    /// digit stays wired to the same reading-order ordinal.
     fn digit(self) -> String {
         match self {
             RowHint::Ctrl(n) => n.to_string(),
@@ -1049,10 +1064,10 @@ pub struct RowModel {
     /// exactly one window whatever the mode.
     pub handle: Option<Handle>,
     /// The row's place in the grouped tree; [`RowKind::Leaf`] on every
-    /// flat row. Drives the child indent, the parent's badge and
-    /// chevron, and nothing else — input addressing reads `handle`.
+    /// flat row. Drives the child indent, the parent's count pips and
+    /// caret, and nothing else — input addressing reads `handle`.
     pub kind: RowKind,
-    /// On a parent row, the app's window count the chip shows; zero
+    /// On a parent row, the app's window count the pips show; zero
     /// everywhere else.
     pub count: usize,
     /// The number chord the hint band paints for this row; `None` on
@@ -1097,9 +1112,10 @@ pub struct OverlayModel {
     /// The row the pointer rests on (`close-window`'s × reveal) —
     /// presence, not selection: the daemon sets it from hover
     /// observations, validated against the rows this model just built,
-    /// and the renderer paints the close glyph in that row's reserved
-    /// band when the row is a window row (leaves, children, query rows
-    /// — never headers or continuations). `None` on every pointerless
+    /// and the renderer paints the close badge on the row's icon —
+    /// both cards share the badge, on the icon's top-right corner —
+    /// when the row is a window row (leaves, children, query rows —
+    /// never headers or continuations). `None` on every pointerless
     /// card, so nothing paints without pointer presence.
     pub hovered: Option<usize>,
     /// The one caption (glance-tiles G3, 2026-11-09): the commit
@@ -1188,30 +1204,167 @@ impl OverlayModel {
             .and_then(|row| row.handle)
     }
 
-    /// The row whose reserved hint band contains the device-pixel point
-    /// (`x`, `y`) — `close-window`'s click territory. The same footprint
-    /// [`OverlayModel::row_at`] resolves (the profile's rhythm, the
-    /// query strip's shift), gated to the band the card always reserves
-    /// at the row's right edge and to window rows: a group header never
-    /// offers its band, a continuation row has no window to close, and
-    /// the horizontal card has no close zone at all (its tiles keep
-    /// click-to-activate; Alt+minus closes everywhere). The boundary
-    /// evaluates this at the press and closes the row's own
-    /// event-time handle.
+    /// The row whose close target contains the device-pixel point (`x`,
+    /// `y`) — `close-window`'s click territory. Both axes use the same
+    /// × badge on the icon's top-right corner: a vertical row's icon
+    /// cell (the same footprint [`OverlayModel::row_at`] resolves, the
+    /// profile's rhythm, the query strip's shift, the child indent) or
+    /// a horizontal tile's icon cell (via [`OverlayModel::cell_at`]).
+    /// Both gate to window rows: a group header never offers a close,
+    /// and a continuation row has no window to close. The boundary
+    /// evaluates this at the press and closes the row's own event-time
+    /// handle.
     pub fn close_zone_at(&self, x: f64, y: f64, scale: u32) -> Option<usize> {
         if self.horizontal {
-            return None;
+            let tile = self.cell_at(x, y, scale)?;
+            let left = TILE_PAD_X + tile as u32 * (TILE_W + TILE_GAP);
+            let (zone_left, zone_top, zone_right, zone_bottom) = close_tile_zone(left);
+            let logical_x = x / scale as f64;
+            let logical_y = y / scale as f64;
+            if logical_x < zone_left as f64
+                || logical_x >= zone_right as f64
+                || logical_y < zone_top as f64
+                || logical_y >= zone_bottom as f64
+            {
+                return None; // the tile's icon and title land, or its margins
+            }
+            let row_model = self.rows.get(tile)?;
+            return closeable(row_model).then_some(tile);
         }
         let row = self.row_at(x, y, scale)?;
-        let logical_x = x / scale as f64;
-        let band_left = self.width.saturating_sub(PAD_X + HINT_COLS * TEXT_W) as f64;
-        let band_right = self.width.saturating_sub(PAD_X) as f64;
-        if logical_x < band_left || logical_x >= band_right {
-            return None; // the title's land, or the card's right margin
-        }
         let row_model = self.rows.get(row)?;
-        (row_model.handle.is_some() && row_model.kind != RowKind::Parent).then_some(row)
+        if !closeable(row_model) {
+            return None;
+        }
+        let (zone_left, zone_top, zone_right, zone_bottom) = close_row_zone(self, row)?;
+        let logical_x = x / scale as f64;
+        let logical_y = y / scale as f64;
+        (logical_x >= zone_left as f64
+            && logical_x < zone_right as f64
+            && logical_y >= zone_top as f64
+            && logical_y < zone_bottom as f64)
+            .then_some(row)
     }
+}
+
+/// Whether a row offers the × (`close-window`): a window row — a leaf,
+/// a group child, or a query row — whose handle resolves the window it
+/// closes. Group headers close their app's front window through
+/// Alt+minus but never reveal a pointer target, and a continuation row
+/// has no window at all.
+fn closeable(row: &RowModel) -> bool {
+    row.handle.is_some() && row.kind != RowKind::Parent
+}
+
+/// The × badge's rectangle over an icon cell, logical px: the icon's
+/// top-right corner, where the mark sits on the thumbnail it closes.
+/// Both cards use this one badge — a vertical row's 32-px icon cell and
+/// a horizontal tile's 48-px icon cell — so the affordance is identical
+/// in either layout.
+fn close_badge_rect(icon_left: u32, icon_top: u32, icon_side: u32) -> (u32, u32, u32, u32) {
+    let icon_right = icon_left + icon_side;
+    (
+        icon_right - CLOSE_BADGE,
+        icon_top,
+        icon_right,
+        icon_top + CLOSE_BADGE,
+    )
+}
+
+/// The ×'s click territory over an icon cell, logical px — the badge's
+/// top-right anchor with [`CLOSE_BADGE_HIT`] of forgiveness on the left
+/// and bottom edges, so the small target stays reachable. The badge
+/// paints inside this rectangle.
+fn close_zone_rect(icon_left: u32, icon_top: u32, icon_side: u32) -> (u32, u32, u32, u32) {
+    let icon_right = icon_left + icon_side;
+    (
+        icon_right - CLOSE_BADGE_HIT,
+        icon_top,
+        icon_right,
+        icon_top + CLOSE_BADGE_HIT,
+    )
+}
+
+/// The ×'s click territory on a horizontal tile, logical px — the
+/// tile's icon cell, centred in the slot.
+fn close_tile_zone(left: u32) -> (u32, u32, u32, u32) {
+    close_zone_rect(left + (TILE_W - TILE_ICON) / 2, band_icon_top(), TILE_ICON)
+}
+
+/// The icon cell's top-left corner on a vertical row, logical px — the
+/// row rhythm, the query strip's shift, and the child indent, the same
+/// geometry the renderer paints the icon under. `None` past the model's
+/// rows.
+fn row_icon_origin(model: &OverlayModel, row: usize) -> Option<(u32, u32)> {
+    let row_model = model.rows.get(row)?;
+    let rhythm = model.profile.rhythm;
+    let strip = strip_height(&model.query, rhythm);
+    let top = rhythm.pad_y + strip + row as u32 * (rhythm.row_h + rhythm.row_gap);
+    let indent = (row_model.kind == RowKind::Child) as u32 * TREE_INDENT;
+    Some((PAD_X + indent, top + (rhythm.row_h - ICON) / 2))
+}
+
+/// The ×'s click territory on a vertical row, logical px — the same
+/// badge anchor over the row's icon cell.
+fn close_row_zone(model: &OverlayModel, row: usize) -> Option<(u32, u32, u32, u32)> {
+    let (icon_left, icon_top) = row_icon_origin(model, row)?;
+    Some(close_zone_rect(icon_left, icon_top, ICON))
+}
+
+/// Paints the × badge over an icon already blitted beneath it
+/// (`close-window`): a rounded knockout in the card's own background,
+/// so the mark reads on a colorful thumbnail, with the 8-px × cut in
+/// the text color. Both layouts paint this one badge, which is what
+/// keeps the pointer affordance identical in either direction.
+fn paint_close_badge(
+    canvas: &mut [u8],
+    stride: u32,
+    scale: u32,
+    icon_left: u32,
+    icon_top: u32,
+    icon_side: u32,
+    palette: &Palette,
+) {
+    let (badge_x, badge_y, _, _) = close_badge_rect(icon_left, icon_top, icon_side);
+    // The knockout: the card background over the icon, antialiased on
+    // the badge's corner arcs like every shape in the vocabulary.
+    for ly in badge_y..badge_y + CLOSE_BADGE {
+        for lx in badge_x..badge_x + CLOSE_BADGE {
+            let cov = shape_cov(
+                lx - badge_x,
+                ly - badge_y,
+                CLOSE_BADGE,
+                CLOSE_BADGE,
+                CLOSE_BADGE_RADIUS,
+                0,
+            );
+            if cov == 0 {
+                continue;
+            }
+            for dy in 0..scale {
+                let y = ly * scale + dy;
+                for x in lx * scale..(lx + 1) * scale {
+                    let index = y as usize * stride as usize + x as usize * 4;
+                    if let Some(slot) = canvas.get_mut(index..index + 4) {
+                        let dst = u32::from_le_bytes(slot.try_into().expect("pixel is four bytes"));
+                        let out = mix_pixel(dst, palette.background, cov);
+                        slot.copy_from_slice(&out.to_le_bytes());
+                    }
+                }
+            }
+        }
+    }
+    let glyph_x = badge_x + (CLOSE_BADGE - GLYPH_W * CLOSE_BADGE_SCALE) / 2;
+    let glyph_y = badge_y + (CLOSE_BADGE - GLYPH_H * CLOSE_BADGE_SCALE) / 2;
+    draw_glyph(
+        canvas,
+        stride,
+        CLOSE_GLYPH,
+        glyph_x * scale,
+        glyph_y * scale,
+        CLOSE_BADGE_SCALE * scale,
+        palette.text,
+    );
 }
 
 /// The slice of a long eligible list one overlay card shows: where the
@@ -1515,12 +1668,13 @@ pub fn overlay_model_horizontal(
 /// Level-1 rows (app entries and leaves) hint their Ctrl+N chord by
 /// position among level 1; children hint nothing (rev 5 — the Alt+N
 /// chords are gone with the digits freed for the query). A parent's
-/// badge counts its app's frozen windows and its chevron states the
+/// pips count its app's frozen windows and its caret states the
 /// expansion the caller passed — expanded iff its children follow it
-/// in `visible`. Width derives
-/// from the visible rows' widest title plus the child indent and
-/// parent badge, so the card is stable under stepping and breathes
-/// only when the user expands or collapses. Returns `None` when
+/// in `visible`. Width derives from the visible rows' widest title
+/// plus the child indent and the parent's caret terrace, so the card is
+/// stable under stepping and breathes only when the user expands or
+/// collapses. The pips themselves sit in the row's bottom padding and
+/// spend no width. Returns `None` when
 /// nothing is visible or the selection is not on a visible row.
 // Eleven render inputs — the text backend joined the flat builder's
 // seam one level deeper (its note).
@@ -1585,9 +1739,9 @@ pub fn overlay_model_grouped(
                     // The parent's label is its app_id — the icon
                     // cache's own identity (spec OQ default; a
                     // desktop-entry display name is a cosmetic
-                    // follow-up); the badge counts the app's frozen
+                    // follow-up); the pips count the app's frozen
                     // windows, expanded state included in the card
-                    // only through the chevron. The label composes
+                    // only through the caret. The label composes
                     // with no app_id fallback — the grouping tree only
                     // parents non-empty app_ids.
                     let hint = RowHint::ctrl(ordinal);
@@ -1755,7 +1909,7 @@ pub fn overlay_model_grouped_horizontal(
 /// through the real font and pixel-budgets it — real glyphs, real
 /// accents, fallback chains — with the kind's extras paid out of the
 /// same [`MAX_COLS`] × [`TEXT_W`] territory (the child indent and the
-/// parent badge always fit, exactly as the column caps paid for them).
+/// parent's caret always fit, exactly as the column caps paid for them).
 fn compose_title(
     title: &str,
     app_id: &str,
@@ -1777,19 +1931,19 @@ fn compose_title(
         TextBackend::Bitmap => {
             let cap = match kind {
                 RowKind::Child => MAX_COLS - TREE_INDENT / TEXT_W,
-                RowKind::Parent => MAX_COLS - BADGE_COLS,
+                RowKind::Parent => MAX_COLS - CHEVRON_COLS,
                 RowKind::Leaf => MAX_COLS,
             };
             let folded = truncate_cols(fold_title(&label(title)), cap);
             let band = folded.chars().count() as u32 * TEXT_W
                 + (kind == RowKind::Child) as u32 * TREE_INDENT
-                + (kind == RowKind::Parent) as u32 * BADGE_COLS * TEXT_W;
+                + (kind == RowKind::Parent) as u32 * CHEVRON_COLS * TEXT_W;
             (folded, band)
         }
         TextBackend::System { system, query } => {
             let extras = match kind {
                 RowKind::Child => TREE_INDENT,
-                RowKind::Parent => BADGE_COLS * TEXT_W,
+                RowKind::Parent => CHEVRON_COLS * TEXT_W,
                 RowKind::Leaf => 0,
             };
             let budget = (MAX_COLS * TEXT_W - extras) as f32;
@@ -2341,15 +2495,23 @@ pub fn render(
                 );
             }
         }
+        // The × reveal (`close-window`): pointer presence on a window
+        // row claims the icon's top-right corner — the same knockout
+        // badge the horizontal tiles paint, so the affordance is one
+        // vocabulary on both cards. Headers and continuations never
+        // reveal, whatever the pointer does.
+        if model.hovered == Some(index) && closeable(row) {
+            paint_close_badge(canvas, stride, scale, cell_x, cell_y, ICON, palette);
+        }
         // Title: vertically centered against the row, stopping at the
         // title band's right edge — the hint's territory is its own, so
         // even a max-cols title can never touch a hint (the model sizes
         // for the band; the edge guard is the defense in depth). The
-        // match also fixes the row's text line for the chip and hint
-        // below: on Bitmap that is the TEXT_H cell's top y, on System
-        // the shaped run's baseline — each backend's own anchor — and
-        // `title_end` is where the title's ink stopped (the chip's
-        // clearing measures from it).
+        // match also fixes the row's text line for the hint below: on
+        // Bitmap that is the TEXT_H cell's top y, on System the shaped
+        // run's baseline — each backend's own anchor — and `title_end`
+        // is where the title's ink stopped (the caret's clearing
+        // measures from it).
         let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * TEXT_W);
         let title_x = cell_x + ICON + ICON_GAP;
         let (text_line_y, title_end) = match &mut text {
@@ -2391,97 +2553,24 @@ pub fn render(
                 (baseline, title_x + run.width_px.ceil() as u32)
             }
         };
-        // Parent count chip and disclosure chevron — re-pinned
-        // 2026-11-08 (owner, in-thread) for prominence after the muted
-        // `x3` text and `>`/`v` glyphs proved unnoticeable. The chip is
-        // a pill filled with the text color, the bare window count cut
-        // out in the card's own background — the palette's pair, so it
-        // reads on both polarities with no new color — one BADGE_GAP
-        // clear of the title, inside the BADGE_COLS budget the model
-        // reserves for it (the fit guard is defense in depth, the
-        // title guard's precedent). The chevron is a solid triangle in
-        // the same full text color — right when collapsed, down when
-        // expanded — CHEVRON_SCALE-sized on the row's midline, in the
-        // hint-gap column every card already reserves. Leaves and
-        // children earn neither.
+        // Parent count pips and disclosure caret. The pips are the
+        // horizontal tiles' count vocabulary (glance-tiles G2), adapted
+        // below the app name: up to three muted squares, saturating,
+        // never a fill shape, sitting in the row's own bottom padding
+        // (the 4-px clearing above them falls out of the centered text
+        // line at every density). Re-pinned 2026-11-09 (owner,
+        // in-thread) from the numeric count chip and then from the
+        // inline pips — the count no longer spends title width. The
+        // caret stays on the title line: an 8-px, two-pixel-stroke
+        // mark one CHEVRON_GAP after the title's ink, right when
+        // collapsed and down when expanded (the 16-px solid wedge
+        // floated in the hint-gap column and read as a play button;
+        // re-pinned 2026-11-09). Leaves and children earn neither.
         if row.kind == RowKind::Parent {
-            let digits: Vec<char> = row.count.to_string().chars().take(2).collect();
-            let chip_w = digits.len() as u32 * TEXT_W + 2 * BADGE_PAD_X;
-            let chip_x = title_end + BADGE_GAP;
-            let chip_y = top + (rhythm.row_h - BADGE_H) / 2;
-            if chip_x + chip_w <= title_edge {
-                // The pill: exact rounded-rect coverage, the same
-                // sampler as the selection band and the card corners —
-                // full coverage is the exact text color over whatever
-                // sits beneath (band or card).
-                for ly in chip_y..chip_y + BADGE_H {
-                    for dy in 0..scale {
-                        let y = ly * scale + dy;
-                        for cx in chip_x..chip_x + chip_w {
-                            let cov = shape_cov(
-                                cx - chip_x,
-                                ly - chip_y,
-                                chip_w,
-                                BADGE_H,
-                                BADGE_RADIUS,
-                                0,
-                            );
-                            if cov == 0 {
-                                continue;
-                            }
-                            let x0 = cx * scale;
-                            for x in x0..x0 + scale {
-                                let index = y as usize * stride as usize + x as usize * 4;
-                                if let Some(slot) = canvas.get_mut(index..index + 4) {
-                                    let dst = u32::from_le_bytes(
-                                        slot.try_into().expect("pixel is four bytes"),
-                                    );
-                                    let out = mix_pixel(dst, palette.text, cov);
-                                    slot.copy_from_slice(&out.to_le_bytes());
-                                }
-                            }
-                        }
-                    }
-                }
-                // The count digit, centered in the chip and cut out in
-                // the card's own background.
-                match &mut text {
-                    TextBackend::Bitmap => {
-                        let digit_x = chip_x + (chip_w - digits.len() as u32 * TEXT_W) / 2;
-                        let digit_y = chip_y + (BADGE_H - TEXT_H) / 2;
-                        let mut dx = digit_x;
-                        for ch in digits {
-                            draw_glyph(
-                                canvas,
-                                stride,
-                                glyph(ch),
-                                dx * scale,
-                                digit_y * scale,
-                                TEXT_W * scale / GLYPH_W,
-                                palette.background,
-                            );
-                            dx += TEXT_W;
-                        }
-                    }
-                    TextBackend::System { system, query } => {
-                        let label: String = digits.into_iter().collect();
-                        let run = system.shape(&label, *query, scale);
-                        let digit_x = chip_x + (chip_w - run.width_px.ceil() as u32) / 2;
-                        let baseline =
-                            chip_y + crate::text::centering(run.ascent_px, run.descent_px, BADGE_H);
-                        paint_run(
-                            system,
-                            &run,
-                            canvas,
-                            stride,
-                            scale,
-                            palette.background,
-                            digit_x,
-                            baseline,
-                            chip_x + chip_w,
-                        );
-                    }
-                }
+            if row.count >= 2 {
+                let pips = row.count.min(3) as u32;
+                let pip_y = top + rhythm.row_h - rhythm.row_pad_y - PIP_SIDE;
+                paint_pips(canvas, stride, scale, title_x, pip_y, pips, palette.muted);
             }
             let chevron = if row.expanded {
                 CHEVRON_DOWN_GLYPH
@@ -2489,49 +2578,32 @@ pub fn render(
                 CHEVRON_RIGHT_GLYPH
             };
             let side = GLYPH_W * CHEVRON_SCALE;
-            let chevron_x = title_edge + (HINT_GAP - side) / 2;
-            let chevron_y = top + (rhythm.row_h - side) / 2;
-            draw_glyph(
-                canvas,
-                stride,
-                chevron,
-                chevron_x * scale,
-                chevron_y * scale,
-                CHEVRON_SCALE * scale,
-                palette.text,
-            );
+            let chevron_x = title_end + CHEVRON_GAP;
+            // Defense in depth: the model's CHEVRON_COLS reservation
+            // already funds the caret and its clearing, so only a
+            // hand-built over-budget model ever clips it.
+            if chevron_x + side <= title_edge {
+                let chevron_y = top + (rhythm.row_h - side) / 2;
+                draw_glyph(
+                    canvas,
+                    stride,
+                    chevron,
+                    chevron_x * scale,
+                    chevron_y * scale,
+                    CHEVRON_SCALE * scale,
+                    palette.text,
+                );
+            }
         }
-        // The × reveal (`close-window`): pointer presence on a window
-        // row claims the reserved band for this row — the row's own
-        // hint label yields it — and paints the close affordance there,
-        // right-aligned like the labels, centered on the row's midline
-        // like the disclosure marks, in the full text color: an action
-        // target, not metadata. Headers and continuations never
-        // reveal, whatever the pointer does.
-        let close_revealed =
-            model.hovered == Some(index) && row.handle.is_some() && row.kind != RowKind::Parent;
-        if close_revealed {
-            let side = GLYPH_W * CLOSE_SCALE;
-            let close_x = lw.saturating_sub(PAD_X + side);
-            let close_y = top + (rhythm.row_h - side) / 2;
-            draw_glyph(
-                canvas,
-                stride,
-                CLOSE_GLYPH,
-                close_x * scale,
-                close_y * scale,
-                CLOSE_SCALE * scale,
-                palette.text,
-            );
-        }
-        // Hint: the row's own number chord, right-aligned in the band
+        // Hint: the row's own number digit, right-aligned in the band
         // the card always reserves and vertically centered on the
         // titles' own line (`text_line_y`: the Bitmap cell top, the
         // System baseline). Rows past nine paint nothing — every
         // displayed hint is a wired key (the model's [`RowHint`] is
-        // that truth's single source, paired with `key_input`). A
-        // hovered window row yields its band to the × above.
-        if !close_revealed && let Some(label) = row.hint.map(RowHint::label) {
+        // that truth's single source, paired with `key_input`). The
+        // digit stays put under pointer presence: the × lives on the
+        // icon now, in its own corner, and never takes the band.
+        if let Some(label) = row.hint.map(RowHint::digit) {
             let band_right = lw.saturating_sub(PAD_X);
             match &mut text {
                 TextBackend::Bitmap => {
@@ -2660,7 +2732,7 @@ fn render_band(
             match text {
                 TextBackend::Bitmap => {
                     let dots_x = left + (TILE_W - TEXT_W) / 2;
-                    let dots_y = y0 + TEXT_H + TILE_BADGE_GAP + (TILE_ICON - TEXT_H) / 2;
+                    let dots_y = y0 + TEXT_H + TILE_PARENT_GAP + (TILE_ICON - TEXT_H) / 2;
                     draw_glyph(
                         canvas,
                         stride,
@@ -2676,7 +2748,7 @@ fn render_band(
                     let dots_x = left + (TILE_W - run.width_px.ceil() as u32) / 2;
                     let baseline = y0
                         + TEXT_H
-                        + TILE_BADGE_GAP
+                        + TILE_PARENT_GAP
                         + crate::text::centering(run.ascent_px, run.descent_px, TILE_ICON);
                     paint_run(
                         system,
@@ -2721,7 +2793,7 @@ fn render_band(
         // The icon, centered on its line: a bitmap prepared at
         // TILE_ICON × scale blits 1:1; a mismatched size or a miss
         // draws the generic window glyph (the row cell's rule).
-        let icon_y = y0 + TEXT_H + TILE_BADGE_GAP;
+        let icon_y = y0 + TEXT_H + TILE_PARENT_GAP;
         match tile.icon.as_deref() {
             Some(bitmap) if bitmap.side == TILE_ICON * scale => {
                 blit_bitmap(
@@ -2759,24 +2831,7 @@ fn render_band(
             let pip_y = icon_y + TILE_ICON + PIP_GAP;
             let span = (pips - 1) * PIP_STEP;
             let first_x = left + TILE_W / 2 - span / 2 - PIP_SIDE / 2;
-            for n in 0..pips {
-                for dy in 0..PIP_SIDE {
-                    for dx in 0..PIP_SIDE {
-                        let (lx, ly) = (first_x + n * PIP_STEP + dx, pip_y + dy);
-                        for sy in 0..scale {
-                            for sx in 0..scale {
-                                put_pixel(
-                                    canvas,
-                                    stride,
-                                    lx * scale + sx,
-                                    ly * scale + sy,
-                                    palette.muted,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
+            paint_pips(canvas, stride, scale, first_x, pip_y, pips, palette.muted);
         }
         // The corner badge — the chord's digit alone, the chord's own
         // muted color, top-left of the tile's badge row (CL4-frozen
@@ -2815,6 +2870,23 @@ fn render_band(
                     );
                 }
             }
+        }
+        // The × reveal (`close-window`): pointer presence on a window
+        // tile claims the top-right corner of its icon — the same
+        // knockout badge the vertical rows paint. App tiles (group
+        // headers) and the `…` tile never reveal, whatever the pointer
+        // does; app tiles still close their front window through
+        // Alt+minus.
+        if model.hovered == Some(index) && closeable(tile) {
+            paint_close_badge(
+                canvas,
+                stride,
+                scale,
+                left + (TILE_W - TILE_ICON) / 2,
+                icon_y,
+                TILE_ICON,
+                palette,
+            );
         }
     }
 }
@@ -3034,6 +3106,33 @@ fn draw_glyph(
     }
 }
 
+/// Paints `pips` count squares — [`PIP_SIDE`] on a side, [`PIP_STEP`]
+/// centers apart — starting at `first_x` with their top at `y`, in
+/// `color`. The one count vocabulary shared by the horizontal tiles and
+/// the grouped rows' parent entries.
+fn paint_pips(
+    canvas: &mut [u8],
+    stride: u32,
+    scale: u32,
+    first_x: u32,
+    y: u32,
+    pips: u32,
+    color: u32,
+) {
+    for n in 0..pips {
+        for dy in 0..PIP_SIDE {
+            for dx in 0..PIP_SIDE {
+                let (lx, ly) = (first_x + n * PIP_STEP + dx, y + dy);
+                for sy in 0..scale {
+                    for sx in 0..scale {
+                        put_pixel(canvas, stride, lx * scale + sx, ly * scale + sy, color);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Glyph bitmap for one character: ASCII printables come from [`FONT`],
 /// the ellipsis is [`ELLIPSIS_GLYPH`], typographic punctuation folds to
 /// its ASCII lookalike ([`fold_punct`]), everything else renders as `?`
@@ -3177,8 +3276,8 @@ pub fn display_title(title: &str, app_id: &str) -> String {
 
 /// Caps a title at `cap` columns, marking the cut with `…`. The cap is
 /// [`MAX_COLS`] for flat rows; grouped rows pay for the child indent and
-/// the parent badge out of the same budget, so the card's width ceiling
-/// holds in the tree too.
+/// the parent's caret out of the same budget, so the card's width
+/// ceiling holds in the tree too.
 fn truncate_cols(title: String, cap: u32) -> String {
     if title.chars().count() > cap as usize {
         let keep: String = title.chars().take(cap as usize - 1).collect();
@@ -3990,7 +4089,7 @@ mod tests {
     }
 
     /// The hint band's device pixels for `row`'s band at the rendered()
-    /// scale — where `render` paints a row's `Ctrl+N` chord.
+    /// scale — where `render` paints a row's digit.
     fn hint_band_points(row: usize, width: u32) -> impl Iterator<Item = (u32, u32)> {
         let top = (PAD_Y + row as u32 * (ROW_H + ROW_GAP)) * 2;
         let x0 = (width - PAD_X - HINT_COLS * TEXT_W) * 2;
@@ -4185,12 +4284,14 @@ mod tests {
     }
 
     #[test]
-    fn the_default_profile_renders_the_pre_follow_canvas_bytes() {
+    fn the_default_profile_renders_the_pinned_canvas_bytes() {
         // SC 1's pin, with teeth: the identical scenario rendered
-        // through the profile path at Round + Standard digests to the
-        // canvas captured at GE2 HEAD, when render still read the
-        // constants directly — the factory-default desktop renders
-        // byte-identically to every card shipped before the follow.
+        // through the profile path at Round + Standard digests to a
+        // fixed canvas, so the factory-default desktop's bytes cannot
+        // drift unnoticed. The digest was re-pinned 2026-11-09 with the
+        // hint/chevron pass (bare digits, the inline caret); it is
+        // re-captured whenever a judged design change moves the card,
+        // never to make an accidental change pass.
         let model = overlay_model(
             &digest_snapshot(),
             Handle(1),
@@ -4213,8 +4314,8 @@ mod tests {
             hash = hash.wrapping_mul(0x1000_0000_01b3);
         }
         assert_eq!(
-            hash, 5_825_434_634_195_970_501,
-            "the default-profile render must be the pre-follow bytes"
+            hash, 12_296_646_189_867_322_197,
+            "the default-profile render must be the pinned bytes"
         );
     }
 
@@ -4498,12 +4599,12 @@ mod tests {
         // The research-informed ~600 cap governs the title band; rev 2's
         // recorded decision widens the card by the structural hint band
         // on top of it rather than taxing the column budget. The 11-07
-        // 12-px re-pin keeps the band under the cap (48 × 12 = 576) and
-        // lands the whole card at 748 logical px — the measured pin
-        // PRODUCT.md re-dates from 660.
+        // 12-px re-pin keeps the band under the cap (48 × 12 = 576); the
+        // 2026-11-09 digit re-pin (the full `Ctrl+N` chord → one column)
+        // lands the whole card at 688 logical px, down from 748.
         // (The band cap itself is a compile-time pin beside the other
         // geometry pins.)
-        assert_eq!(model.width, 748, "the measured card width pin");
+        assert_eq!(model.width, 688, "the measured card width pin");
     }
 
     #[test]
@@ -5588,7 +5689,7 @@ mod tests {
         assert_eq!(TILE_W + TILE_GAP, 72, "the ~72-px slot pitch");
         assert_eq!(
             TILE_CELL_H,
-            TEXT_H + TILE_BADGE_GAP + TILE_ICON + PIP_GAP + PIP_SIDE,
+            TEXT_H + TILE_PARENT_GAP + TILE_ICON + PIP_GAP + PIP_SIDE,
             "the cell is badge row + icon + pip territory, no title line"
         );
         for value in [
@@ -5926,7 +6027,7 @@ mod tests {
         let canvas = render_bitmap(&model);
         let muted = Palette::dark().muted;
         let background = Palette::dark().background;
-        let pip_top = band_strip_top() + TEXT_H + TILE_BADGE_GAP + TILE_ICON + PIP_GAP;
+        let pip_top = band_strip_top() + TEXT_H + TILE_PARENT_GAP + TILE_ICON + PIP_GAP;
         let ink_per_pip = PIP_SIDE * PIP_SIDE;
         for (index, &count) in [0, 1, 2, 3, 5].iter().enumerate() {
             let left = TILE_PAD_X + index as u32 * (TILE_W + TILE_GAP);
@@ -6033,7 +6134,7 @@ mod tests {
         assert!(digit_ink > 0, "the digit paints through the system face");
         assert_eq!(tail_ink, 0, "no chord tail beyond the digit");
         // The parent's two pips: solid muted squares at their centers.
-        let pip_top = band_strip_top() + TEXT_H + TILE_BADGE_GAP + TILE_ICON + PIP_GAP;
+        let pip_top = band_strip_top() + TEXT_H + TILE_PARENT_GAP + TILE_ICON + PIP_GAP;
         let center = left + TILE_W / 2;
         let span = PIP_STEP; // two pips: centers one step apart
         for side in [center - span / 2, center + span / 2] {
@@ -6135,7 +6236,8 @@ mod tests {
     #[test]
     fn grouped_model_collapses_by_default_and_lists_all_windows_expanded() {
         // Collapsed (the default): only level-1 rows — the parent entry
-        // carrying its badge, and the leaves under their window titles.
+        // carrying its count pips, and the leaves under their window
+        // titles.
         // Expanded: the parent's whole window set follows as children,
         // front window first, unhinted (rev 5: children carry no
         // chord).
@@ -6257,22 +6359,27 @@ mod tests {
     }
 
     #[test]
-    fn grouped_model_sizes_for_indent_and_badge() {
-        // The card widens for the tree: a child's indent columns and a
-        // parent's count-badge columns join the flat title budget. Same
-        // title lengths everywhere isolate the tree columns.
+    fn grouped_model_sizes_for_indent_and_extras() {
+        // The card widens for the tree: a child's indent and a parent's
+        // caret terrace join the flat title budget. The bands are pixel
+        // measures — the 16-px child indent is not a whole text column.
         let snap = grouped_snap();
         let flat =
             build(&snap, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
         let grouped = build_grouped(&snap, 0, &["app.a"]).expect("eligible windows exist");
-        // Longest flat title is 7 cols; the tree budget is the parent's
-        // 5 title cols + BADGE_COLS, the child's 7 + TREE_INDENT cols.
-        let tree_cols = (5 + BADGE_COLS).max(7 + TREE_INDENT / TEXT_W).max(7);
-        assert_eq!(
-            grouped.width,
-            2 * PAD_X + ICON + ICON_GAP + tree_cols * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
+        let fixed = 2 * PAD_X + ICON + ICON_GAP + HINT_GAP + HINT_COLS * TEXT_W;
+        // Longest flat title is 7 cols ("a-front", "nowhere"); the tree
+        // budget is the parent's 5 title cols + CHEVRON_COLS, against the
+        // child's 7 title cols + TREE_INDENT.
+        let flat_band = 7 * TEXT_W;
+        let parent_band = 5 * TEXT_W + CHEVRON_COLS * TEXT_W;
+        let child_band = 7 * TEXT_W + TREE_INDENT;
+        assert_eq!(flat.width, fixed + flat_band);
+        assert_eq!(grouped.width, fixed + parent_band.max(child_band));
+        assert!(
+            grouped.width > flat.width,
+            "the tree pays for its indent and caret"
         );
-        assert_eq!(flat.width, grouped.width - (tree_cols - 7) * TEXT_W);
     }
 
     #[test]
@@ -6366,128 +6473,216 @@ mod tests {
     }
 
     #[test]
-    fn render_draws_a_solid_chevron_at_full_strength() {
-        // The owner's 2026-11-08 prominence re-pin: the disclosure mark
-        // is a solid triangle in the text color — full strength, not
-        // the hints' muted derivation — CHEVRON_SCALE-sized on the
-        // row's midline in the hint-gap column it already owned.
-        // Collapsed points right, expanded points down; a leaf paints
-        // nothing there.
+    fn render_draws_the_inline_disclosure_caret() {
+        // Re-pinned 2026-11-09 (owner, in-thread): the disclosure mark
+        // is an 8-px, two-pixel-stroke caret in the text color, one
+        // CHEVRON_GAP after the parent's title — inline tree structure,
+        // not the 16-px solid wedge that floated in the
+        // hint-gap column and read as a play button. Collapsed points
+        // right, expanded points down; a leaf paints nothing.
         let collapsed = build_grouped(&grouped_snap(), 3, &[]).expect("eligible windows exist");
         let (canvas, stride) = rendered(&collapsed, 2);
         let side = GLYPH_W * CHEVRON_SCALE;
-        let chev_x = collapsed.width - PAD_X - HINT_GAP - HINT_COLS * TEXT_W;
+        // The parent's "app.a" (5 cols) ends on the text line; the
+        // caret follows one CHEVRON_GAP later. The pips live below the
+        // title and never enter this terrace.
+        let title_end = PAD_X + ICON + ICON_GAP + 5 * TEXT_W;
+        let chev_x = title_end + CHEVRON_GAP;
         let chev_y = PAD_Y + (ROW_H - side) / 2;
-        // Font pixel (col, row) of the chevron cell, in device px.
+        // Font pixel (col, row) of the caret cell, in device px.
         let mark = |col: u32, row: u32| {
             (
                 (chev_x + col * CHEVRON_SCALE) * 2,
                 (chev_y + row * CHEVRON_SCALE) * 2,
             )
         };
-        // The right-pointing wedge: solid along the widest rows from
-        // column 1 (full strength reads as COLOR_TEXT exactly, never
-        // the hints' muted blend), card at the top-right corner.
-        let (x, y) = mark(1, 3);
+        // The right-pointing caret's two-pixel stroke.
+        let (x, y) = mark(2, 1);
         assert_eq!(
             pixel(&canvas, stride, x, y),
             COLOR_TEXT,
-            "collapsed: solid at the widest row's left edge"
+            "collapsed: the upper stroke is text-strong"
         );
-        let (x, y) = mark(6, 3);
+        let (x, y) = mark(4, 3);
         assert_eq!(
             pixel(&canvas, stride, x, y),
             COLOR_TEXT,
-            "collapsed: solid at the widest row's point"
+            "collapsed: the point is text-strong"
         );
-        let (x, y) = mark(6, 1);
+        let (x, y) = mark(0, 0);
         assert_eq!(
             pixel(&canvas, stride, x, y),
             COLOR_BACKGROUND,
-            "collapsed: the top-right corner of the cell stays card"
+            "collapsed: the cell's corner stays card"
         );
-        // A leaf earns no chevron: the whole cell is card.
-        let (x, y) = (mark(1, 3).0, mark(1, 3).1 + 2 * (ROW_H + ROW_GAP) * 2);
+        // A leaf earns no caret: the whole cell is card.
+        let (x, y) = (mark(2, 1).0, mark(2, 1).1 + 2 * (ROW_H + ROW_GAP) * 2);
         assert_eq!(
             pixel(&canvas, stride, x, y),
             COLOR_BACKGROUND,
-            "a leaf paints nothing in the chevron column"
+            "a leaf paints nothing in the caret cell"
         );
 
-        // Expanded: the wedge points down — solid at the bottom point
-        // and along the full top edge, card where the right-pointing
-        // shape had its own ink and vice versa.
+        // Expanded: the caret points down — ink where the right-pointing
+        // stroke was card and vice versa.
         let expanded =
             build_grouped(&grouped_snap(), 3, &["app.a"]).expect("eligible windows exist");
         let (canvas, stride) = rendered(&expanded, 2);
-        let (x, y) = mark(3, 6);
+        let (x, y) = mark(3, 5);
         assert_eq!(
             pixel(&canvas, stride, x, y),
             COLOR_TEXT,
-            "expanded: solid at the down-point's row"
+            "expanded: ink at the down point"
         );
-        let (x, y) = mark(1, 1);
+        let (x, y) = mark(2, 3);
         assert_eq!(
             pixel(&canvas, stride, x, y),
             COLOR_TEXT,
-            "expanded: solid along the full top edge"
+            "expanded: ink along the top arms"
         );
-        let (x, y) = mark(1, 3);
+        let (x, y) = mark(4, 3);
         assert_eq!(
             pixel(&canvas, stride, x, y),
             COLOR_BACKGROUND,
-            "expanded: the mid-height taper keeps the card where the right wedge was solid"
+            "expanded: the right point is card where the collapsed caret was solid"
         );
     }
 
     #[test]
-    fn render_paints_the_count_chip_after_the_title() {
-        // The badge is a chip: a pill filled with the text color, the
-        // bare window count digit cut out in the card's own background
-        // — the palette's pair, so it reads on both polarities — a
-        // BADGE_GAP clear of the title, inside the BADGE_COLS budget
-        // the model reserves. No `x` prefix: the shape carries
-        // "count" (the accessory this re-pin removes).
+    fn render_paints_the_count_pips_below_the_title() {
+        // Re-pinned 2026-11-09 (owner, in-thread): the parent's count is
+        // the horizontal tiles' pip vocabulary, adapted below the app
+        // name — two muted squares for app.a's two windows, in the row's
+        // own bottom padding. The title line keeps the caret and the
+        // hint only; the count spends no title width. No fill shape, no
+        // digit.
         let model = build_grouped(&grouped_snap(), 3, &[]).expect("eligible windows exist");
         let (canvas, stride) = rendered(&model, 2);
-        let title_end = PAD_X + ICON + ICON_GAP + "app.a".chars().count() as u32 * TEXT_W;
-        let chip_x = title_end + BADGE_GAP;
-        let chip_y = PAD_Y + (ROW_H - BADGE_H) / 2;
-        let digits = 1; // the fixture's app.a holds two windows
-        let chip_w = digits * TEXT_W + 2 * BADGE_PAD_X;
-        let mut fill = 0;
-        let mut cut = 0;
-        for y in chip_y * 2..(chip_y + BADGE_H) * 2 {
-            for x in chip_x * 2..(chip_x + chip_w) * 2 {
-                match pixel(&canvas, stride, x, y) {
-                    COLOR_TEXT => fill += 1,
-                    COLOR_BACKGROUND => cut += 1,
-                    _ => {}
-                }
-            }
+        let title_x = PAD_X + ICON + ICON_GAP; // the parent is un-indented
+        let pip_y = PAD_Y + ROW_H - ROW_PAD_Y - PIP_SIDE;
+        let muted = Palette::dark().muted;
+        let pips = 2; // the fixture's app.a holds two windows
+        for n in 0..pips {
+            assert_eq!(
+                pixel(
+                    &canvas,
+                    stride,
+                    (title_x + n * PIP_STEP + PIP_SIDE / 2) * 2,
+                    (pip_y + PIP_SIDE / 2) * 2,
+                ),
+                muted,
+                "pip {n} paints muted"
+            );
         }
+        // The pips sit below the title's text line, not beside it.
+        let text_bottom = PAD_Y + (ROW_H - TEXT_H) / 2 + TEXT_H;
         assert!(
-            fill > 8 * BADGE_H,
-            "the chip paints a solid pill ({fill} px)"
+            pip_y >= text_bottom,
+            "the pips sit below the title's text line"
         );
-        assert!(
-            cut > 2 * TEXT_W,
-            "the digit cuts through the fill in the card color ({cut} px)"
-        );
-        // The chip never crosses the title band's edge: the pixel just
-        // past the reserved budget stays card.
+        // The caret's two-column terrace is all the title line reserves;
+        // the pips never enter it.
+        let title_end = title_x + "app.a".chars().count() as u32 * TEXT_W;
         let edge = model.width - PAD_X - HINT_GAP - HINT_COLS * TEXT_W;
-        let budget_end = title_end + BADGE_COLS * TEXT_W;
-        assert!(budget_end <= edge);
+        assert!(title_end + CHEVRON_COLS * TEXT_W <= edge);
+    }
+
+    #[test]
+    fn count_pips_saturate_at_three() {
+        // Five windows still paint three pips — the band's saturation
+        // rule, now the parent row's too. The fourth pip's slot stays
+        // empty.
+        let snap = snapshot(
+            vec![
+                toplevel(1, "w1", "app.a", &[1], switcher::State::ACTIVATED, 6),
+                toplevel(2, "w2", "app.a", &[1], switcher::State::default(), 5),
+                toplevel(3, "w3", "app.a", &[1], switcher::State::default(), 4),
+                toplevel(4, "w4", "app.a", &[1], switcher::State::default(), 3),
+                toplevel(5, "w5", "app.a", &[1], switcher::State::default(), 2),
+                toplevel(6, "solo", "app.b", &[1], switcher::State::default(), 1),
+            ],
+            Some(1),
+        );
+        let model = build_grouped(&snap, 0, &[]).expect("eligible windows exist");
+        let (canvas, stride) = rendered(&model, 2);
+        let title_x = PAD_X + ICON + ICON_GAP;
+        let pip_y = PAD_Y + ROW_H - ROW_PAD_Y - PIP_SIDE;
+        let muted = Palette::dark().muted;
+        for n in 0..3 {
+            assert_eq!(
+                pixel(
+                    &canvas,
+                    stride,
+                    (title_x + n * PIP_STEP + PIP_SIDE / 2) * 2,
+                    (pip_y + PIP_SIDE / 2) * 2,
+                ),
+                muted,
+                "saturating pip {n} paints muted"
+            );
+        }
         assert_eq!(
             pixel(
                 &canvas,
                 stride,
-                (chip_x + chip_w) * 2,
-                (chip_y + BADGE_H / 2) * 2
+                (title_x + 3 * PIP_STEP + PIP_SIDE / 2) * 2,
+                (pip_y + PIP_SIDE / 2) * 2,
             ),
-            COLOR_BACKGROUND,
-            "the chip ends inside its budget"
+            COLOR_SELECTED_BG,
+            "a fourth pip never paints"
+        );
+    }
+
+    #[test]
+    fn a_max_length_parent_title_keeps_its_pips_and_caret() {
+        // The CHEVRON_COLS budget (2 columns) funds the caret and its
+        // clearing even at the parent cap (MAX_COLS - CHEVRON_COLS);
+        // the pips below the title spend no width. The card stays at
+        // the widest flat width; nothing clips at the title band's
+        // edge.
+        let app = "a".repeat(MAX_COLS as usize + 10);
+        let snap = snapshot(
+            vec![
+                toplevel(1, "front", &app, &[1], switcher::State::ACTIVATED, 2),
+                toplevel(2, "back", &app, &[1], switcher::State::default(), 1),
+            ],
+            Some(1),
+        );
+        let model = build_grouped(&snap, 0, &[]).expect("eligible windows exist");
+        assert_eq!(
+            model.width,
+            2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W,
+            "the parent's extras ride inside the flat title budget"
+        );
+        let (canvas, stride) = rendered(&model, 2);
+        let title_end = PAD_X + ICON + ICON_GAP + (MAX_COLS - CHEVRON_COLS) * TEXT_W;
+        // Count 2 paints two pips below the title; the caret follows
+        // one CHEVRON_GAP after the title's ink.
+        let pip_y = PAD_Y + ROW_H - ROW_PAD_Y - PIP_SIDE;
+        assert_eq!(
+            pixel(
+                &canvas,
+                stride,
+                (PAD_X + ICON + ICON_GAP + PIP_SIDE / 2) * 2,
+                (pip_y + PIP_SIDE / 2) * 2,
+            ),
+            Palette::dark().muted,
+            "the pips paint below a max-length parent title"
+        );
+        let chev_x = title_end + CHEVRON_GAP;
+        let chev_y = PAD_Y + (ROW_H - GLYPH_W * CHEVRON_SCALE) / 2;
+        assert_eq!(
+            pixel(
+                &canvas,
+                stride,
+                (chev_x + 2 * CHEVRON_SCALE) * 2,
+                (chev_y + CHEVRON_SCALE) * 2,
+            ),
+            COLOR_TEXT,
+            "the caret paints at the end of a max-length parent row"
+        );
+        assert!(
+            chev_x + GLYPH_W * CHEVRON_SCALE <= model.width - PAD_X - HINT_GAP - HINT_COLS * TEXT_W,
+            "the caret ends inside the title band"
         );
     }
 
@@ -6954,38 +7149,44 @@ mod tests {
     }
 
     #[test]
-    fn the_close_zone_is_the_hint_band_of_window_rows() {
-        // `close-window`'s pointer affordance: the ×'s click territory
-        // is exactly the band the card always reserves — every row's
-        // right edge, full row height, window rows only. The band's own
-        // boundaries belong to it; one column left of it is the title's
-        // land, and the PAD_X margin past it is nobody's.
+    fn the_close_zone_is_the_window_rows_icon_badge() {
+        // `close-window` on the vertical card: the × sits on the row's
+        // icon, top-right corner — the same badge the horizontal tiles
+        // paint. The badge's own boundaries belong to it; the icon land
+        // below and left of it activates, and the hint band is the
+        // hint's alone.
         let model = hit_model(3);
-        let band_left = (model.width - PAD_X - HINT_COLS * TEXT_W) as f64;
-        let band_right = (model.width - PAD_X) as f64;
-        let mid_row =
-            |row: usize| PAD_Y as f64 + row as f64 * (ROW_H + ROW_GAP) as f64 + ROW_H as f64 / 2.0;
+        let center = |row: usize| {
+            let (left, top, right, bottom) = close_row_zone(&model, row).expect("row");
+            ((left + right) as f64 / 2.0, (top + bottom) as f64 / 2.0)
+        };
         for row in 0..3 {
-            let x = (band_left + band_right) / 2.0;
+            let (x, y) = center(row);
             assert_eq!(
-                model.close_zone_at(x, mid_row(row), 1),
+                model.close_zone_at(x, y, 1),
                 Some(row),
-                "mid-band of row {row}"
+                "row {row}'s × badge"
             );
         }
-        // The band's own edges: first pixel in, last pixel in.
-        assert_eq!(model.close_zone_at(band_left, mid_row(1), 1), Some(1));
+        // The badge's own edges: first pixel in, last pixel in.
+        let (left, top, right, bottom) = close_row_zone(&model, 1).expect("row");
+        assert_eq!(model.close_zone_at(left as f64, top as f64, 1), Some(1));
         assert_eq!(
-            model.close_zone_at(band_right - 0.5, mid_row(1), 1),
+            model.close_zone_at(right as f64 - 0.5, (bottom - 1) as f64, 1),
             Some(1)
         );
-        // One column left of the band, and the right margin past it.
-        assert_eq!(model.close_zone_at(band_left - 0.5, mid_row(1), 1), None);
-        assert_eq!(model.close_zone_at(band_right, mid_row(1), 1), None);
-        // The title's land never closes.
+        // One pixel left of the badge and one below it: icon land.
+        assert_eq!(model.close_zone_at(left as f64 - 0.5, top as f64, 1), None);
         assert_eq!(
-            model.close_zone_at(PAD_X as f64 + ICON as f64, mid_row(1), 1),
+            model.close_zone_at((left + right) as f64 / 2.0, bottom as f64, 1),
             None
+        );
+        // The hint band no longer closes: the pointer there activates.
+        let hint_x = (model.width - PAD_X - HINT_COLS * TEXT_W) as f64 + 1.0;
+        assert_eq!(
+            model.close_zone_at(hint_x, top as f64 + 1.0, 1),
+            None,
+            "the hint band keeps its keyboard-only territory"
         );
     }
 
@@ -6994,14 +7195,14 @@ mod tests {
         // The HiDPI twin of row_at's contract: the same on-screen point
         // names one close zone at both scales.
         let model = hit_model(3);
-        let band_left = (model.width - PAD_X - HINT_COLS * TEXT_W) as f64;
-        let band_right = (model.width - PAD_X) as f64;
+        let (left, top, right, bottom) = close_row_zone(&model, 0).expect("row");
         let probes = [
-            ((band_left + band_right) / 2.0, 36.0),  // mid-band, row 0
-            (band_left - 0.5, 92.0),                 // the title's land
-            (band_left, 148.0),                      // band's first pixel, row 2
-            ((band_left + band_right) / 2.0, 64.0),  // a gap seam
-            ((band_left + band_right) / 2.0, 190.0), // off the card
+            ((left + right) as f64 / 2.0, (top + bottom) as f64 / 2.0),
+            (left as f64, top as f64),
+            (right as f64 - 0.5, bottom as f64 - 0.5),
+            (left as f64 - 0.5, top as f64),
+            (left as f64 + 1.0, bottom as f64),
+            (model.width as f64 / 2.0, 190.0), // off the card
         ];
         for (x, y) in probes {
             assert_eq!(
@@ -7014,30 +7215,29 @@ mod tests {
 
     #[test]
     fn the_close_zone_refuses_headers_and_continuations() {
-        // A group header closes nothing from its band — "close an app"
+        // A group header closes nothing from its icon — "close an app"
         // is not this module — and a continuation affordance has no
         // window to close. Children are window rows like leaves.
         let mut model = hit_model(3);
         model.rows[0].kind = RowKind::Parent;
         model.rows[2].handle = None;
-        let band_mid = |model: &OverlayModel, row: usize| {
-            let y = PAD_Y as f64 + row as f64 * (ROW_H + ROW_GAP) as f64 + ROW_H as f64 / 2.0;
-            let x = (model.width - PAD_X) as f64 - (HINT_COLS * TEXT_W) as f64 / 2.0;
-            (x, y)
+        let center = |model: &OverlayModel, row: usize| {
+            let (left, top, right, bottom) = close_row_zone(model, row).expect("row");
+            ((left + right) as f64 / 2.0, (top + bottom) as f64 / 2.0)
         };
-        let (x, y) = band_mid(&model, 0);
+        let (x, y) = center(&model, 0);
         assert_eq!(
             model.close_zone_at(x, y, 1),
             None,
-            "a header never offers its band"
+            "a header never offers its icon's badge"
         );
-        let (x, y) = band_mid(&model, 1);
+        let (x, y) = center(&model, 1);
         assert_eq!(
             model.close_zone_at(x, y, 1),
             Some(1),
             "a child is a window row"
         );
-        let (x, y) = band_mid(&model, 2);
+        let (x, y) = center(&model, 2);
         assert_eq!(
             model.close_zone_at(x, y, 1),
             None,
@@ -7046,52 +7246,155 @@ mod tests {
     }
 
     #[test]
-    fn the_close_zone_is_the_vertical_cards_affordance() {
-        // The horizontal band keeps click-to-activate: its tiles are
-        // not rows, and Alt+minus already closes everywhere. The zone
-        // resolves nothing on a horizontal model.
-        let mut model = hit_model(3);
-        model.horizontal = true;
-        let y = PAD_Y as f64 + ROW_H as f64 / 2.0;
-        for x in [0.5f64, model.width as f64 / 2.0, model.width as f64 - 0.5] {
+    fn the_close_zone_is_the_horizontal_tiles_icon_badge() {
+        // `close-window` on the band: the ×'s territory is the square
+        // on the tile's icon at its top-right corner — the same badge
+        // the vertical rows paint. The rest of the icon activates as
+        // before, and the zone's own edges belong to it.
+        let model = build_band(&band_snapshot(4), Handle(2), 4, None).expect("builds");
+        assert!(model.horizontal);
+        let zone = |tile: u32| close_tile_zone(TILE_PAD_X + tile * (TILE_W + TILE_GAP));
+        let center = |tile: u32| {
+            let (left, top, right, bottom) = zone(tile);
+            ((left + right) / 2, (top + bottom) / 2)
+        };
+        for tile in 0..4u32 {
+            let (x, y) = center(tile);
+            assert_eq!(
+                model.close_zone_at(x as f64, y as f64, 1),
+                Some(tile as usize),
+                "tile {tile}'s × zone"
+            );
+        }
+        // The zone's own boundaries: first pixel in, last pixel in.
+        let (left, top, right, bottom) = zone(1);
+        assert_eq!(model.close_zone_at(left as f64, top as f64, 1), Some(1));
+        assert_eq!(
+            model.close_zone_at(right as f64 - 0.5, (bottom - 1) as f64, 1),
+            Some(1)
+        );
+        // The icon land left of the zone, the tile's right margin, and
+        // the caption gap above it all leave the tile to activate.
+        assert_eq!(model.close_zone_at(left as f64 - 0.5, top as f64, 1), None);
+        assert_eq!(model.close_zone_at(right as f64, top as f64, 1), None);
+        assert_eq!(
+            model.close_zone_at((left + right) as f64 / 2.0, top as f64 - 1.0, 1),
+            None
+        );
+        // The tile's icon center is activation land.
+        let icon_center = (
+            (TILE_PAD_X + (TILE_W + TILE_GAP) + TILE_W / 2) as f64,
+            (band_strip_top() + TILE_CELL_H / 2) as f64,
+        );
+        assert_eq!(model.close_zone_at(icon_center.0, icon_center.1, 1), None);
+    }
+
+    #[test]
+    fn the_horizontal_close_zone_agrees_between_scale_1_and_scale_2_device_points() {
+        // The HiDPI twin of the band's contract: the same on-screen
+        // point names one close zone at both scales.
+        let model = build_band(&band_snapshot(4), Handle(2), 4, None).expect("builds");
+        let left = TILE_PAD_X + TILE_W + TILE_GAP;
+        let (zone_left, zone_top, zone_right, zone_bottom) = close_tile_zone(left);
+        let probes = [
+            (
+                ((zone_left + zone_right) / 2) as f64,
+                ((zone_top + zone_bottom) / 2) as f64,
+            ),
+            (zone_left as f64, zone_top as f64),
+            (zone_right as f64 - 0.5, zone_bottom as f64 - 0.5),
+            (zone_left as f64 - 0.5, zone_top as f64),
+            (TILE_PAD_X as f64, (band_strip_top() + TILE_CELL_H) as f64),
+        ];
+        for (x, y) in probes {
             assert_eq!(
                 model.close_zone_at(x, y, 1),
-                None,
-                "the band card has no close zone at x={x}"
+                model.close_zone_at(x * 2.0, y * 2.0, 2),
+                "logical ({x}, {y}) must name one zone at both scales"
             );
         }
     }
 
     #[test]
-    fn hover_presence_paints_the_close_glyph_on_window_rows_only() {
-        // Pointer presence is what reveals the ×: a hovered leaf's band
-        // paints text-colored ink it did not carry without the hover,
-        // while a header hovered the same way paints byte-identically
-        // to the pointerless card — the reveal never leaks onto rows
-        // that must not offer a close.
+    fn the_horizontal_close_zone_refuses_app_tiles_and_continuations() {
+        // An app tile closes its front window through Alt+minus but is
+        // not a pointer target ("close an app" is not this module), and
+        // the `…` tile has no window to close. Window tiles — the flat
+        // band's leaves and the open run's children — are the zone.
+        let mut model = build_band(&band_snapshot(4), Handle(2), 4, None).expect("builds");
+        model.rows[0].kind = RowKind::Parent;
+        model.rows[3].handle = None;
+        let center = |tile: u32| {
+            let (left, top, right, bottom) =
+                close_tile_zone(TILE_PAD_X + tile * (TILE_W + TILE_GAP));
+            ((left + right) / 2, (top + bottom) / 2)
+        };
+        let (x, y) = center(0);
+        assert_eq!(
+            model.close_zone_at(x as f64, y as f64, 1),
+            None,
+            "an app tile never offers its ×"
+        );
+        let (x, y) = center(1);
+        assert_eq!(
+            model.close_zone_at(x as f64, y as f64, 1),
+            Some(1),
+            "a window tile offers its ×"
+        );
+        let (x, y) = center(3);
+        assert_eq!(
+            model.close_zone_at(x as f64, y as f64, 1),
+            None,
+            "a continuation tile has no window"
+        );
+    }
+
+    #[test]
+    fn hover_presence_paints_the_close_badge_on_window_rows_only() {
+        // Pointer presence is what reveals the ×: a hovered leaf's icon
+        // gains the badge it did not carry without the hover, while a
+        // header hovered the same way paints byte-identically to the
+        // pointerless card — the reveal never leaks onto rows that must
+        // not offer a close. The hint band stays put: the × lives in
+        // the icon's corner now, never in the chord's territory.
         let palette = Palette::dark();
         let mut model = hit_model(3);
         let base = rendered(&model, 2);
-        // The leaf reveal: row 1's band gains the ×'s ink.
+        // The leaf reveal: row 1's icon gains the badge's ink.
         model.hovered = Some(1);
         let revealed = rendered(&model, 2);
         assert_ne!(revealed.0, base.0, "the hovered leaf paints the ×");
+        let (left, top, right, bottom) = close_row_zone(&model, 1).expect("row");
         let mut inked = false;
-        for (x, y) in hint_band_points(1, model.width) {
-            if pixel(&revealed.0, revealed.1, x, y) == palette.text {
-                inked = true;
-                break;
+        for x in left * 2..right * 2 {
+            for y in top * 2..bottom * 2 {
+                if pixel(&revealed.0, revealed.1, x, y) == palette.text {
+                    inked = true;
+                    break;
+                }
             }
         }
         assert!(inked, "the × paints in the full text color");
-        // Other rows' bands are untouched by row 1's hover.
+        // The hovered row's chord is untouched — the hint no longer
+        // yields to the close affordance.
+        for (x, y) in hint_band_points(1, model.width) {
+            assert_eq!(
+                pixel(&revealed.0, revealed.1, x, y),
+                pixel(&base.0, base.1, x, y),
+                "row 1's hint band changed under its own hover"
+            );
+        }
+        // Other rows' badges are untouched by row 1's hover.
         for row in [0usize, 2] {
-            for (x, y) in hint_band_points(row, model.width) {
-                assert_eq!(
-                    pixel(&revealed.0, revealed.1, x, y),
-                    pixel(&base.0, base.1, x, y),
-                    "row {row}'s band changed under row 1's hover"
-                );
+            let (left, top, right, bottom) = close_row_zone(&model, row).expect("row");
+            for x in left * 2..right * 2 {
+                for y in top * 2..bottom * 2 {
+                    assert_eq!(
+                        pixel(&revealed.0, revealed.1, x, y),
+                        pixel(&base.0, base.1, x, y),
+                        "row {row}'s badge changed under row 1's hover"
+                    );
+                }
             }
         }
         // The refusal: a hovered header paints nothing over the
@@ -7115,19 +7418,64 @@ mod tests {
             dots_base.0,
             "a hovered continuation is byte-identical to no hover"
         );
-        // The pointerless regression floor: no band on the card carries
-        // the ×'s text-colored ink when no row is hovered — the reveal
-        // is pointer presence, never keyboard selection or nothing at
-        // all.
-        for row in 0..3 {
-            for (x, y) in hint_band_points(row, model.width) {
-                assert_ne!(
-                    pixel(&base.0, base.1, x, y),
-                    palette.text,
-                    "row {row}'s band painted × ink without a hover"
-                );
+    }
+
+    #[test]
+    fn hover_presence_paints_the_close_glyph_on_horizontal_window_tiles_only() {
+        // The band's reveal twin: a hovered window tile gains the ×'s
+        // ink in its top-right corner, every other tile is untouched,
+        // and a hovered app tile or `…` tile paints byte-identically
+        // to the pointerless card.
+        let palette = Palette::dark();
+        let mut model = build_band(&band_snapshot(4), Handle(2), 4, None).expect("builds");
+        let base = rendered(&model, 2);
+        model.hovered = Some(1);
+        let revealed = rendered(&model, 2);
+        assert_ne!(revealed.0, base.0, "the hovered tile paints the ×");
+        let (left, top, right, bottom) = close_tile_zone(TILE_PAD_X + TILE_W + TILE_GAP);
+        let mut inked = false;
+        for x in left * 2..right * 2 {
+            for y in top * 2..bottom * 2 {
+                if pixel(&revealed.0, revealed.1, x, y) == palette.text {
+                    inked = true;
+                    break;
+                }
             }
         }
+        assert!(inked, "the × paints in the full text color");
+        // Every other tile's cell is byte-identical under row 1's hover.
+        for tile in [0u32, 2, 3] {
+            let tile_left = TILE_PAD_X + tile * (TILE_W + TILE_GAP);
+            for x in tile_left * 2..(tile_left + TILE_W) * 2 {
+                for y in band_strip_top() * 2..(band_strip_top() + TILE_CELL_H) * 2 {
+                    assert_eq!(
+                        pixel(&revealed.0, revealed.1, x, y),
+                        pixel(&base.0, base.1, x, y),
+                        "tile {tile} changed under tile 1's hover"
+                    );
+                }
+            }
+        }
+        // The refusal: a hovered app tile and a hovered continuation
+        // paint nothing over the pointerless card.
+        let mut app_model = build_band(&band_snapshot(4), Handle(2), 4, None).expect("builds");
+        app_model.rows[0].kind = RowKind::Parent;
+        let app_base = rendered(&app_model, 2);
+        app_model.hovered = Some(0);
+        assert_eq!(
+            rendered(&app_model, 2).0,
+            app_base.0,
+            "a hovered app tile is byte-identical to no hover"
+        );
+        let mut dots_model = build_band(&band_snapshot(4), Handle(2), 4, None).expect("builds");
+        dots_model.rows[3].handle = None;
+        let dots_base = rendered(&dots_model, 2);
+        dots_model.hovered = Some(3);
+        assert_eq!(
+            rendered(&dots_model, 2).0,
+            dots_base.0,
+            "a hovered continuation tile is byte-identical to no hover"
+        );
     }
 
     #[test]
@@ -9079,15 +9427,15 @@ mod tests {
             );
             let hint = RowHint::ctrl(row).expect("rows 1..9 are hinted");
             assert_eq!(
-                hint.label(),
-                format!("Ctrl+{}", row + 1),
-                "row {row}'s label must name its own chord"
+                hint.digit(),
+                format!("{}", row + 1),
+                "row {row}'s digit must name its own chord"
             );
         }
         // The reserved band fits the longest label exactly — nothing
         // spare to misalign, nothing clipped.
-        assert_eq!(RowHint::Ctrl(9).label().len(), HINT_COLS as usize);
-        assert_eq!(MAX_HINTS, 9, "nine wired entries, nine labels");
+        assert_eq!(RowHint::Ctrl(9).digit().len(), HINT_COLS as usize);
+        assert_eq!(MAX_HINTS, 9, "nine wired entries, nine digits");
     }
 
     #[test]

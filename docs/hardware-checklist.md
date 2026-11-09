@@ -89,7 +89,7 @@ binary.
 - [ ] A number key without Ctrl does nothing mid-hold
 - [ ] In an Alt+grave overlay, Ctrl+N addresses the Nth row of that
       application's list
-- [ ] Rows one to nine show `Ctrl+1` … `Ctrl+9` at the right edge,
+- [ ] Rows one to nine show their digits `1` … `9` at the right edge,
       legible on both themes at 100% and 200% scale over a light and a
       dark wallpaper; with ten or more windows, rows beyond the ninth
       show nothing
@@ -260,14 +260,15 @@ binary.
 - [ ] Set `grouping = true` on a workspace with 3+ apps — one
       multi-window, one single-window, and one un-attributable window if
       available: the card opens on collapsed app entries plus top-level
-      rows, each entry carrying a count chip and a right-pointing
-      triangle
+      rows, each entry carrying window-count pips below the app name and
+      an inline right-pointing caret, each row's Ctrl+N key shown as a
+      bare digit at the right edge (children show none)
 - [ ] Tab / Shift+Tab, ↑/↓, and the wheel are one linear walk over the
       visible rows, wrapping: entries, leaves, and expanded groups'
       windows together; the walk lands on an expanded entry like any
       row; Alt+W does nothing
 - [ ] → on an entry expands it and enters — landing one past the window
-      you just left when it is your own app — and the triangle turns
+      you just left when it is your own app — and the caret turns
       down; ← on a child returns to the entry with the group still
       expanded; ← on the expanded entry collapses it
 - [ ] Nothing descends into a collapsed group: a workspace holding a
@@ -332,17 +333,22 @@ binary.
       window dismisses the overlay (nothing left to switch to)
 - [ ] `grouping = true`: Alt+minus on a collapsed entry closes that
       app's front window — the window the entry commits; the card
-      recomposes (the count chip drops by one; the entry itself goes
-      when its last window closes)
-- [ ] Expanded group: the × reveals on child rows under the pointer —
-      never on the entry itself — and clicking a child's × closes that
-      window
-- [ ] The × reveals only while the pointer rests on a window row (the
-      row's key hint yields its band); headers, `…` rows, and the
-      pointerless card never show it
-- [ ] Click split: a click on the × closes; a click anywhere else on
-      the row activates as before; the horizontal band card has no ×
-      (its tiles keep click-to-activate) while Alt+minus still closes
+      recomposes (the count pips follow the count, saturating at three;
+      the entry itself goes when its last window closes)
+- [ ] Expanded group: the × badge reveals on a child row's icon under
+      the pointer — never on the entry itself — and clicking a child's
+      × closes that window
+- [ ] The × reveals only while the pointer rests on a window row's
+      icon; the row's key-hint band stays put (the chord no longer
+      yields), and headers, `…` rows, and the pointerless card never
+      show the badge
+- [ ] Click split: a click on the × badge closes; a click anywhere else
+      on the row (including the rest of the icon) activates as before
+- [ ] Horizontal band and grouped strip: the same × badge reveals on a
+      hovered window tile's icon at its top-right corner, clicking the
+      badge closes that tile's window, and clicking the rest of the
+      icon still activates; app tiles never show the × (Alt+minus still
+      closes their front window), and the `…` tile never shows it
 - [ ] With a standing query: closing a match narrows the card within
       the matches; the query survives the close
 - [ ] A window someone else closes mid-gesture drops off the card the

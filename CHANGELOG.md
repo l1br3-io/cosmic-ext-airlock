@@ -74,15 +74,17 @@ observe, not internal mechanics.
   view — because it narrows the frozen list, and it never re-derives
   that list mid-gesture. See docs/how-it-works.md — Type-to-filter.
 - **Close windows from the card** — Alt+minus (top-row or keypad) closes
-  the selected row's window; hovering a window row reveals an × at its
-  right edge that closes on click, the row's key hint yielding its
-  band. A group entry closes its app's front window — every row closes
-  what it activates. After each close the selection advances to the
-  next visible row and the card stays up for repeated closes; closing
-  the last eligible window dismisses the overlay. Alt+minus works in
-  every mode; the × is the column card's window-row affordance (never
-  group entries or `…` rows). See docs/how-it-works.md — Closing
-  windows.
+  the selected row's window; hovering a window row reveals a small ×
+  badge on its icon's top-right corner that closes on click. The
+  horizontal band and grouped strip paint the same badge on their
+  tiles, so the pointer affordance is identical in either layout; the
+  rest of the row or tile still activates. A group entry closes its app's front window
+  — every row closes what it activates. After each close the selection
+  advances to the next visible row and the card stays up for repeated
+  closes; closing the last eligible window dismisses the overlay.
+  Alt+minus works in every mode; the × is the pointer's window-row and
+  window-tile affordance (never group entries, app tiles, or `…` rows).
+  See docs/how-it-works.md — Closing windows.
 - **A starter config on install**: `airlock install` now drops a fully
   commented `~/.config/airlock/config.toml` — every setting documented,
   nothing enabled, so behavior is unchanged until you uncomment a line.
@@ -91,6 +93,14 @@ observe, not internal mechanics.
 
 ### Changed
 
+- **The grouped tree's marks quieted.** A grouped row now shows a bare
+  digit for its Ctrl+N key — the same digit the horizontal tiles paint —
+  instead of repeating `Ctrl+N` on every row, and the card gives that
+  column back (it narrows by 60 px). An app entry's window count is the
+  horizontal band's pip vocabulary, adapted below the app name: muted
+  dots that saturate at three, with the small caret on the title line
+  replacing the large solid triangle that floated at the card's right
+  edge.
 - **Titles degrade less, stated the same**: Latin accents fold to their
   base letter (`é` → `e`) and dropped combining marks no longer read as
   `?` (a macOS-built `café.txt` shows `cafe.txt`). Punctuation folds as
