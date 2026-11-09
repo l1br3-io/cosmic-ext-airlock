@@ -119,8 +119,11 @@ binary.
       ([settings](settings.md)), the card names the workspace you pressed
       on — small, right-aligned at the card's top — on the vertical card,
       the horizontal band, and the grouped strip
-- [ ] An unnamed workspace shows the synthesized "Workspace N" at the
-      same position an `index = N` rule matches
+- [ ] An unnamed workspace shows the synthesized "🖥️ Workspace N" at
+      the same position an `index = N` rule matches; a workspace whose
+      name is just digits (COSMIC's numeric default) shows the same
+      form carrying its digits, and a named workspace shows its name
+      verbatim
 - [ ] A workspace name long enough to hit its cap truncates with `…` and
       never widens the card; on the horizontal cards a full-length caption
       keeps clear of the label

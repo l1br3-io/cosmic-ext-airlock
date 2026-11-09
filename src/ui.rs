@@ -399,12 +399,14 @@ pub const CAPTION_FLOOR_W: u32 = 512;
 /// [`FONT_SIZE_MIN`], so at the 8-px text size the label paints at the
 /// one size the card has.
 pub const WS_LABEL_STEP: u32 = 2;
-/// The workspace label's ink cap, logical px (workspace-label W2,
-/// 2026-11-09): a name longer than the cap truncates with the real
-/// `…`, and the label never widens the card — it loses to the width
-/// the shapes already chose. Working value; the preview sheet freezes
-/// it (W3).
-pub const WS_LABEL_MAX_W: u32 = 128;
+/// The workspace label's ink cap, in label cells (workspace-label W6,
+/// 2026-11-09 — column-relative since the numbered form grew a
+/// prefix): a name longer than the cap truncates with the real `…`,
+/// and the label never widens the card — it loses to the width the
+/// shapes already chose. Fourteen cells hold the longest synthesized
+/// form, "\u{1f5a5}\u{fe0f} Workspace 12", with room; working value,
+/// the preview sheet freezes it.
+pub const WS_LABEL_MAX_COLS: u32 = 14;
 /// Clearing between the caption's ink zone and the label's, the
 /// caption gap's own double 8-grid step (workspace-label W2,
 /// 2026-11-09) — on the shared line the two never touch.
@@ -1359,7 +1361,7 @@ pub struct OverlayModel {
     pub caption: String,
     /// The workspace label (workspace-label W2, 2026-11-09): the
     /// invoking workspace's name — or its synthesized "Workspace N" —
-    /// truncated to [`WS_LABEL_MAX_W`] with the real `…`. Empty on
+    /// truncated to [`WS_LABEL_MAX_COLS`] with the real `…`. Empty on
     /// every default-off card; when it stands, the vertical cards
     /// reserve its line above the first row and the horizontal caption
     /// composes against the budget its zone takes. Written once at
@@ -2300,7 +2302,7 @@ fn compose_caption_budgeted(
 }
 
 /// The workspace label's composition (workspace-label W2, 2026-11-09):
-/// the invoking workspace's name truncated to [`WS_LABEL_MAX_W`] with
+/// the invoking workspace's name truncated to [`WS_LABEL_MAX_COLS`] with
 /// the real `…` — the caption composer's own vocabulary at the label's
 /// smaller cell — returned with its measured ink width, the zone the
 /// caption's budget loses.
@@ -2313,13 +2315,13 @@ fn compose_workspace(
     let cell = ws_label_cell_at(text_profile.cell());
     match text {
         TextBackend::Bitmap => {
-            let folded = truncate_cols(fold_title(name), WS_LABEL_MAX_W / cell);
+            let folded = truncate_cols(fold_title(name), WS_LABEL_MAX_COLS);
             let width = folded.chars().count() as u32 * cell;
             (folded, width)
         }
         TextBackend::System { system, query } => {
-            let (display, run) =
-                system.shape_budgeted(name, *query, scale, WS_LABEL_MAX_W as f32, cell as f32);
+            let budget = WS_LABEL_MAX_COLS as f32 * cell as f32;
+            let (display, run) = system.shape_budgeted(name, *query, scale, budget, cell as f32);
             (display, run.width_px.ceil() as u32)
         }
     }
@@ -5620,10 +5622,9 @@ mod tests {
     fn with_workspace_truncates_a_long_name_at_its_cap() {
         let mut text = TextBackend::Bitmap;
         let labeled = with_workspace(hit_model(2), &"n".repeat(200), &mut text, 2);
-        let cell = ws_label_cell_at(TEXT_H);
         assert_eq!(
             labeled.workspace.chars().count() as u32,
-            WS_LABEL_MAX_W / cell,
+            WS_LABEL_MAX_COLS,
             "the cap holds, the ellipsis inside it"
         );
         assert!(labeled.workspace.ends_with('\u{2026}'));

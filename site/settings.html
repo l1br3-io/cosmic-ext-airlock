@@ -383,12 +383,16 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       <h2>Show workspace</h2>
       <p><code>show_workspace = true</code> labels the card with the
       workspace you pressed on: its name, small, right-aligned at the
-      card's top. A workspace COSMIC reports with no name gets the
-      synthesized <strong>&#8220;Workspace&#160;N&#8221;</strong> &#8212;
-      the same 1-based position <code>index</code> rules count, so the
-      label and the config name the same workspace the same way. A long
-      name truncates with <code>&#8230;</code>; the label never widens
-      the card.</p>
+      card's top &#8212; used verbatim when it is real words. A
+      workspace whose name is itself just digits (COSMIC's numeric
+      default) or that has no name gets the synthesized
+      <strong>&#128421;&#65039; Workspace&#160;N</strong> &#8212; the
+      digits, or the same 1-based position <code>index</code> rules
+      count, so the label and the config name the same workspace the
+      same way. The emoji paints on the system font face; on a desktop
+      with no loadable fonts the label reads &#8220;Workspace&#160;N&#8221;
+      without it. A long name truncates with
+      <code>&#8230;</code>; the label never widens the card.</p>
       <p>The label answers one question at a glance &#8212; <em>which
       workspace is this card anchored to</em> &#8212; which matters most
       where <code>isolated = false</code> makes the list cross

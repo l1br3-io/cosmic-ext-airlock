@@ -1379,23 +1379,52 @@ fn resolve_scope(snapshot: &Snapshot, settings: &settings::Settings) -> Scope {
         })
 }
 
+/// The label's prefix for numbered workspaces (workspace-label W6,
+/// 2026-11-09): a desktop-computer emoji, the workspace's own visual
+/// vocabulary. It rides the System face only — the bitmap floor's
+/// ASCII fold would paint `?` where it stands, so the derivation drops
+/// it there (the honest degradation the titles already document).
+const WORKSPACE_EMOJI: &str = "\u{1f5a5}\u{fe0f} ";
+
 /// The session's workspace label, derived once at open from the same
 /// lookup the scope resolves by (workspace-label W4, 2026-11-09): the
-/// invoking workspace's compositor name, or the synthesized
-/// "Workspace N" — the 1-based position `index` rules count — when
-/// COSMIC reports none. Empty whenever the setting is off or the
-/// active workspace is unresolvable: no label, the unchanged card.
-fn workspace_label(snapshot: &Snapshot, settings: &settings::Settings) -> String {
+/// invoking workspace's compositor name — verbatim when it is real
+/// words, the synthesized "🖥️ Workspace N" when the name is itself
+/// just digits (COSMIC's numeric default) or the workspace is unnamed
+/// (N the 1-based position `index` rules count). Empty whenever the
+/// setting is off or the active workspace is unresolvable: no label,
+/// the unchanged card.
+fn workspace_label(
+    snapshot: &Snapshot,
+    settings: &settings::Settings,
+    text: crate::text::TextDecision,
+) -> String {
     if !settings.show_workspace {
         return String::new();
     }
-    snapshot
+    let Some(active) = snapshot
         .active
         .and_then(|active| settings::active_workspace(&snapshot.workspaces, active))
-        .map_or_else(String::new, |active| match active.name {
-            Some(name) => name.to_owned(),
-            None => format!("Workspace {}", active.position),
-        })
+    else {
+        return String::new();
+    };
+    let emoji = match text {
+        crate::text::TextDecision::Bitmap => "",
+        crate::text::TextDecision::System { .. } => WORKSPACE_EMOJI,
+    };
+    // The prefix carries its own trailing space: the bitmap floor's
+    // empty prefix leaves no seam.
+    match active.name.map(|name| (name, name.trim())) {
+        // Just digits: the synthesized form carries them.
+        Some((_, digits))
+            if !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            format!("{emoji}Workspace {digits}")
+        }
+        // Real words are the user's own: verbatim.
+        Some((name, _)) => name.to_owned(),
+        None => format!("{emoji}Workspace {}", active.position),
+    }
 }
 
 /// Whether the overlay should close itself right now.
@@ -2031,10 +2060,6 @@ fn step_and_show(
         ),
         None => {
             settings.refresh();
-            // Derived beside the scope from the same active-workspace
-            // lookup — empty whenever the setting is off — and frozen
-            // onto the session below like every open-path value.
-            label = workspace_label(snapshot, &settings.settings);
             // `auto` asks the system once per open — two small file reads
             // at most — and pinned values never touch the disk at all; a
             // present `card`/`text` pair pins the card over every
@@ -2105,6 +2130,11 @@ fn step_and_show(
             let text = resolve_text(session.text_system(), &settings.settings.font, || {
                 crate::theme::interface_font(palette.is_dark)
             });
+            // Derived once the face is known — the numeric-name rule
+            // keys on it (W6) — from the same active-workspace lookup
+            // the scope reads; frozen onto the session below like
+            // every open-path value.
+            label = workspace_label(snapshot, &settings.settings, text.clone());
             (
                 resolve_scope(snapshot, &settings.settings),
                 palette,
@@ -4636,7 +4666,49 @@ mod tests {
             show_workspace: true,
             ..crate::settings::Settings::default()
         };
-        assert_eq!(workspace_label(&snap, &settings), "code");
+        // A real name passes through verbatim on either face.
+        assert_eq!(
+            workspace_label(&snap, &settings, crate::text::TextDecision::Bitmap),
+            "code"
+        );
+        assert_eq!(
+            workspace_label(
+                &snap,
+                &settings,
+                crate::text::TextDecision::System {
+                    family: "Open Sans".to_owned()
+                }
+            ),
+            "code"
+        );
+    }
+
+    #[test]
+    fn the_workspace_label_formats_a_numeric_name() {
+        // COSMIC's numeric default name: the digits carry into the
+        // synthesized form — emoji on the System face, plain on the
+        // bitmap floor (its ASCII fold would paint `?`).
+        let mut snap = labeled_snapshot();
+        snap.workspaces[0].name = "3".to_owned();
+        snap.active = Some(WorkspaceId(1));
+        let settings = crate::settings::Settings {
+            show_workspace: true,
+            ..crate::settings::Settings::default()
+        };
+        assert_eq!(
+            workspace_label(
+                &snap,
+                &settings,
+                crate::text::TextDecision::System {
+                    family: "Open Sans".to_owned()
+                }
+            ),
+            "\u{1f5a5}\u{fe0f} Workspace 3"
+        );
+        assert_eq!(
+            workspace_label(&snap, &settings, crate::text::TextDecision::Bitmap),
+            "Workspace 3"
+        );
     }
 
     #[test]
@@ -4648,7 +4720,21 @@ mod tests {
         // The unnamed second workspace in coordinates order: the same
         // 1-based position `index` rules count.
         assert_eq!(
-            workspace_label(&labeled_snapshot(), &settings),
+            workspace_label(
+                &labeled_snapshot(),
+                &settings,
+                crate::text::TextDecision::System {
+                    family: "Open Sans".to_owned()
+                }
+            ),
+            "\u{1f5a5}\u{fe0f} Workspace 2"
+        );
+        assert_eq!(
+            workspace_label(
+                &labeled_snapshot(),
+                &settings,
+                crate::text::TextDecision::Bitmap
+            ),
             "Workspace 2"
         );
     }
@@ -4656,7 +4742,11 @@ mod tests {
     #[test]
     fn the_workspace_label_stays_empty_when_the_setting_is_off() {
         assert_eq!(
-            workspace_label(&labeled_snapshot(), &crate::settings::Settings::default()),
+            workspace_label(
+                &labeled_snapshot(),
+                &crate::settings::Settings::default(),
+                crate::text::TextDecision::Bitmap
+            ),
             ""
         );
     }
@@ -4669,7 +4759,10 @@ mod tests {
             show_workspace: true,
             ..crate::settings::Settings::default()
         };
-        assert_eq!(workspace_label(&snap, &settings), "");
+        assert_eq!(
+            workspace_label(&snap, &settings, crate::text::TextDecision::Bitmap),
+            ""
+        );
     }
 
     /// Unique disposable directory (no tempfile dependency).
