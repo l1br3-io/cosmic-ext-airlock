@@ -58,6 +58,7 @@ layout = "vertical"    # the tall card; "horizontal" lays it out as tiles
 # width = "auto"       # the card's width floor; "100%" fills the screen, or a pixel count
 # min-width = "auto"   # the card's never-below width; same values as width
 grouping = false       # the flat list (the default); true groups it by app
+# show_workspace = false # label the card with the workspace you pressed on (the default: false)
 
 [[workspace]]
 name = "code"          # matches a workspace COSMIC reports as named "code"
@@ -91,7 +92,9 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       <code>layout</code> the card's axis and <code>columns</code> the
       band's tile budget (see <a href="#layout">Layout</a> and
       <a href="#columns">Columns</a>); <code>grouping</code> the list's
-      shape (see <a href="#grouping">Grouping</a>).</p>
+      shape (see <a href="#grouping">Grouping</a>);
+      <code>show_workspace</code> labels the card with the workspace you
+      pressed on (see <a href="#show-workspace">Show workspace</a>).</p>
     </section>
 
     <section id="referencing-workspaces">
@@ -367,6 +370,28 @@ isolated = false       # Alt+Tab here cycles all windows, MRU</code></pre>
       window while it is collapsed, skipping your own app's other
       windows.</p>
       <p>The <code>rows</code> budget applies to the visible rows.</p>
+    </section>
+    <section id="show-workspace">
+      <h2>Show workspace</h2>
+      <p><code>show_workspace = true</code> labels the card with the
+      workspace you pressed on: its name, small, right-aligned at the
+      card's top. A workspace COSMIC reports with no name gets the
+      synthesized <strong>&#8220;Workspace&#160;N&#8221;</strong> &#8212;
+      the same 1-based position <code>index</code> rules count, so the
+      label and the config name the same workspace the same way. A long
+      name truncates with <code>&#8230;</code>; the label never widens
+      the card.</p>
+      <p>The label answers one question at a glance &#8212; <em>which
+      workspace is this card anchored to</em> &#8212; which matters most
+      where <code>isolated = false</code> makes the list cross
+      workspaces. The card's other lines are unchanged: the caption
+      still names the window <kbd>Enter</kbd> would switch to.</p>
+      <p>The default is <code>false</code>: no label, and the card
+      renders exactly as before. The label is read when a gesture starts
+      like every setting and freezes with the session. A non-boolean
+      value (<code>show_workspace = 1</code>,
+      <code>show_workspace = "yes"</code>) is named in a diagnostic and
+      the last-good settings apply.</p>
     </section>
     <section id="what-isolated-false-changes">
       <h2>What <code>isolated = false</code> changes</h2>

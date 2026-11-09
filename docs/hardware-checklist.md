@@ -113,6 +113,25 @@ binary.
 - [ ] Regression: Alt+Tab still lists every window in scope, not only the
       current application's
 
+### Workspace label
+
+- [ ] With `show_workspace = true`
+      ([settings](settings.md)), the card names the workspace you pressed
+      on — small, right-aligned at the card's top — on the vertical card,
+      the horizontal band, and the grouped strip
+- [ ] An unnamed workspace shows the synthesized "Workspace N" at the
+      same position an `index = N` rule matches
+- [ ] A workspace name long enough to hit its cap truncates with `…` and
+      never widens the card; on the horizontal cards a full-length caption
+      keeps clear of the label
+- [ ] Typing a filter with the label showing keeps both lines (label
+      above the query strip); the no-matches card keeps the label line
+      too, so the card never jumps when the list empties
+- [ ] Editing the setting mid-gesture never repaints the open card; the
+      next press applies it
+- [ ] With the setting off (or removed), every card renders exactly as
+      before — no reserved line, no height change
+
 ### Overlay visuals (icons, card, HiDPI)
 
 - [ ] Six or more applications show their real themed icons in the rows,
