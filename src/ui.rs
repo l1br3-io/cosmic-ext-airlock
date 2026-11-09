@@ -1085,6 +1085,16 @@ pub struct OverlayModel {
     /// — never headers or continuations). `None` on every pointerless
     /// card, so nothing paints without pointer presence.
     pub hovered: Option<usize>,
+    /// The one caption (glance-tiles G3, 2026-11-09): the commit
+    /// target's title — the selected window tile's own title, an app
+    /// tile's MRU-front window's title, the flat band's selected
+    /// window — composed through `display_title` and truncated to the
+    /// card's caption budget with the real `…`. The horizontal cards
+    /// paint it fixed top-center, full text color, never moving with
+    /// the selection; the line is reserved on every frame whether or
+    /// not this holds text. Empty on every vertical card (they paint
+    /// nothing of it).
+    pub caption: String,
 }
 
 impl OverlayModel {
@@ -1413,9 +1423,7 @@ pub fn overlay_model_horizontal(
     palette: &Palette,
     profile: StyleProfile,
     banding: Banding,
-    // The session's frozen backend — unneeded between the per-tile
-    // title's death (glance-tiles G1) and the caption composer (G3).
-    _text: TextBackend<'_>,
+    mut text: TextBackend<'_>,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
     let entries = switcher::eligible(&snapshot.toplevels, active, scope);
@@ -1437,7 +1445,7 @@ pub fn overlay_model_horizontal(
         let toplevel = snapshot.toplevels.iter().find(|t| t.handle == handle)?;
         rows.push(RowModel {
             // The display title unclamped — nothing paints it at the
-            // compact pitch; the caption (G3) reads the selected tile's
+            // compact pitch; the caption reads the selected tile's
             // title and truncates against its own budget.
             title: display_title(&toplevel.title, &toplevel.app_id),
             icon: icons.bitmap(&toplevel.app_id, TILE_ICON, scale, palette),
@@ -1452,17 +1460,30 @@ pub fn overlay_model_horizontal(
     if band.bottom {
         rows.push(continuation_row());
     }
+    // The card is the tile grid: wide-short, the `…` tile inside the
+    // slots (the spec's "card width = N × tile pitch"), floored at the
+    // caption's guarantee. The caption names the selected window —
+    // the commit target of a flat band is always a window.
+    let width = band_width(slots as u32);
+    let caption = compose_caption(
+        rows.iter()
+            .find(|row| row.selected)
+            .map(|row| row.title.as_str())
+            .unwrap_or_default(),
+        width,
+        &mut text,
+        scale,
+    );
     Some(OverlayModel {
         rows,
-        // The card is the tile grid: wide-short, the `…` tile inside
-        // the slots (the spec's "card width = N × tile pitch").
-        width: band_width(slots as u32),
+        width,
         height: band_card_height(),
         viewport: band,
         profile,
         horizontal: true,
         query: None,
         hovered: None,
+        caption,
     })
 }
 
@@ -1629,9 +1650,7 @@ pub fn overlay_model_grouped_horizontal(
     palette: &Palette,
     profile: StyleProfile,
     banding: Banding,
-    // The session's frozen backend — unneeded between the per-tile
-    // title's death (glance-tiles G1) and the caption composer (G3).
-    _text: TextBackend<'_>,
+    mut text: TextBackend<'_>,
 ) -> Option<OverlayModel> {
     let sel = sequence.iter().position(|&index| index == selected)?;
     let window = band_window(sequence.len(), sel, banding.tiles, banding.prev);
@@ -1645,8 +1664,8 @@ pub fn overlay_model_grouped_horizontal(
             .iter()
             .find(|t| t.handle == grow.handle)?;
         // The display title unclamped — nothing paints it at the
-        // compact pitch; the caption (G3) reads the commit target's
-        // title and truncates against its own budget.
+        // compact pitch; the caption reads the commit target's title
+        // and truncates against its own budget.
         let title = match grow.kind {
             RowKind::Parent => display_title(&grow.app_id, ""),
             _ => display_title(&toplevel.title, &toplevel.app_id),
@@ -1669,17 +1688,42 @@ pub fn overlay_model_grouped_horizontal(
     if window.bottom {
         rows.push(continuation_row());
     }
+    // The frozen grid: the daemon's max of the two shapes, whatever
+    // the strip is showing now, floored at the caption's guarantee.
+    let width = band_width(width_slots as u32);
+    // The caption names the commit target: a window tile's own title;
+    // an app tile's MRU-front window's title (committing the app
+    // activates that window — the parent row's handle is that window,
+    // and the tile's own label names the app, not the target).
+    let caption = match rows.iter().find(|row| row.selected) {
+        Some(row) if row.kind == RowKind::Parent => {
+            match snapshot
+                .toplevels
+                .iter()
+                .find(|t| Some(t.handle) == row.handle)
+            {
+                Some(front) => compose_caption(
+                    &display_title(&front.title, &front.app_id),
+                    width,
+                    &mut text,
+                    scale,
+                ),
+                None => String::new(),
+            }
+        }
+        Some(row) => compose_caption(&row.title, width, &mut text, scale),
+        None => String::new(),
+    };
     Some(OverlayModel {
         rows,
-        // The frozen grid: the daemon's max of the two shapes, whatever
-        // the strip is showing now.
-        width: band_width(width_slots as u32),
+        width,
         height: band_card_height(),
         viewport: window,
         profile,
         horizontal: true,
         query: None,
         hovered: None,
+        caption,
     })
 }
 
@@ -1740,6 +1784,21 @@ fn compose_title(
     }
 }
 
+/// The one caption's composition (glance-tiles G3, 2026-11-09): the
+/// commit target's display title, truncated to the card's caption
+/// budget — the card's width minus its horizontal padding — with the
+/// real `…` in both backends (the row composer's truncation
+/// vocabulary, the budget the card instead of a title band).
+fn compose_caption(label: &str, width: u32, text: &mut TextBackend<'_>, scale: u32) -> String {
+    let budget = width - 2 * TILE_PAD_X;
+    match text {
+        TextBackend::Bitmap => truncate_cols(fold_title(label), budget / TEXT_W),
+        TextBackend::System { system, query } => {
+            system.shape_budgeted(label, *query, scale, budget as f32).0
+        }
+    }
+}
+
 /// The builders' shared tail: widest-row sizing, the windowing rule, and
 /// the continuation rows at truncated edges. `sel` indexes `rows`;
 /// `bands` carries each row's title-band width (one per row, the
@@ -1781,6 +1840,9 @@ fn finish_model(
         horizontal: false,
         query: None,
         hovered: None,
+        // Vertical cards paint no caption — the field stays empty and
+        // the horizontal-only paint never sees them.
+        caption: String::new(),
     })
 }
 
@@ -1953,6 +2015,50 @@ pub fn render(
         }
     }
     if model.horizontal {
+        // The one caption (glance-tiles G3, 2026-11-09): the commit
+        // target's title, fixed top-center in the full text color —
+        // the line the card always reserves, empty or not. Centered
+        // ink; the paint loop's edge is the card's own padding,
+        // defense in depth behind the composer's budget.
+        match &mut text {
+            TextBackend::Bitmap => {
+                let ink = model.caption.chars().count() as u32 * TEXT_W;
+                let edge = lw.saturating_sub(TILE_PAD_X);
+                let mut lx = lw.saturating_sub(ink) / 2;
+                for ch in model.caption.chars() {
+                    if lx + TEXT_W > edge {
+                        break;
+                    }
+                    draw_glyph(
+                        canvas,
+                        stride,
+                        glyph(ch),
+                        lx * scale,
+                        TILE_PAD_Y * scale,
+                        TEXT_W * scale / GLYPH_W,
+                        palette.text,
+                    );
+                    lx += TEXT_W;
+                }
+            }
+            TextBackend::System { system, query } => {
+                let run = system.shape(&model.caption, *query, scale);
+                let ink = run.width_px.ceil() as u32;
+                let baseline =
+                    TILE_PAD_Y + crate::text::centering(run.ascent_px, run.descent_px, TEXT_H);
+                paint_run(
+                    system,
+                    &run,
+                    canvas,
+                    stride,
+                    scale,
+                    palette.text,
+                    lw.saturating_sub(ink) / 2,
+                    baseline,
+                    lw.saturating_sub(TILE_PAD_X),
+                );
+            }
+        }
         // One tile renderer, one band top: the flat band and the
         // grouped strip share the single-band paint, starting below
         // the reserved caption line.
@@ -5567,7 +5673,165 @@ mod tests {
             horizontal: true,
             query: None,
             hovered: None,
+            caption: String::new(),
         }
+    }
+
+    // --- glance-tiles: the one caption (G3) -------------------------------
+
+    #[test]
+    fn the_caption_names_the_flat_bands_selected_window() {
+        // The flat band's caption is the selected window's own title —
+        // the window Alt-release would activate.
+        let snap = band_snapshot(4);
+        let model = build_band(&snap, Handle(2), 4, None).expect("builds");
+        assert_eq!(model.caption, "W02");
+        let stepped = build_band(&snap, Handle(3), 4, None).expect("builds");
+        assert_eq!(
+            stepped.caption, "W03",
+            "the caption follows the selection's target"
+        );
+    }
+
+    #[test]
+    fn the_caption_names_the_app_tiles_mru_front_window() {
+        // An app tile commits its MRU-front window, so the caption
+        // names that window's title — the icon already names the app;
+        // the tile's own label (`app.a`) is not the commit target's
+        // name.
+        let (snap, closed, _open) = combined_fixture();
+        let model = build_strip(&snap, &closed, 0, 4, 8).expect("builds");
+        assert_eq!(
+            model.rows[0].title, "app.a",
+            "the tile still labels the app"
+        );
+        assert_eq!(
+            model.caption, "a-front",
+            "the caption names the front window"
+        );
+    }
+
+    #[test]
+    fn the_caption_names_a_window_tiles_own_title() {
+        // A window tile's commit target is itself: the caption is its
+        // own title — here the open run's back window.
+        let (snap, _closed, open) = combined_fixture();
+        let model = build_strip(&snap, &open, 2, 4, 8).expect("builds");
+        assert_eq!(model.rows[0].title, "a-front");
+        assert_eq!(
+            model.caption, "a-back",
+            "the selected window tile's own title"
+        );
+    }
+
+    #[test]
+    fn the_caption_falls_back_through_the_display_title_rule() {
+        // The caption composes through `display_title`: a blank title
+        // falls to the app_id, a blank both to `(untitled)` — the same
+        // rule every title on the card follows.
+        let mut snap = band_snapshot(2);
+        let target = snap
+            .toplevels
+            .iter_mut()
+            .find(|t| t.handle == Handle(2))
+            .expect("the fixture window");
+        target.title = String::new();
+        target.app_id = String::new();
+        let model = build_band(&snap, Handle(2), 2, None).expect("builds");
+        assert_eq!(model.caption, UNTITLED);
+    }
+
+    #[test]
+    fn the_caption_truncates_with_a_real_ellipsis_within_the_budget() {
+        // Budget = the card's width minus its horizontal padding; a
+        // longer title ends in the real `…` (both backends), never
+        // past the budget's columns.
+        let mut snap = band_snapshot(1);
+        snap.toplevels[0].title = "W".repeat(120);
+        let model = build_band(&snap, Handle(1), 2, None).expect("builds");
+        let budget_cols = (model.width - 2 * TILE_PAD_X) / TEXT_W;
+        assert!(model.caption.ends_with('…'), "the bitmap floor ellipsizes");
+        assert!(model.caption.chars().count() <= budget_cols as usize);
+        assert!(model.caption.starts_with("WWWW"), "it kept the head");
+        // The System face composes the same budget with its own
+        // metrics: real `…`, within the pixel budget.
+        let mut snap = band_snapshot(1);
+        snap.toplevels[0].title = "W".repeat(120);
+        let mut composer = fixture_text();
+        let model = overlay_model_horizontal(
+            &snap,
+            Handle(1),
+            Scope::CurrentWorkspace,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            StyleProfile::default(),
+            Banding {
+                tiles: 2,
+                prev: None,
+            },
+            TextBackend::System {
+                system: &mut composer,
+                query: crate::text::FontQuery::SansSerif,
+            },
+        )
+        .expect("builds");
+        assert!(model.caption.ends_with('…'), "the system face ellipsizes");
+        assert!(model.caption.starts_with("WWWW"));
+    }
+
+    #[test]
+    fn the_caption_stays_centered_whatever_the_selection() {
+        // Fixed-center (GNOME, KDE, Gala — the record's stability
+        // finding): the caption's ink never moves with the selection.
+        // Two cards differing only in which tile holds the selection
+        // paint byte-identical caption lines.
+        let card = |selected: usize| {
+            let mut model = pip_card(&[0, 1]);
+            model.rows[selected].selected = true;
+            model.caption = "Shared title".to_string();
+            model
+        };
+        let caption_line = |canvas: &[u8]| -> Vec<u8> {
+            let stride = (band_width(2) * 2 * 4) as usize;
+            let y = ((TILE_PAD_Y + TEXT_H / 2) * 2) as usize;
+            canvas[y * stride..(y + 1) * stride].to_vec()
+        };
+        let first = render_bitmap(&card(0));
+        let second = render_bitmap(&card(1));
+        assert_eq!(
+            caption_line(&first),
+            caption_line(&second),
+            "the caption line never moves"
+        );
+    }
+
+    #[test]
+    fn the_caption_paints_top_center_in_both_backends() {
+        // The paint: full text color, centered on the reserved line,
+        // its first ink exactly where centering puts it — and the
+        // caption is the only ink on its line. Proven on the bitmap
+        // floor; the System face paints the same line by the
+        // shape_budgeted twin above.
+        let snap = band_snapshot(4);
+        let model = build_band(&snap, Handle(1), 4, None).expect("builds");
+        let canvas = render_bitmap(&model);
+        let text = Palette::dark().text;
+        let background = Palette::dark().background;
+        let cols = model.caption.chars().count() as u32;
+        let start = (model.width - cols * TEXT_W) / 2;
+        let line_y = TILE_PAD_Y + TEXT_H / 2;
+        let mut ink = 0;
+        for lx in start..start + cols * TEXT_W {
+            ink += u32::from(probe(&canvas, model.width, lx, line_y) == text);
+        }
+        assert!(ink > 0, "the caption's ink paints on its line");
+        // Nothing paints left of the centered start.
+        let mut stray = 0;
+        for lx in TILE_PAD_X..start {
+            stray += u32::from(probe(&canvas, model.width, lx, line_y) != background);
+        }
+        assert_eq!(stray, 0, "the caption is the only ink on its line");
     }
 
     #[test]
@@ -5685,7 +5949,7 @@ mod tests {
         assert_eq!(
             probe(&canvas, model.width, TILE_PAD_X + TILE_W / 2, caption_y),
             background,
-            "the caption line stays the card until the caption paints (G3)"
+            "the caption line never carries the selection fill"
         );
         // The fill follows the strip's own top.
         let mid_cell = band_strip_top() + TILE_CELL_H / 2;
@@ -6574,6 +6838,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            caption: String::new(),
         }
     }
 
@@ -7253,6 +7518,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            caption: String::new(),
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -7292,6 +7558,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            caption: String::new(),
         };
         let (canvas, stride) = rendered(&model, 2);
         let glyph_x = (PAD_X + (ICON - GLYPH_W * GLYPH_SCALE) / 2) * 2;
@@ -7566,6 +7833,7 @@ mod tests {
                 horizontal: false,
                 query: None,
                 hovered: None,
+                caption: String::new(),
             };
             let (canvas, stride) = rendered(&model, 2);
             // A probe column inside the band's horizontal extent, in the
@@ -7629,6 +7897,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            caption: String::new(),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -7663,6 +7932,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            caption: String::new(),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -7711,6 +7981,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            caption: String::new(),
         };
         let (canvas, stride) = rendered(&model, 2);
         let muted = Palette::dark().muted;
@@ -7751,6 +8022,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            caption: String::new(),
         };
         let (canvas, stride) = rendered(&model, 2);
 
@@ -7807,6 +8079,7 @@ mod tests {
             horizontal: false,
             query: None,
             hovered: None,
+            caption: String::new(),
         };
         let (w, h) = (model.width * 2, model.height * 2);
         let stride = w * 4;

@@ -559,6 +559,13 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
         // the strip shows now.
         let open_len = apps.len() + windows.len() - 1;
         let width_slots = apps.len().min(tiles).max(open_len.min(tiles));
+        // The caption names the commit target: the open run's selected
+        // window, the focused app's MRU-front window on a closed app
+        // tile.
+        let caption = match selected {
+            Some((true, position)) => windows[position].to_string(),
+            _ => windows[0].to_string(),
+        };
         OverlayModel {
             rows,
             width: ui::band_width(width_slots as u32),
@@ -568,6 +575,7 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
             horizontal: true,
             query: None,
             hovered: None,
+            caption,
         }
     };
     let editor_windows = [
@@ -705,6 +713,7 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
             horizontal: true,
             query: None,
             hovered: None,
+            caption: list[sel].clone(),
         }
     };
     // The 48-column clamp input: the tile's own budget (eleven columns
@@ -813,6 +822,8 @@ fn windowed(
         viewport,
         profile,
         horizontal: false,
+        // The vertical card paints no caption.
+        caption: String::new(),
         query: None,
         hovered: None,
     }
