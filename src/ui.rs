@@ -299,6 +299,10 @@ pub const PIP_GAP: u32 = 8;
 /// the 200 % VM, a larger reads as a button). Saturates at three pips
 /// (Unity/GNOME/dash-to-dock precedent, research record R4).
 pub const PIP_SIDE: u32 = 4;
+/// Pitch between pip centers, logical px — `PIP_SIDE` plus a 4-px
+/// clear between neighbors; three pips span 20 px centered on the
+/// tile's line (glance-tiles G2, 2026-11-09).
+pub const PIP_STEP: u32 = 8;
 /// The tile's content cell: badge row, icon, pip territory — no title
 /// line. The selection fill's extent; the pip row is structural on
 /// every tile (pips paint only on multi-window app tiles), so the
@@ -338,6 +342,14 @@ pub const fn band_width(slots: u32) -> u32 {
 pub const CAPTION_FLOOR_W: u32 = 512;
 /// Inset of the badge from a tile's side.
 pub const TILE_TEXT_PAD: u32 = 8;
+/// The strip's top edge inside the card: the top padding, the reserved
+/// caption line, and the caption-to-strip gap — the y0 every tile
+/// paints from and the line `cell_at`'s y footprint starts at
+/// (glance-tiles G2, 2026-11-09). The reserved line exists on every
+/// frame whether or not the caption has text.
+pub const fn band_strip_top() -> u32 {
+    TILE_PAD_Y + TEXT_H + CAPTION_GAP
+}
 /// `auto`'s share of the invoking output's logical width — the spec's
 /// ~66 % working range, two thirds exactly; frozen on the CL4 sheet
 /// 2026-11-08.
@@ -985,10 +997,20 @@ impl RowHint {
     }
 
     /// The label the hint band paints, right-aligned in the reserved
-    /// `HINT_COLS` territory.
+    /// `HINT_COLS` territory — the vertical cards' full chord.
     fn label(self) -> String {
         match self {
             RowHint::Ctrl(n) => format!("Ctrl+{n}"),
+        }
+    }
+
+    /// The compact tile's badge label: the bare digit, `1`..`9` —
+    /// "Ctrl+9" is six bitmap columns against the four a 64-px tile
+    /// funds (glance-tiles G2, 2026-11-09). The digit stays wired to
+    /// the same reading-order ordinal `label()` spells out.
+    fn digit(self) -> String {
+        match self {
+            RowHint::Ctrl(n) => n.to_string(),
         }
     }
 }
@@ -1099,8 +1121,11 @@ impl OverlayModel {
     /// the horizontal twin of [`OverlayModel::row_at`]: a surface-local
     /// logical pointer position × render `scale`, the point scaled down
     /// to the model's space. The footprint is the full band height
-    /// (the cell is the unit); tile gaps, card padding, and points off
-    /// the card are `None`.
+    /// (the cell is the unit) below the reserved caption line — the
+    /// caption's line and gap are the top padding's twin (the query
+    /// strip's rule, one axis over): no tile paints there, so nothing
+    /// is addressed from there (glance-tiles G2, 2026-11-09). Tile
+    /// gaps, card padding, and points off the card are `None`.
     pub fn cell_at(&self, x: f64, y: f64, scale: u32) -> Option<usize> {
         let in_card = x >= 0.0
             && y >= 0.0
@@ -1109,8 +1134,11 @@ impl OverlayModel {
         if !in_card {
             return None;
         }
-        // The single band admits every y inside the card (its height is
-        // exactly the cell plus padding); x alone picks the tile.
+        if y < band_strip_top() as f64 * scale as f64 {
+            return None; // the reserved caption line and its gap
+        }
+        // The single band admits every y below the caption (its height
+        // is exactly the cell plus padding); x alone picks the tile.
         let x_px = x / scale as f64 - TILE_PAD_X as f64;
         let pitch = (TILE_W + TILE_GAP) as f64;
         if x_px < 0.0 || x_px >= self.rows.len() as f64 * pitch {
@@ -1926,7 +1954,8 @@ pub fn render(
     }
     if model.horizontal {
         // One tile renderer, one band top: the flat band and the
-        // grouped strip share the single-band paint.
+        // grouped strip share the single-band paint, starting below
+        // the reserved caption line.
         render_band(
             model,
             canvas,
@@ -1935,7 +1964,7 @@ pub fn render(
             scale,
             palette,
             &mut text,
-            TILE_PAD_Y,
+            band_strip_top(),
             &model.rows,
         );
         border_ring(
@@ -2595,10 +2624,41 @@ fn render_band(
         // (glance-tiles G1, 2026-11-09) — the one caption names the
         // commit target; the per-tile title paint died with the
         // title-gap token it rode on.
-        // The corner badge — the chord's own muted color, top-left of
-        // the tile's badge row (CL4-frozen placement, 2026-11-08).
+        // The count pips (glance-tiles G2, 2026-11-09; research record
+        // R4): under the icon, only while the app holds ≥ 2 live
+        // windows, saturating at three — muted squares in their own
+        // territory, never a fill shape, never a corner digit (the
+        // notification-count reading R4 cautions against).
+        if tile.count >= 2 {
+            let pips = tile.count.min(3) as u32;
+            let pip_y = icon_y + TILE_ICON + PIP_GAP;
+            let span = (pips - 1) * PIP_STEP;
+            let first_x = left + TILE_W / 2 - span / 2 - PIP_SIDE / 2;
+            for n in 0..pips {
+                for dy in 0..PIP_SIDE {
+                    for dx in 0..PIP_SIDE {
+                        let (lx, ly) = (first_x + n * PIP_STEP + dx, pip_y + dy);
+                        for sy in 0..scale {
+                            for sx in 0..scale {
+                                put_pixel(
+                                    canvas,
+                                    stride,
+                                    lx * scale + sx,
+                                    ly * scale + sy,
+                                    palette.muted,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // The corner badge — the chord's digit alone, the chord's own
+        // muted color, top-left of the tile's badge row (CL4-frozen
+        // placement, 2026-11-08; digit-only since glance-tiles G2,
+        // 2026-11-09).
         if let Some(hint) = tile.hint {
-            let label = hint.label();
+            let label = hint.digit();
             match text {
                 TextBackend::Bitmap => {
                     let mut lx = left + TILE_TEXT_PAD;
@@ -5446,6 +5506,253 @@ mod tests {
         // The caption's ink budget at the floor: the card's width minus
         // its horizontal padding.
         assert_eq!(CAPTION_FLOOR_W - 2 * TILE_PAD_X, 464);
+    }
+
+    // --- glance-tiles: the tile paints (G2) -------------------------------
+
+    /// Renders `model` with the bitmap backend at scale 2 — the
+    /// tile-paint probes' shared footing.
+    fn render_bitmap(model: &OverlayModel) -> Vec<u8> {
+        let scale = 2u32;
+        let (w, h) = (model.width * scale, model.height * scale);
+        let stride = w * 4;
+        let mut canvas = vec![0u8; (stride * h) as usize];
+        render(
+            model,
+            &mut canvas,
+            w,
+            h,
+            stride,
+            scale,
+            &Palette::dark(),
+            TextBackend::Bitmap,
+        );
+        canvas
+    }
+
+    /// The logical-pixel probe over a scale-2 bitmap canvas.
+    fn probe(canvas: &[u8], lw: u32, lx: u32, ly: u32) -> u32 {
+        let (x, y) = (lx * 2, ly * 2);
+        let index = (y * lw * 2 + x) as usize * 4;
+        u32::from_le_bytes(canvas[index..index + 4].try_into().expect("pixel"))
+    }
+
+    /// A hand-built horizontal card with one tile per `counts` entry —
+    /// kind Parent with that count (Leaf for zero), unselected,
+    /// unhinted, iconless — the pip and badge probes' fixture.
+    fn pip_card(counts: &[usize]) -> OverlayModel {
+        let rows = counts
+            .iter()
+            .map(|&count| RowModel {
+                title: format!("tile {count}"),
+                icon: None,
+                selected: false,
+                handle: Some(Handle(count as u64 + 1)),
+                kind: if count == 0 {
+                    RowKind::Leaf
+                } else {
+                    RowKind::Parent
+                },
+                count,
+                hint: None,
+                expanded: false,
+            })
+            .collect();
+        OverlayModel {
+            rows,
+            width: band_width(counts.len() as u32),
+            height: band_card_height(),
+            viewport: Viewport::default(),
+            profile: StyleProfile::default(),
+            horizontal: true,
+            query: None,
+            hovered: None,
+        }
+    }
+
+    #[test]
+    fn cell_at_skips_the_reserved_caption_line() {
+        // The caption line and its gap are the top padding's twin (the
+        // query strip's rule, one axis over): no tile paints there, so
+        // no click or hover addresses a tile from there. The strip
+        // below answers as always.
+        let snap = band_snapshot(4);
+        let model = build_band(&snap, Handle(1), 4, None).expect("builds");
+        let center_x = (TILE_PAD_X + TILE_W / 2) as f64;
+        assert_eq!(
+            model.cell_at(center_x, (TILE_PAD_Y + TEXT_H / 2) as f64, 1),
+            None,
+            "the caption line addresses nothing"
+        );
+        assert_eq!(
+            model.cell_at(center_x, (TILE_PAD_Y + TEXT_H) as f64, 1),
+            None,
+            "the caption gap addresses nothing"
+        );
+        assert_eq!(
+            model.cell_at(center_x, (band_strip_top() + 1) as f64, 1),
+            Some(0),
+            "the strip answers from its own top"
+        );
+    }
+
+    #[test]
+    fn tile_badges_paint_the_bare_digit_not_the_chord() {
+        // The compact tile's badge is the digit alone: "Ctrl+9" is six
+        // bitmap columns against the four a 64-px tile can fund, so the
+        // corner badge paints `1`..`9` and the chord's words stay on
+        // the vertical cards' hint bands. One column of muted ink in
+        // the badge row, nothing past it.
+        let snap = band_snapshot(4);
+        let model = build_band(&snap, Handle(1), 4, None).expect("builds");
+        let canvas = render_bitmap(&model);
+        let muted = Palette::dark().muted;
+        let badge_top = band_strip_top();
+        for index in 0..3u32 {
+            let left = TILE_PAD_X + index * (TILE_W + TILE_GAP);
+            let first_col = left + TILE_TEXT_PAD;
+            let mut digit_ink = 0;
+            let mut tail_ink = 0;
+            for ly in badge_top..badge_top + TEXT_H {
+                for lx in first_col..first_col + TEXT_W {
+                    digit_ink += u32::from(probe(&canvas, model.width, lx, ly) == muted);
+                }
+                for lx in first_col + TEXT_W..left + TILE_W - TILE_TEXT_PAD {
+                    tail_ink += u32::from(probe(&canvas, model.width, lx, ly) == muted);
+                }
+            }
+            assert!(digit_ink > 0, "tile {index}: the digit paints");
+            assert_eq!(
+                tail_ink, 0,
+                "tile {index}: no chord tail beyond the digit's column"
+            );
+        }
+    }
+
+    #[test]
+    fn count_pips_paint_only_on_multi_window_app_tiles() {
+        // R4's marker: pips under the icon, only while the app holds
+        // ≥ 2 live windows, saturating at three (Unity, GNOME's arrow,
+        // dash-to-dock). Exact pip counts by pixel census in the pip
+        // zone — zero below two, exact to three, saturated past three.
+        let model = pip_card(&[0, 1, 2, 3, 5]);
+        let canvas = render_bitmap(&model);
+        let muted = Palette::dark().muted;
+        let background = Palette::dark().background;
+        let pip_top = band_strip_top() + TEXT_H + TILE_BADGE_GAP + TILE_ICON + PIP_GAP;
+        let ink_per_pip = PIP_SIDE * PIP_SIDE;
+        for (index, &count) in [0, 1, 2, 3, 5].iter().enumerate() {
+            let left = TILE_PAD_X + index as u32 * (TILE_W + TILE_GAP);
+            let mut pips = 0;
+            for ly in pip_top..pip_top + PIP_SIDE {
+                for lx in left..left + TILE_W {
+                    pips += u32::from(probe(&canvas, model.width, lx, ly) == muted);
+                }
+            }
+            let expected = match count {
+                0 | 1 => 0,
+                2 => 2 * ink_per_pip,
+                _ => 3 * ink_per_pip,
+            };
+            assert_eq!(pips, expected, "count {count}: the pip census is exact");
+            // The zone below a pipless tile's icon is the plain card —
+            // the per-tile title line is gone, nothing else paints
+            // there.
+            if count < 2 {
+                assert_eq!(
+                    probe(&canvas, model.width, left + TILE_W / 2, pip_top),
+                    background,
+                    "count {count}: no pip, no title, just the card"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_strip_sits_below_the_reserved_caption_line() {
+        // The card reserves the caption line above the strip (G1's
+        // height formula): the strip's cells start one caption line
+        // and its gap below the top padding, and the selection fill
+        // never enters the reserved line.
+        let snap = band_snapshot(4);
+        let model = build_band(&snap, Handle(1), 4, None).expect("builds");
+        let canvas = render_bitmap(&model);
+        let background = Palette::dark().background;
+        let band = Palette::dark().selected_bg;
+        // The reserved caption line at the selected tile's center
+        // column: card, never fill.
+        let caption_y = TILE_PAD_Y + TEXT_H / 2;
+        assert_eq!(
+            probe(&canvas, model.width, TILE_PAD_X + TILE_W / 2, caption_y),
+            background,
+            "the caption line stays the card until the caption paints (G3)"
+        );
+        // The fill follows the strip's own top.
+        let mid_cell = band_strip_top() + TILE_CELL_H / 2;
+        let inset_x = TILE_PAD_X + TILE_TEXT_PAD / 2;
+        assert_eq!(
+            probe(&canvas, model.width, inset_x, mid_cell),
+            band,
+            "the selected tile fills from the strip's top"
+        );
+    }
+
+    #[test]
+    fn system_tiles_paint_the_digit_and_pips_too() {
+        // Both backends are honest faces of one budget (the module
+        // boundary): the System face paints the same digit-only badge
+        // — no chord tail within two columns of bearings — and the
+        // same solid pip squares under a multi-window app tile.
+        let (snap, closed, _open) = combined_fixture();
+        let model = build_strip(&snap, &closed, 0, 4, 8).expect("builds");
+        let scale = 2u32;
+        let (w, h) = (model.width * scale, model.height * scale);
+        let stride = w * 4;
+        let mut canvas = vec![0u8; (stride * h) as usize];
+        let mut system = fixture_text();
+        render(
+            &model,
+            &mut canvas,
+            w,
+            h,
+            stride,
+            scale,
+            &Palette::dark(),
+            TextBackend::System {
+                system: &mut system,
+                query: crate::text::FontQuery::SansSerif,
+            },
+        );
+        let px = |lx: u32, ly: u32| {
+            let (x, y) = (lx * scale, ly * scale);
+            let index = (y * w + x) as usize * 4;
+            u32::from_le_bytes(canvas[index..index + 4].try_into().expect("pixel"))
+        };
+        let muted = Palette::dark().muted;
+        // Tile 0 (the parent, count 2): the badge row holds digit ink
+        // within the first two columns and no chord tail beyond them.
+        let left = TILE_PAD_X;
+        let badge_top = band_strip_top();
+        let mut digit_ink = 0;
+        let mut tail_ink = 0;
+        for ly in badge_top..badge_top + TEXT_H {
+            for lx in left + TILE_TEXT_PAD..left + TILE_TEXT_PAD + 2 * TEXT_W {
+                digit_ink += u32::from(px(lx, ly) == muted);
+            }
+            for lx in left + TILE_TEXT_PAD + 2 * TEXT_W..left + TILE_W - TILE_TEXT_PAD {
+                tail_ink += u32::from(px(lx, ly) == muted);
+            }
+        }
+        assert!(digit_ink > 0, "the digit paints through the system face");
+        assert_eq!(tail_ink, 0, "no chord tail beyond the digit");
+        // The parent's two pips: solid muted squares at their centers.
+        let pip_top = band_strip_top() + TEXT_H + TILE_BADGE_GAP + TILE_ICON + PIP_GAP;
+        let center = left + TILE_W / 2;
+        let span = PIP_STEP; // two pips: centers one step apart
+        for side in [center - span / 2, center + span / 2] {
+            let pip_x = side - PIP_SIDE / 2;
+            assert_eq!(px(pip_x + PIP_SIDE / 2, pip_top + PIP_SIDE / 2), muted);
+        }
     }
 
     // --- list-viewport: the windowed card (LV2) --------------------------
