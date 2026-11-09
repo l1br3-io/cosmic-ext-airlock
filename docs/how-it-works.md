@@ -75,8 +75,8 @@ selected one. It works in every mode — the flat list, the grouped tree
 (which flattens to its matching windows while a query stands), and the
 same-app view — because it narrows the list the gesture froze, whatever
 its shape. **Ctrl+N** keeps its chord; every other printable key,
-digits included, types — with one carve-out: **grave** in the two-band
-card (grouping on the horizontal layout) steps the selected app's
+digits included, types — with one carve-out: **grave** in the grouped
+strip (grouping on the horizontal layout) steps the selected app's
 windows instead, and types only while a query stands — see
 [Grouping](settings.md#grouping).
 

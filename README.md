@@ -54,12 +54,15 @@ pipeline the COSMIC launcher uses) beside its title.
   and the wheel walk the visible rows linearly — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#grouping)
 - **Grouping on the band** (`grouping = true` with
-  `layout = "horizontal"`) lays the tree out as two stacked bands — app
-  tiles above, the selected app's windows beneath. Tab steps apps; ↓/↑
-  enter and leave the windows; **`** (the key above Tab) opens the
-  selected app's windows on their most recently used one and steps them,
-  wrapping within the app — **Shift+`** backwards. The key does this in
-  this mode only; in every other session it types into the filter
+  `layout = "horizontal"`) lays the tree out as one strip: the selected
+  app's tile is replaced, in place, by its window run. ↓ opens the run
+  and ↑ closes it — the card keeps its width across the two, and an app
+  holds a run only while it has two live windows. Tab steps apps;
+  Left/Right step the visible tiles; **`** (the key above Tab) opens
+  the selected app's windows on their most recently used one and steps
+  them, wrapping within the app — **Shift+`** backwards. The key does
+  this in this mode only; in every other session it types into the
+  filter
 - **Type to filter**: while the card is up, typing narrows it — title or
   app name, case-insensitive, first match selected; Backspace edits,
   Escape clears before it dismisses. Works in every mode

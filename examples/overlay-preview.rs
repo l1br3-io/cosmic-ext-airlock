@@ -142,7 +142,7 @@ fn main() {
             &band_light
         };
         let mut sheet = combined_scenarios(base, icons);
-        // Both polarities judge the two bands, the horizontal family's
+        // Both polarities judge the strip, the horizontal family's
         // rule.
         let other = if base.is_dark {
             ui::Palette::light()
@@ -572,14 +572,14 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
     };
     let editor_windows = [
         "Overview — the design pass",
-        "Renderer — the band split",
-        "Preview sheet — GH2",
-        "Key table — the axis swap",
+        "Renderer — the strip walk",
+        "Preview sheet — the freeze",
+        "Key table — the axis map",
         "Notes",
     ];
     [
-        // Three apps, focus in band 1 on the editor's app tile: band 2
-        // holds its five windows, unselected.
+        // The closed strip: app tiles only, the selection on the
+        // editor's tile mid-list.
         combined(
             &[("Files", 2), ("Editor", 5), ("Terminal", 3)],
             1,
@@ -587,7 +587,9 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
             Some((false, 1)),
             8,
         ),
-        // The same session with band 2 holding the selection, mid-list.
+        // One ↓ later, the same session: the editor's tile replaced in
+        // place by its window run, the selection on the run's front
+        // window — and the card the same width (the freeze).
         combined(
             &[("Files", 2), ("Editor", 5), ("Terminal", 3)],
             1,
@@ -595,15 +597,26 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
             Some((true, 1)),
             8,
         ),
-        // A single-window app focused: band 2 shows its one tile.
+        // The same open run, the selection swept to its last window.
+        combined(
+            &[("Files", 2), ("Editor", 5), ("Terminal", 3)],
+            1,
+            &editor_windows,
+            Some((true, 4)),
+            8,
+        ),
+        // A single-window app among multi-window apps: one tile like
+        // any other — ↓ on it holds the two-window floor (the ≥2 rule)
+        // and commits directly.
         combined(
             &[("Files", 2), ("Notes", 1), ("Terminal", 3)],
             1,
             &["Notes"],
-            None,
+            Some((false, 1)),
             8,
         ),
-        // The truncated edge: `…` in each band at the pinned minimum.
+        // The truncated edge: the run open at the pinned minimum, the
+        // `…` tile spending the last slot.
         combined(
             &[
                 ("Files", 2),
@@ -614,7 +627,7 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
             ],
             1,
             &editor_windows,
-            Some((true, 4)),
+            Some((true, 3)),
             ui::COLUMNS_MIN,
         ),
     ]

@@ -222,7 +222,7 @@ setting keeps its value — back at Comfortable the full budget returns.
 `rows` binds the vertical card only — the band's budget is
 [Columns](#columns). A grouped session (`grouping = true`) renders
 the grouped card; `layout` still binds it: vertical keeps the tall
-tree, horizontal renders the two-band card (see
+tree, horizontal renders the grouped strip (see
 [Grouping](#grouping)).
 
 Like every setting, `layout` is read when a gesture starts. An edit
@@ -280,15 +280,29 @@ The keys re-bind to the tree:
   nothing.
 - **Ctrl+1..9** activates the Nth level-1 entry's window instantly.
 - **`** (the key above Tab) steps the selected app's windows — but only
-  when grouping combines with `layout = "horizontal"`, the two-band
-  card. From an app tile, ` opens that app's windows on their most
+  when grouping combines with `layout = "horizontal"`, the grouped
+  strip. From an app tile, ` opens that app's windows on their most
   recently used one and **Shift+`** on the last; from a window tile it
   steps within the same app, wrapping, never crossing into another.
   Everywhere else the key keeps its filter meaning: it types into the
   query — in the flat and vertical-grouped card always, and in the
-  two-band card while a query stands (a querying session is flat).
+  grouped strip while a query stands (a querying session is flat).
 - Flat mode (`grouping = false`, the default) is unchanged: Tab steps
   rows and ←/→ ride with ↑/↓ as step aliases.
+
+**Grouping on the band** (`layout = "horizontal"`) trades the tree for
+**the strip**: one row of tiles where the selected app's tile is
+replaced, in place, by its window run — nothing sits below, nothing is
+always open. **↓** opens the run on the app's most recently used
+window and **↑** closes it back to the app's tile, and the card keeps
+one width across the two. An app holds a run only while it has at
+least two live windows: **↓** on anything else does nothing, and
+committing that tile activates its one window. **Left/Right** step the
+visible tiles linearly, wrapping — stepping off a run closes it —
+**Tab/Shift+Tab** step app tiles from anywhere, **Ctrl+1..9** address
+the visible tiles in reading order, and Alt+minus keeps the parent
+rule (an app tile closes its front window). The expansion state above
+plays no part here: the strip's shape follows the selection alone.
 
 **The quick tap** — one Tab press with Alt released before the card can
 be read — is the first step of the same walk: your own app's next
@@ -385,6 +399,10 @@ A bad config never breaks switching:
 - Set `layout = "vertical"`; the next Alt+Tab is the tall card again,
   unchanged — and `grouping = true` renders the grouped card, vertical
   whatever `layout` says
+- Set `grouping = true` with `layout = "horizontal"`: the next Alt+Tab
+  is the strip — ↓ opens the selected app's windows in place, ↑ closes
+  them, and the card never changes width between the two; Tab steps
+  apps, Left/Right step the tiles
 - Flip COSMIC's Appearance style (Round / Slightly-Round / Square); the
   next Alt+Tab's corners already match — 12 / 8 / 2 px
 - Flip COSMIC's interface density (Compact / Comfortable / Spacious);
