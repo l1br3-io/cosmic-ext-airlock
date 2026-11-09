@@ -252,55 +252,91 @@ pub const ROWS_SLACK: usize = 2;
 pub const COLUMNS_MIN: usize = 3;
 
 /// Largest `columns` the setting accepts — the ceiling that keeps a
-/// pinned band a glance, not a wall: twelve tiles at the spec's working
-/// pitch (~140–160 px) already spans a 4-K output's logical width.
+/// pinned band a glance, not a wall: twelve tiles at the compact
+/// pitch (glance-tiles G1, 2026-11-09: 72 px a slot) already span half
+/// a 4-K output's logical width.
 pub const COLUMNS_MAX: usize = 12;
 
-// --- The horizontal band's tokens (card-layout; CL4-frozen) -----------
+// --- The horizontal band's tokens (glance-tiles; G1) -------------------
 //
-// Frozen 2026-11-08 on the CL4 sheet — both palettes over both
-// backdrops at native 1×, the acceptance scenarios (1/3/8/12 tiles,
-// the swept mid-band selection, the 48-column clamp, the hint badge
-// over the selection fill; the font8x8 floor judged on the same
-// scenarios) — every value kept as built, the overlay-density
-// precedent: the candidates read calm at glance scale and nothing
-// earned a move.
+// Re-pinned 2026-11-09 (glance-tiles G1) from the CL4-frozen 152-px
+// tiles: the tiles go icon-only at a compact pitch — a 64-px slot, the
+// ~72-px pitch of the research record's candidate geometry, 2.2×
+// denser than CL4 — and the card gains the one caption line that took
+// the per-tile title lines' place. The pip decomposition is the
+// owner's pick the same day (the cell grows a pip territory under the
+// icon so the pips sit in their own space, GNOME-arrow style, never
+// painted over the icon); every value below is the working row the G4
+// preview sheet freezes.
 
-/// One tile's width, logical px — the spec's 140–160 working range on
-/// the 8-grid, frozen on the CL4 sheet 2026-11-08.
-pub const TILE_W: u32 = 152;
+/// One tile's width, logical px — the compact slot of the research
+/// record's candidate geometry (a 48-px icon in a 64-px cell), on the
+/// 8-grid. Re-pinned 2026-11-09 (glance-tiles G1) from CL4's 152.
+pub const TILE_W: u32 = 64;
 /// Gap between tiles: selection fills never merge across it.
 pub const TILE_GAP: u32 = 8;
-/// The tile's app icon side — the spec's ~48 working range, frozen on
-/// the CL4 sheet 2026-11-08 (larger than the row's 32: the tile is the
-/// card's whole content, the row's icon one column of several).
+/// The tile's app icon side — the icon keeps its weight while the tile
+/// sheds its title line (glance-tiles G1, 2026-11-09; larger than the
+/// row's 32: the tile is the card's whole content, the row's icon one
+/// column of several).
 pub const TILE_ICON: u32 = 48;
-/// The band card's horizontal and vertical padding, logical px.
+/// The band card's horizontal padding, logical px.
 pub const TILE_PAD_X: u32 = 24;
-pub const TILE_PAD_Y: u32 = 40;
+/// The band card's vertical padding, logical px. Re-pinned 40 → 32
+/// (glance-tiles G1, 2026-11-09): the caption line and the pip
+/// territory joined the card, and 32 + caption + gap + cell keeps the
+/// working height at exactly 168 — the padding pays for the caption
+/// the title lines used to.
+pub const TILE_PAD_Y: u32 = 32;
 /// Clearing between the badge row and the icon.
 pub const TILE_BADGE_GAP: u32 = 4;
-/// Clearing between the icon and the title line.
-pub const TILE_TITLE_GAP: u32 = 12;
-/// The tile's content cell: badge row, icon, one title line — the
-/// selection fill's extent.
-pub const TILE_CELL_H: u32 = TEXT_H + TILE_BADGE_GAP + TILE_ICON + TILE_TITLE_GAP + TEXT_H;
-/// The horizontal card's height: the tile cell plus the card padding —
-/// 168 logical px, frozen on the CL4 sheet 2026-11-08. Below the
-/// spec's 200–260 working range by sheet judgment: the cell is
-/// content-driven (badge + 48-px icon + title = 88) and padding past
-/// 40 a side reads as dead air at glance scale — the strip hugs its
-/// content.
+/// Clearing between the icon's bottom and the pip row — the pip
+/// territory's breathing half, one 8-grid step (glance-tiles G1,
+/// 2026-11-09: the owner's pip decomposition).
+pub const PIP_GAP: u32 = 8;
+/// One count pip's side, logical px — a 4-px dot, the compact grid's
+/// own half-step (the caret hair's family; a smaller dot vanishes at
+/// the 200 % VM, a larger reads as a button). Saturates at three pips
+/// (Unity/GNOME/dash-to-dock precedent, research record R4).
+pub const PIP_SIDE: u32 = 4;
+/// The tile's content cell: badge row, icon, pip territory — no title
+/// line. The selection fill's extent; the pip row is structural on
+/// every tile (pips paint only on multi-window app tiles), so the
+/// cell never varies per tile.
+pub const TILE_CELL_H: u32 = TEXT_H + TILE_BADGE_GAP + TILE_ICON + PIP_GAP + PIP_SIDE;
+/// Clearing between the caption line and the strip's badge row, two
+/// 8-grid steps (glance-tiles G1, 2026-11-09).
+pub const CAPTION_GAP: u32 = 16;
+/// The horizontal card's height: the caption line, its gap, the tile
+/// cell, and the card padding — 168 logical px exactly, the working
+/// target the G4 sheet freezes (glance-tiles G1, 2026-11-09): the
+/// caption line (12) + its gap (16) take the per-tile title lines'
+/// place (12 + 12) and the padding pays the difference (40 → 32).
 pub const fn band_card_height() -> u32 {
-    2 * TILE_PAD_Y + TILE_CELL_H
+    2 * TILE_PAD_Y + TEXT_H + CAPTION_GAP + TILE_CELL_H
 }
 /// The band card's width: `slots` tiles plus gaps inside the padding —
 /// the `…` tile lives inside these slots, so the card never widens for
-/// it.
+/// it — floored at [`CAPTION_FLOOR_W`] so a short strip's caption
+/// still reads at a glance. The flat band and the grouped strip join
+/// the same floor; tiles stay left-aligned in a floored width.
 pub const fn band_width(slots: u32) -> u32 {
-    2 * TILE_PAD_X + slots * TILE_W + slots.saturating_sub(1) * TILE_GAP
+    let shape = 2 * TILE_PAD_X + slots * TILE_W + slots.saturating_sub(1) * TILE_GAP;
+    if shape > CAPTION_FLOOR_W {
+        shape
+    } else {
+        CAPTION_FLOOR_W
+    }
 }
-/// Inset of the badge and the clamped title from a tile's side.
+/// The width floor every horizontal card carries, logical px — the
+/// caption's guarantee: the spec's ≥ 40-bitmap-column sizing target at
+/// the ~512 working estimate, on the 8-grid (glance-tiles G1,
+/// 2026-11-09). At the floor the caption's ink budget (width minus
+/// the card's horizontal padding) is 464 px ≈ 38 bitmap columns; the
+/// 528 that buys the full 40 is the G4 sheet's call, judged beside a
+/// floored three-tile card's air.
+pub const CAPTION_FLOOR_W: u32 = 512;
+/// Inset of the badge from a tile's side.
 pub const TILE_TEXT_PAD: u32 = 8;
 /// `auto`'s share of the invoking output's logical width — the spec's
 /// ~66 % working range, two thirds exactly; frozen on the CL4 sheet
@@ -1326,22 +1362,6 @@ pub fn overlay_model(
     finish_model(rows, sel, windowing, profile, bands)
 }
 
-/// The tile's title: the leaf label clamped to the tile's inner width
-/// — the same display-title and truncation vocabulary as a row title,
-/// the budget one tile instead of one row ([`compose_title`]'s shape
-/// with no row-kind extras).
-fn compose_tile_title(title: &str, app_id: &str, text: &mut TextBackend<'_>, scale: u32) -> String {
-    let label = display_title(title, app_id);
-    match text {
-        TextBackend::Bitmap => clamp_tile_title(&label),
-        TextBackend::System { system, query } => {
-            let budget = (TILE_W - 2 * TILE_TEXT_PAD) as f32;
-            let (display, _) = system.shape_budgeted(&label, *query, scale, budget);
-            display
-        }
-    }
-}
-
 /// Builds the horizontal band for `snapshot` with `selected`
 /// highlighted — the flat list as one row of tiles, MRU-first from the
 /// left, windowed by `banding` (the session's resolved tile budget and
@@ -1365,7 +1385,9 @@ pub fn overlay_model_horizontal(
     palette: &Palette,
     profile: StyleProfile,
     banding: Banding,
-    mut text: TextBackend<'_>,
+    // The session's frozen backend — unneeded between the per-tile
+    // title's death (glance-tiles G1) and the caption composer (G3).
+    _text: TextBackend<'_>,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
     let entries = switcher::eligible(&snapshot.toplevels, active, scope);
@@ -1386,7 +1408,10 @@ pub fn overlay_model_horizontal(
         // snapshot.
         let toplevel = snapshot.toplevels.iter().find(|t| t.handle == handle)?;
         rows.push(RowModel {
-            title: compose_tile_title(&toplevel.title, &toplevel.app_id, &mut text, scale),
+            // The display title unclamped — nothing paints it at the
+            // compact pitch; the caption (G3) reads the selected tile's
+            // title and truncates against its own budget.
+            title: display_title(&toplevel.title, &toplevel.app_id),
             icon: icons.bitmap(&toplevel.app_id, TILE_ICON, scale, palette),
             selected: handle == selected,
             handle: Some(handle),
@@ -1576,7 +1601,9 @@ pub fn overlay_model_grouped_horizontal(
     palette: &Palette,
     profile: StyleProfile,
     banding: Banding,
-    mut text: TextBackend<'_>,
+    // The session's frozen backend — unneeded between the per-tile
+    // title's death (glance-tiles G1) and the caption composer (G3).
+    _text: TextBackend<'_>,
 ) -> Option<OverlayModel> {
     let sel = sequence.iter().position(|&index| index == selected)?;
     let window = band_window(sequence.len(), sel, banding.tiles, banding.prev);
@@ -1589,9 +1616,12 @@ pub fn overlay_model_grouped_horizontal(
             .toplevels
             .iter()
             .find(|t| t.handle == grow.handle)?;
+        // The display title unclamped — nothing paints it at the
+        // compact pitch; the caption (G3) reads the commit target's
+        // title and truncates against its own budget.
         let title = match grow.kind {
-            RowKind::Parent => compose_tile_title(&grow.app_id, "", &mut text, scale),
-            _ => compose_tile_title(&toplevel.title, &toplevel.app_id, &mut text, scale),
+            RowKind::Parent => display_title(&grow.app_id, ""),
+            _ => display_title(&toplevel.title, &toplevel.app_id),
         };
         rows.push(RowModel {
             title,
@@ -2561,51 +2591,10 @@ fn render_band(
                 );
             }
         }
-        // The title, one clamped line centered on the tile.
-        let title_y = icon_y + TILE_ICON + TILE_TITLE_GAP;
-        match text {
-            TextBackend::Bitmap => {
-                // Centering saturates at the tile's own edges: a title
-                // longer than the tile (a caller that skipped the
-                // composer's clamp) starts at the inset and stops at
-                // the far edge — the row loop's defense in depth.
-                let ink = tile.title.chars().count() as u32 * TEXT_W;
-                let edge = left + TILE_W - TILE_TEXT_PAD;
-                let mut lx = left + TILE_W.saturating_sub(ink) / 2 + TILE_TEXT_PAD;
-                for ch in tile.title.chars() {
-                    if lx + TEXT_W > edge {
-                        break;
-                    }
-                    draw_glyph(
-                        canvas,
-                        stride,
-                        glyph(ch),
-                        lx * scale,
-                        title_y * scale,
-                        TEXT_W * scale / GLYPH_W,
-                        palette.text,
-                    );
-                    lx += TEXT_W;
-                }
-            }
-            TextBackend::System { system, query } => {
-                let run = system.shape(&tile.title, *query, scale);
-                let ink = run.width_px.ceil() as u32;
-                let baseline =
-                    title_y + crate::text::centering(run.ascent_px, run.descent_px, TEXT_H);
-                paint_run(
-                    system,
-                    &run,
-                    canvas,
-                    stride,
-                    scale,
-                    palette.text,
-                    left + (TILE_W - ink) / 2,
-                    baseline,
-                    left + TILE_W - TILE_TEXT_PAD,
-                );
-            }
-        }
+        // No title line: the tile is icon-only at the compact pitch
+        // (glance-tiles G1, 2026-11-09) — the one caption names the
+        // commit target; the per-tile title paint died with the
+        // title-gap token it rode on.
         // The corner badge — the chord's own muted color, top-left of
         // the tile's badge row (CL4-frozen placement, 2026-11-08).
         if let Some(hint) = tile.hint {
@@ -2978,15 +2967,6 @@ fn fold_diacritic(ch: char) -> Option<char> {
 /// `cafe.txt` render identically by decision, and that is documented
 /// degradation (README, the design skill), not fidelity.
 /// 2026-11-07 typeset pass, the critique's user-approved item.
-/// A tile title on the Bitmap floor: folded, then truncated to the
-/// tile's inner width — the budget the daemon composes with and the
-/// preview sheet builds its bands from (the row card's `MAX_COLS`
-/// clamp, one tile wide).
-pub fn clamp_tile_title(title: &str) -> String {
-    let cap = (TILE_W - 2 * TILE_TEXT_PAD) / TEXT_W;
-    truncate_cols(fold_title(title), cap)
-}
-
 pub fn fold_title(title: &str) -> String {
     title
         .chars()
@@ -2996,8 +2976,11 @@ pub fn fold_title(title: &str) -> String {
 }
 
 /// The title shown for a toplevel: its title if non-blank, else its
-/// app_id, else a placeholder.
-fn display_title(title: &str, app_id: &str) -> String {
+/// app_id, else a placeholder. The horizontal tiles' unclamped label
+/// since glance-tiles G1 (2026-11-09) — nothing paints it at the
+/// compact pitch; the caption composer (G3) reads the commit target's
+/// title through this rule and truncates against its own budget.
+pub fn display_title(title: &str, app_id: &str) -> String {
     if !title.trim().is_empty() {
         title.trim().to_string()
     } else if !app_id.trim().is_empty() {
@@ -5233,14 +5216,14 @@ mod tests {
 
     #[test]
     fn the_band_sizes_wide_and_short() {
-        // The wide-short aspect: width is the tile grid, height one tile
-        // cell plus the card padding — wider than tall at every budget
+        // The wide-short aspect: width is the tile grid floored at the
+        // caption (glance-tiles G1), height the caption line, the tile
+        // cell, and the card padding — wider than tall at every budget
         // the setting accepts, and the `…` tile never widens it.
         let whole = build_band(&band_snapshot(3), Handle(1), 3, None).expect("builds");
         assert_eq!(
-            whole.width,
-            2 * TILE_PAD_X + 3 * TILE_W + 2 * TILE_GAP,
-            "three tiles plus gaps and padding"
+            whole.width, CAPTION_FLOOR_W,
+            "a three-tile shape floored at the caption's guarantee"
         );
         assert_eq!(whole.height, band_card_height());
         let truncated = build_band(&band_snapshot(9), Handle(1), 3, None).expect("builds");
@@ -5263,13 +5246,15 @@ mod tests {
         // Auto: floor of two thirds of the invoking output's logical
         // width over the tile pitch, floored at three — pinned against
         // synthetic outputs, uncapped above (only pinned values cap at
-        // twelve, and the parser enforces that).
-        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 1920), 8);
-        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 1366), 5);
-        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 2560), 10);
-        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 3840), 16);
+        // twelve, and the parser enforces that). The pins re-derived at
+        // the compact pitch (glance-tiles G1, 2026-11-09: 72 px against
+        // CL4's 160 — the same outputs fit 2.2× the tiles).
+        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 1920), 17);
+        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 1366), 12);
+        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 2560), 23);
+        assert_eq!(resolved_tiles(ColumnsSetting::Auto, 3840), 35);
         // Tiny and unknown-width outputs clamp to the floor.
-        for width in [0, 1, 300, 480] {
+        for width in [0, 1, 200, 300] {
             assert_eq!(
                 resolved_tiles(ColumnsSetting::Auto, width),
                 COLUMNS_MIN,
@@ -5397,6 +5382,70 @@ mod tests {
             background,
             "the continuation tile never paints a band"
         );
+    }
+
+    // --- glance-tiles: the compact pitch (G1) -----------------------------
+
+    #[test]
+    fn the_compact_pitch_pins_the_tile_cell() {
+        // The owner-frozen decomposition (2026-11-09): the tile sheds
+        // its title line and shrinks to a 64-px slot — the icon keeps
+        // its 48-px weight — while the cell gains the pip territory
+        // under the icon. Badge row + icon + pips, nothing else; the
+        // slot pitch is the spec's ~72 px; every padding and gap stays
+        // on the 8-grid.
+        assert_eq!(TILE_W, 64, "the compact slot");
+        assert_eq!(TILE_ICON, 48, "the icon keeps its weight");
+        assert_eq!(TILE_W + TILE_GAP, 72, "the ~72-px slot pitch");
+        assert_eq!(
+            TILE_CELL_H,
+            TEXT_H + TILE_BADGE_GAP + TILE_ICON + PIP_GAP + PIP_SIDE,
+            "the cell is badge row + icon + pip territory, no title line"
+        );
+        for value in [
+            TILE_W,
+            TILE_GAP,
+            TILE_PAD_X,
+            TILE_PAD_Y,
+            CAPTION_GAP,
+            CAPTION_FLOOR_W,
+        ] {
+            assert_eq!(value % 8, 0, "{value} stays on the 8-grid");
+        }
+    }
+
+    #[test]
+    fn the_card_keeps_the_caption_line_and_the_working_height() {
+        // One caption line above the strip, one tile cell below it, the
+        // paddings around both — the working target keeps today's 168
+        // px exactly (the caption takes the per-tile title lines'
+        // place).
+        assert_eq!(
+            band_card_height(),
+            2 * TILE_PAD_Y + TEXT_H + CAPTION_GAP + TILE_CELL_H
+        );
+        assert_eq!(band_card_height(), 168);
+    }
+
+    #[test]
+    fn band_width_floors_short_strips_at_the_caption() {
+        // The caption floor: a short strip renders inside a card wide
+        // enough that the caption reads at a glance — the shape's width
+        // when it exceeds the floor, the floor when it does not. Tiles
+        // stay left-aligned in the floored width.
+        let shape = |slots: u32| 2 * TILE_PAD_X + slots * TILE_W + (slots - 1) * TILE_GAP;
+        assert_eq!(band_width(3), CAPTION_FLOOR_W, "a three-tile shape floored");
+        assert!(shape(3) < CAPTION_FLOOR_W);
+        assert_eq!(band_width(6), CAPTION_FLOOR_W, "six tiles still floored");
+        assert_eq!(
+            band_width(7),
+            shape(7),
+            "seven tiles already outspan the floor"
+        );
+        assert!(shape(7) > CAPTION_FLOOR_W);
+        // The caption's ink budget at the floor: the card's width minus
+        // its horizontal padding.
+        assert_eq!(CAPTION_FLOOR_W - 2 * TILE_PAD_X, 464);
     }
 
     // --- list-viewport: the windowed card (LV2) --------------------------
@@ -9075,16 +9124,21 @@ mod tests {
             let index = (y * lw * scale + x) as usize * 4;
             u32::from_le_bytes(canvas[index..index + 4].try_into().expect("pixel"))
         };
-        let tile_center_x = |index: u32| TILE_PAD_X + index * (TILE_W + TILE_GAP) + TILE_W / 2;
         let band = Palette::dark().selected_bg;
         let background = Palette::dark().background;
+        // The fill probe reads the cell's mid-height at the icon's
+        // inset — ink-free ground on both tiles (the icon's own center
+        // carries the fallback glyph's strokes since the compact
+        // re-pin moved the glyph under the old probe).
+        let mid_cell = TILE_PAD_Y + TILE_CELL_H / 2;
+        let inset_x = |index: u32| TILE_PAD_X + index * (TILE_W + TILE_GAP) + TILE_TEXT_PAD / 2;
         assert_eq!(
-            px(tile_center_x(0), TILE_PAD_Y + TILE_CELL_H / 2),
+            px(inset_x(0), mid_cell),
             band,
             "the selected window tile fills at its slot"
         );
         assert_eq!(
-            px(tile_center_x(1), TILE_PAD_Y + TILE_CELL_H / 2),
+            px(inset_x(1), mid_cell),
             background,
             "the unselected window tile stays the card"
         );

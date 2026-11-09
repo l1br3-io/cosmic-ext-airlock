@@ -482,7 +482,7 @@ fn combined_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> Ve
                 hint: Option<usize>|
      -> RowModel {
         RowModel {
-            title: ui::clamp_tile_title(title),
+            title: title.to_string(),
             icon,
             selected,
             handle: Some(Handle::default()),
@@ -663,9 +663,9 @@ fn horizontal_scenarios(base: ui::Palette, icons: &[Option<Rc<IconBitmap>>]) -> 
     let band_row =
         |title: &str, icon: Option<Rc<IconBitmap>>, selected: bool, position: usize| -> RowModel {
             RowModel {
-                // The tile's own clamp: the band's width is the tile grid,
-                // never the title's — the daemon composes the same budget.
-                title: ui::clamp_tile_title(title),
+                // The display title unclamped: nothing paints it at the
+                // compact pitch; the caption (G3) reads the selection's.
+                title: title.to_string(),
                 icon,
                 selected,
                 handle: Some(Handle::default()),
