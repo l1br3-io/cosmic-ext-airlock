@@ -208,16 +208,19 @@ setting keeps its value — back at Comfortable the full budget returns.
 
 - **`"vertical"` (default)** — today's card: the tall column of rows.
 - **`"horizontal"`** — the band: the same MRU window list laid out as
-  a single row of tiles in a wide, short card. A tile is the window's
-  application icon with its title beneath, clamped to the tile's
-  width; a list longer than the band ends in a `…` tile, and stepping
-  past the band scrolls it just enough to keep the selection on a
-  tile. **Left** and **Right** become the primary step keys — **Up**
-  and **Down** still step, as aliases — and **Ctrl+1..9** addresses
-  tiles in reading order, left to right, the chord shown as a corner
-  badge on each of the first nine tiles. The pointer drives the same
-  gesture per tile: hover moves the selection, a click commits, the
-  wheel steps.
+  a single row of compact icon-only tiles in a wide, short card. A
+  tile is the window's application icon with its chord's digit as a
+  corner badge; an app holding several live windows draws up to three
+  count dots under its icon. The card's one caption, fixed top-center,
+  names the commit target — the selected window's own title — and
+  truncates with an ellipsis when it outgrows the card. A list longer
+  than the strip ends in a `…` tile, and stepping past it scrolls
+  just enough to keep the selection on a tile. **Left** and
+  **Right** become the primary step keys — **Up** and **Down** still
+  step, as aliases — and **Ctrl+1..9** addresses tiles in reading
+  order, left to right, the digit shown on each of the first nine.
+  The pointer drives the same gesture per tile: hover moves the
+  selection, a click commits, the wheel steps.
 
 `rows` binds the vertical card only — the band's budget is
 [Columns](#columns). A grouped session (`grouping = true`) renders
@@ -234,15 +237,18 @@ the axis it opened with until Alt is released.
 `columns` sizes the horizontal band — `"auto"` (the default) or a
 whole number from 3 to 12. The vertical card ignores it.
 
-- **`"auto"`** — the band holds as many tiles as two-thirds of the
+- **`"auto"`** — the strip holds as many tiles as two-thirds of the
   invoking output's logical width fits, never fewer than three: a
-  1920-logical output opens eight tiles, a 2560 one ten. The share is
-  read from the output the gesture starts on and frozen for the
-  session — auto is responsive per monitor, not mid-gesture.
+  1920-logical output opens seventeen tiles, a 2560 one twenty-three.
+  The share is read from the output the gesture starts on and frozen
+  for the session — auto is responsive per monitor, not mid-gesture.
 - **`columns = N`** — a pinned budget: exactly N tiles, whatever the
-  output. Three is the shortest band that still reads as a strip;
-  twelve spans 1960 logical pixels — past the full logical width of a
-  4-K panel at 200 %.
+  output. Three is the shortest strip that still reads as one; twelve
+  spans 912 logical pixels.
+
+Whatever the budget, the card keeps a caption-width floor: a short
+strip renders left-aligned inside a card wide enough that the caption
+always reads, so the card never narrows below it.
 
 `columns` is read with `layout` when a gesture starts and frozen for
 the session like it — a pinned value live-applies on the next press.
@@ -391,8 +397,9 @@ A bad config never breaks switching:
 - Set `rows = 10`, then `rows = 3`; the next Alt+Tab keeps that many
   windows in view, `…` rows riding on top — no restart
 - Set `layout = "horizontal"`; the next Alt+Tab lays the same windows
-  out as a band of tiles — Left/Right step, the first nine tiles show
-  their Ctrl+N corner badges, a long list ends in a `…` tile
+  out as a strip of icon-only tiles under the one caption —
+  Left/Right step, the first nine tiles show their digit badges, a
+  long list ends in a `…` tile
 - With the band open, set `columns = 3`, then `columns = 12` — each
   applies on the next press; on `"auto"` the band refits when the
   gesture starts on a different-sized output

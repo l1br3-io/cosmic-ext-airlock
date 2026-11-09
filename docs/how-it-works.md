@@ -122,12 +122,13 @@ default) follows the desktop's dark/light preference; see
 [settings.md](settings.md#theme).
 
 The `layout = "horizontal"` setting trades the column for a wide,
-short **band**: the same windows as tiles — each the app icon with the
-title beneath, clamped to the tile — ended by a `…` tile when the list
-outgrows the band. Left and Right step the band, Ctrl+N and the
-pointer address its tiles exactly as they address rows, and the
-`columns` setting sizes it: two-thirds of the invoking output
-(`"auto"`, the default) or a pinned 3–12 tiles. See
+short **band**: the same windows as compact icon-only tiles — each
+tile the app icon with its chord's digit — under one caption that
+names the selected window, ended by a `…` tile when the list outgrows
+the strip. Left and Right step the strip, Ctrl+N and the pointer
+address its tiles exactly as they address rows, and the `columns`
+setting sizes it: two-thirds of the invoking output (`"auto"`, the
+default) or a pinned 3–12 tiles. See
 [settings.md](settings.md#layout).
 
 ## Workspace scoping

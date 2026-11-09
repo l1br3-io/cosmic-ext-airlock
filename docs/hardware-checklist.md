@@ -161,7 +161,7 @@ binary.
       same sequence; Up/Down still step (aliases); stepping past the
       edge scrolls just enough — the selection never lands on the `…`
       tile
-- [ ] Ctrl+N: the first nine tiles show their corner badges in reading
+- [ ] Ctrl+N: the first nine tiles show their digit badges in reading
       order and commit instantly; a tile past nine answers no chord and
       shows none; hover moves the selection per tile, a click commits
       it, and the `…` tile is inert to pointer and chords alike
