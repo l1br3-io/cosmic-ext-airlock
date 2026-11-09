@@ -4,7 +4,7 @@ Workspace-isolated Alt+Tab for the COSMIC™ desktop: the switcher lists and
 cycles only the windows on the **current workspace**, so nothing you parked
 elsewhere leaks into your focus.
 
-<img src="https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/docs/img/overlay-card.png" width="532" alt="Airlock's Alt+Tab overlay: a dark rounded card listing the current workspace's windows — app icon and title per row, one highlighted, ellipsis rows above and below">
+<img src="https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/docs/img/overlay-card.png" width="472" alt="Airlock's Alt+Tab overlay: a dark rounded card listing the current workspace's windows — app icon and title per row, one highlighted, ellipsis rows above and below">
 
 > Airlock is third-party software for the COSMIC™ desktop. It is not official
 > COSMIC software and is not affiliated with or endorsed by System76.
