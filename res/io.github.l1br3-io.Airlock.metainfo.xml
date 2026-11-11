@@ -23,7 +23,7 @@
   <url type="homepage">https://github.com/l1br3-io/cosmic-ext-airlock</url>
   <url type="bugtracker">https://github.com/l1br3-io/cosmic-ext-airlock/issues</url>
   <releases>
-    <release version="0.4.1" date="2026-11-10">
+    <release version="0.4.1" date="2026-11-11">
       <description>
         <ul>
           <li>Changed: on the grouped horizontal card, Alt+Tab from
