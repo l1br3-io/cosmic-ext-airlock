@@ -55,7 +55,8 @@ just release-check            # 1. the gate
 just release-notes 0.1.0      # 2. notes out of the changelog
 just release-tag 0.1.0        # 3. tag + push
 just release-gh 0.1.0         # 4. GitHub Release
-just release-publish          # 5. crates.io
+just release-artifacts 0.1.0  # 5. prebuilt binary onto the release
+just release-publish          # 6. crates.io
 ```
 
 What each does, and what you will see:
@@ -82,6 +83,13 @@ below for when that is legitimate.
 edits the existing release object in place when there is one (the URL
 survives), creates it otherwise, marks it latest. Needs `gh` logged
 in.
+
+**`release-artifacts <ver>`** builds the x86_64-unknown-linux-gnu
+release binary and uploads `airlock-<target>-v<ver>.tgz` to the
+release — the archive `cargo binstall` downloads
+(`[package.metadata.binstall]` in Cargo.toml names this exact file;
+the two change together). Run after `release-gh` (the upload needs
+the release to exist). Needs `gh` logged in.
 
 **`release-publish`** is `cargo publish --locked` — the crate built
 exactly as the committed `Cargo.lock` pins it. This is the one step you
