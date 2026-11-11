@@ -29,6 +29,19 @@ exclude = [
 name = "airlock"
 path = "src/main.rs"
 
+# Prebuilt-binary install for cargo-binstall. The release-artifacts
+# justfile recipe uploads airlock-<target>-v<version>.tgz to each
+# GitHub Release with the binary at the archive root; this table and
+# that recipe change together (archive name, format, root layout).
+# The runtime Wayland/xkbcommon libraries ship with every COSMIC
+# system, so the downloaded binary needs no -dev packages — this is
+# the install path that sidesteps the from-source prerequisites
+# entirely.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/airlock-{ target }-v{ version }{ archive-suffix }"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
 [dependencies]
 cosmic-client-toolkit = "0.2.0"
 # The card's typeface, per docs/research/cosmic-appearance-stores.md and

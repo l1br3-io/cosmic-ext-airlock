@@ -309,6 +309,23 @@ release-gh ver:
 		gh release create "v{{ver}}" --notes-file "$notes" --title "Airlock {{ver}}" --latest
 	fi
 
+# Build the x86_64-unknown-linux-gnu release binary and upload its
+# .tgz to the v<ver> GitHub Release — the archive cargo-binstall
+# downloads ([package.metadata.binstall] in Cargo.toml names this
+# exact file; the two change together). The triple is explicit so a
+# non-x86_64 build host fails loudly instead of mislabeling the
+# artifact. Owner-run, after release-gh creates the release (upload
+# needs it to exist); --clobber keeps re-cut mode working by
+# replacing same-named assets.
+[group('release')]
+release-artifacts ver:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	archive="airlock-x86_64-unknown-linux-gnu-v{{ver}}.tgz"
+	{{just_executable()}} quietly 'cargo build --release --locked --target x86_64-unknown-linux-gnu'
+	tar -C target/x86_64-unknown-linux-gnu/release -czf "target/$archive" airlock
+	gh release upload "v{{ver}}" "target/$archive" --clobber
+
 # Publish the crate to crates.io, built exactly as the committed
 # Cargo.lock pins it. Owner-run only — the invocation is the consent,
 # tokens never live in this repo, and crates.io versions are

@@ -149,6 +149,16 @@ sudo pacman -S --needed base-devel pkgconf wayland libxkbcommon               # 
 sudo zypper install gcc gcc-c++ make pkg-config wayland-devel libxkbcommon-devel   # openSUSE
 ```
 
+Or skip the build: the releases carry a prebuilt x86_64 Linux binary,
+which needs none of the above (the runtime libraries ship with COSMIC;
+the binary requires a glibc at least as new as the build host's — if
+yours is older, build from source as above):
+
+```sh
+cargo install cargo-binstall         # once, to bootstrap the downloader
+cargo binstall cosmic-ext-airlock    # downloads instead of compiling
+```
+
 From a checkout, `just install` checks the build prerequisites (C toolchain,
 pkg-config, Wayland/xkbcommon headers, cargo) and installs missing ones
 through the distro's package manager and rustup. Assets ride the binary:
