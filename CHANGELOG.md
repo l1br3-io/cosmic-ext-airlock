@@ -3,6 +3,17 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
+## [Unreleased]
+
+### Fixed
+
+- **The × closes again on the labeled vertical card** — with the
+  workspace label showing (`show_workspace = true`), the vertical
+  card's × badge revealed in the right place but its click territory
+  sat 16 px above it, so a click on the visible × fell through and
+  activated the window instead of closing it. The territory now sits
+  exactly under the badge it belongs to.
+
 ## [0.4.1] — 2026-11-10
 
 ### Changed

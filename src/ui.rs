@@ -1559,14 +1559,19 @@ fn close_tile_zone_at(left: u32, cell: u32) -> (u32, u32, u32, u32) {
 }
 
 /// The icon cell's top-left corner on a vertical row, logical px — the
-/// row rhythm, the query strip's shift, and the child indent, the same
-/// geometry the renderer paints the icon under. `None` past the model's
-/// rows.
+/// row rhythm, the workspace label's and the query strip's shifts, and
+/// the child indent, the same geometry the renderer paints the icon
+/// under. `None` past the model's rows.
 fn row_icon_origin(model: &OverlayModel, row: usize) -> Option<(u32, u32)> {
     let row_model = model.rows.get(row)?;
     let rhythm = model.profile.rhythm;
     let strip = strip_height_at(&model.query, rhythm, model.profile.text.cell());
-    let top = rhythm.pad_y + strip + row as u32 * (rhythm.row_h + rhythm.row_gap);
+    let label = if model.workspace.is_empty() {
+        0
+    } else {
+        ws_label_height_at(rhythm, model.profile.text.cell())
+    };
+    let top = rhythm.pad_y + label + strip + row as u32 * (rhythm.row_h + rhythm.row_gap);
     let indent = (row_model.kind == RowKind::Child) as u32 * TREE_INDENT;
     Some((PAD_X + indent, top + (rhythm.row_h - ICON) / 2))
 }
@@ -8238,6 +8243,38 @@ mod tests {
             None,
             "the hint band keeps its keyboard-only territory"
         );
+    }
+
+    #[test]
+    fn the_close_zone_rides_the_workspace_label_s_line_with_its_rows() {
+        // The regression the vertical card carried (2026-11-11): the
+        // label's reserved line shifts every row down, `row_at` and the
+        // renderer walk past it — but the ×'s zone anchor didn't, so the
+        // click territory sat `ws_label_height_at` px above the badge it
+        // belongs to and a press on the visible × fell through to
+        // activate. The zone must sit where the renderer paints: the
+        // label's line above the first row, the icon centered in its
+        // rhythm.
+        let mut model = hit_model(3);
+        model.workspace = "Workspace 1".into();
+        let rhythm = model.profile.rhythm;
+        let cell = model.profile.text.cell();
+        let label = ws_label_height_at(rhythm, cell);
+        for row in 0..3 {
+            // The renderer's own anchor, computed independently of
+            // `row_icon_origin`: the label's line, then the row's pitch.
+            let icon_top = rhythm.pad_y
+                + label
+                + row as u32 * (rhythm.row_h + rhythm.row_gap)
+                + (rhythm.row_h - ICON) / 2;
+            let badge_x = PAD_X + ICON - CLOSE_BADGE / 2;
+            let badge_y = icon_top + CLOSE_BADGE / 2;
+            assert_eq!(
+                model.close_zone_at(badge_x as f64, badge_y as f64, 1),
+                Some(row),
+                "row {row}'s × zone must sit under the badge the label-shifted card paints"
+            );
+        }
     }
 
     #[test]

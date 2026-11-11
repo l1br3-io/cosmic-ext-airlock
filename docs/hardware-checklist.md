@@ -404,6 +404,9 @@ binary.
       show the badge
 - [ ] Click split: a click on the × badge closes; a click anywhere else
       on the row (including the rest of the icon) activates as before
+- [ ] Regression, `show_workspace = true` on the vertical card: the ×
+      reveals below the workspace label and a click on the badge still
+      closes — never activates — the row it sits on
 - [ ] Horizontal band and grouped strip: the same × badge reveals on a
       hovered window tile's icon at its top-right corner, clicking the
       badge closes that tile's window, and clicking the rest of the
