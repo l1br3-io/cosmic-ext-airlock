@@ -137,6 +137,18 @@ airlock install                    # the complete setup: keybind takeover
                                     # + commented starter config
 ```
 
+`cargo install` compiles from source, and cargo cannot install system
+libraries — the build needs a C toolchain, pkg-config, and the
+Wayland/xkbcommon headers (the runtime libraries ship with every COSMIC
+system; these are build-time packages). Install them once:
+
+```sh
+sudo apt install build-essential pkg-config libwayland-dev libxkbcommon-dev   # Debian/Ubuntu/Pop!_OS
+sudo dnf install gcc gcc-c++ make pkgconf-pkg-config wayland-devel libxkbcommon-devel   # Fedora
+sudo pacman -S --needed base-devel pkgconf wayland libxkbcommon               # Arch
+sudo zypper install gcc gcc-c++ make pkg-config wayland-devel libxkbcommon-devel   # openSUSE
+```
+
 From a checkout, `just install` checks the build prerequisites (C toolchain,
 pkg-config, Wayland/xkbcommon headers, cargo) and installs missing ones
 through the distro's package manager and rustup. Assets ride the binary:
