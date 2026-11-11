@@ -18,7 +18,10 @@ use cctk::sctk::output::{OutputData, OutputHandler, OutputState};
 use cctk::sctk::registry::{ProvidesRegistryState, RegistryState};
 use cctk::sctk::seat::{
     keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
-    pointer::{PointerEvent, PointerEventKind, PointerHandler, BTN_LEFT},
+    pointer::{
+        cursor_shape::CursorShapeManager, PointerEvent, PointerEventKind, PointerHandler,
+        BTN_LEFT,
+    },
     Capability, SeatHandler, SeatState,
 };
 use cctk::sctk::shell::WaylandSurface;
@@ -38,6 +41,9 @@ use cctk::wayland_client::protocol::wl_surface::WlSurface;
 use cctk::wayland_client::protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface};
 use cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1;
 use cctk::wayland_protocols::ext::workspace::v1::client::ext_workspace_handle_v1::{ExtWorkspaceHandleV1, State as ExtWorkspaceState};
+use cctk::wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{
+    Shape as CursorShape, WpCursorShapeDeviceV1,
+};
 use cctk::wayland_protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_keyboard_shortcuts_inhibit_manager_v1::{
     self as ksi_manager, ZwpKeyboardShortcutsInhibitManagerV1,
 };
@@ -252,6 +258,15 @@ pub(crate) struct App {
     seat: Option<wl_seat::WlSeat>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
+    /// The cursor-shape manager (`wp_cursor_shape_v1`), when the
+    /// compositor offers it — an optional protocol, so a compositor
+    /// without it keeps whatever cursor it was showing (`None`, no
+    /// request, no failure).
+    cursor_shapes: Option<CursorShapeManager>,
+    /// The bound pointer's cursor-shape device, created with the pointer
+    /// (`SeatHandler::new_capability`) so the overlay can set its hand
+    /// cursor on entry.
+    shape_device: Option<WpCursorShapeDeviceV1>,
     /// Last shift state the seat reported, for classifying Tab presses.
     shift_held: bool,
     /// Last Ctrl state the seat reported, for classifying digit presses.
@@ -460,6 +475,12 @@ impl SeatHandler for App {
         if capability == Capability::Pointer && self.pointer.is_none() {
             eprintln!("airlock daemon: seat pointer bound");
             self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
+            // The shape device rides the same pointer (`pointer-cursor`):
+            // one per wl_pointer, taken from the manager when the
+            // compositor offers the protocol at all.
+            if let (Some(manager), Some(pointer)) = (&self.cursor_shapes, &self.pointer) {
+                self.shape_device = Some(manager.get_shape_device(pointer, qh));
+            }
         }
     }
 
@@ -479,6 +500,9 @@ impl SeatHandler for App {
             && let Some(pointer) = self.pointer.take()
         {
             pointer.release();
+            if let Some(device) = self.shape_device.take() {
+                device.destroy();
+            }
         }
     }
 
@@ -645,7 +669,21 @@ impl PointerHandler for App {
                 continue;
             }
             match event.kind {
-                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
+                // The pointing hand on entry (`pointer-cursor`): every
+                // pixel of the card is a click target — rows and tiles
+                // activate, the × closes — so the hand tells the truth
+                // from the moment the pointer crosses in, set with the
+                // enter's own serial as the shape protocol intends. A
+                // compositor without the protocol keeps its cursor.
+                PointerEventKind::Enter { serial } => {
+                    if let Some(device) = &self.shape_device {
+                        device.set_shape(serial, CursorShape::Pointer);
+                    }
+                    let (row, handle) = self.overlay_row_handle_at(event.position);
+                    self.pointer_inputs
+                        .push(PointerInput::Hover { row, handle });
+                }
+                PointerEventKind::Motion { .. } => {
                     let (row, handle) = self.overlay_row_handle_at(event.position);
                     self.pointer_inputs
                         .push(PointerInput::Hover { row, handle });
@@ -1264,6 +1302,10 @@ impl Session {
                 })
             })?;
         let seat_state = SeatState::new(&globals, &qh);
+        // The hand cursor is an optional protocol: a compositor without
+        // `wp_cursor_shape_v1` keeps the cursor it was showing, and every
+        // shape request is skipped (`None` carries that contract).
+        let cursor_shapes = CursorShapeManager::bind(&globals, &qh).ok();
 
         let toplevel_manager_state =
             toplevel_manager_state.expect("check_protocols verified the manager global");
@@ -1281,6 +1323,8 @@ impl Session {
             seat: None,
             keyboard: None,
             pointer: None,
+            cursor_shapes,
+            shape_device: None,
             shift_held: false,
             ctrl_held: false,
             alt_held: false,

@@ -92,6 +92,9 @@ pipeline the COSMIC launcher uses) beside its title.
   horizontal window tile reveals a small × badge on its icon's top-right
   corner that closes on click. A group entry
   closes its app's front window — every row closes what it activates
+- **The pointing-hand cursor over the card**: from the moment the
+  pointer enters, the cursor turns into the hand — everything on the
+  card is a click target
 - Titles render in the desktop's own interface font — real glyphs,
   real accents, fallback chains for CJK and emoji — at 12 logical px by
   default; a `font` key overrides the family and `font_size` (8–24)

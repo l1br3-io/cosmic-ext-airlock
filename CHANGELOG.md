@@ -14,6 +14,14 @@ observe, not internal mechanics.
   activated the window instead of closing it. The territory now sits
   exactly under the badge it belongs to.
 
+### Added
+
+- **The pointing-hand cursor over the card** — the cursor turns into
+  the hand the moment it enters the card and stays until it leaves:
+  everything on the card is a click target. Needs the compositor's
+  cursor-shape protocol (COSMIC has it); without it the cursor simply
+  stays whatever it was.
+
 ### Changed
 
 - **A bigger × on every thumbnail** — the close badge a hovered window

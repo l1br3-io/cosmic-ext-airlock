@@ -51,6 +51,9 @@ binary.
 - [ ] Rest the cursor where the card will appear, then Alt+Tab — the
       selection does not jump to the row under it, and jitter inside
       that row moves nothing either
+- [ ] The cursor turns to the pointing hand the moment it enters the
+      card, both layouts and both themes, and returns to the arrow the
+      moment it leaves
 - [ ] Crossing rows walks the highlight one row per crossing; parking on
       a row and releasing Alt focuses it
 - [ ] Hover a row, then press Tab — the step continues from the hovered
