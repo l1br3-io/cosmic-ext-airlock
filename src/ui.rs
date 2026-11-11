@@ -1115,15 +1115,19 @@ const _: () = {
     // is the reservation's truth. (The count pips sit below the title
     // and spend no title width.)
     assert!(CHEVRON_GAP + GLYPH_W * CHEVRON_SCALE <= CHEVRON_COLS * TEXT_W);
-    // The × badge, shared by both cards: the 8-px ink keeps 2 px of
+    // The × badge, shared by both cards: the 8-px ink keeps 4 px of
     // knockout on every side, the hit territory forgives the small
     // target, and the whole badge stays on its icon's corner.
     assert!(CLOSE_BADGE.is_multiple_of(4));
     assert!(CLOSE_BADGE_HIT.is_multiple_of(4));
-    assert!(GLYPH_W * CLOSE_BADGE_SCALE + 2 * 2 == CLOSE_BADGE);
+    assert!(GLYPH_W * CLOSE_BADGE_SCALE + 2 * 4 == CLOSE_BADGE);
     assert!(CLOSE_BADGE_RADIUS < CLOSE_BADGE);
     assert!(CLOSE_BADGE_HIT >= CLOSE_BADGE);
     assert!(CLOSE_BADGE_HIT <= ICON && CLOSE_BADGE_HIT <= TILE_ICON);
+    // The re-pin itself (2026-11-11, the owner's "a bit bigger" call):
+    // frozen like every token so the badge cannot drift by accident.
+    assert!(CLOSE_BADGE == 16);
+    assert!(CLOSE_BADGE_HIT == 20);
     assert!(STRIP_PAD_Y.is_multiple_of(4));
     assert!(STRIP_CARET_GAP.is_multiple_of(4));
     assert!(STRIP_CARET_W == 2);
@@ -1228,24 +1232,29 @@ const CHEVRON_DOWN_GLYPH: [u8; 8] = [0x00, 0x00, 0x42, 0x66, 0x3C, 0x18, 0x00, 0
 /// drawn like every glyph in the vocabulary, never a typed character.
 const CLOSE_GLYPH: [u8; 8] = [0xC3, 0xE7, 0x66, 0x3C, 0x3C, 0x66, 0xE7, 0xC3];
 
-/// The × badge's side, logical px — a 12-px knockout at the icon's
+/// The × badge's side, logical px — a 16-px knockout at the icon's
 /// top-right corner, shared by the vertical rows and the horizontal
 /// tiles so the pointer affordance is identical in either layout. The
 /// knockout (the card background) separates the mark from a colorful
 /// icon, so it reads on every app, and the mark stays secondary to the
-/// thumbnail it closes.
-const CLOSE_BADGE: u32 = 12;
-/// The badge's corner radius, logical px — one third of its side, the
-/// small-chip rounding that keeps the knockout from reading as a
-/// square hole cut in the icon.
-const CLOSE_BADGE_RADIUS: u32 = 4;
+/// thumbnail it closes. Re-pinned 12 → 16 (2026-11-11, the owner's
+/// "a bit bigger" call): the 12-px button read as a speck on the
+/// 48-px tile at glance distance — one 4-grid step up, the × ink
+/// itself unchanged, so the mark stays quiet while its button becomes
+/// findable.
+const CLOSE_BADGE: u32 = 16;
+/// The badge's corner radius, logical px — the knockout's straight
+/// edges hold 4 px with 6-px corner arcs (12/4 kept the same 4-px
+/// straights at a third of the side), the small-chip rounding that
+/// keeps the knockout from reading as a square hole cut in the icon.
+const CLOSE_BADGE_RADIUS: u32 = 6;
 /// The × ink's draw scale inside the badge: the 8×8 glyph at 1×
-/// (8 logical px), leaving 2 px of knockout on every side.
+/// (8 logical px), leaving 4 px of knockout on every side.
 const CLOSE_BADGE_SCALE: u32 = 1;
-/// The badge's click territory, logical px — the 12-px badge plus 2 px
+/// The badge's click territory, logical px — the 16-px badge plus 4 px
 /// of forgiveness on its left and bottom edges, so the small target
 /// stays reachable without widening what the eye reads as the button.
-const CLOSE_BADGE_HIT: u32 = 16;
+const CLOSE_BADGE_HIT: u32 = 20;
 
 /// The number chord a row advertises in its hint band — the single
 /// source of "which N selects this row" for both the renderer (the

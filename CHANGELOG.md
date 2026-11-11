@@ -14,6 +14,15 @@ observe, not internal mechanics.
   activated the window instead of closing it. The territory now sits
   exactly under the badge it belongs to.
 
+### Changed
+
+- **A bigger × on every thumbnail** — the close badge a hovered window
+  tile reveals on its icon's top-right corner grows from 12 to 16
+  logical px (the × ink keeps its size, gaining air), and its click
+  territory grows with it (16 → 20 px), so the smallest target on the
+  card is easier to see and to hit. Both cards share the one badge, so
+  the vertical rows' × grows with it.
+
 ## [0.4.1] — 2026-11-10
 
 ### Changed
