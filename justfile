@@ -69,13 +69,15 @@ stop:
 
 # Regenerate docs/img/overlay-card.png (the README hero) and its
 # byte-identical site/assets/overlay-card.png copy: the overlay-preview
-# contact sheet's long-list family's 30-row mid-sweep scenario (`…` at
-# both edges, selection interior) cropped from the dark-backdrop column
-# at --scale 2 through the real font pipeline (--system-font pins the
+# contact sheet's grouped family's windowed 12-row tree (selected group
+# expanded to its windows, `…` row below) cropped from the dark-backdrop
+# column at --scale 2 through the real font pipeline (--system-font pins the
 # committed Open Sans fixture; the flagless run draws the font8x8
-# floor). Card 532x584 logical px = 1064x1168 device; offsets
-# x = gutter = 64, y = 64 + singles(2128) + query(952) + close(1232)
-# + 3x(1168+64) = 8072 — re-derive from examples/overlay-preview.rs if
+# floor). Card 316x584 logical px = 632x1168 device; offsets
+# x = gutter = 64, y = 64 + singles(2128) + query(952) + close(880)
+# + workspace-label(1656) + long-list(7056) + grouped(2128) = 14864
+# — the grouped family's windowed 12-row tree — re-derive from
+# examples/overlay-preview.rs if
 # the scenario list changes. The card's rounded-corner cutouts reveal
 # the dark backdrop (46,46,50); -transparent turns them back into the
 # alpha the sheet flattened, so the hero sits clean on any page
@@ -84,7 +86,7 @@ stop:
 # (convert).
 readme-image:
 	{{just_executable()}} quietly 'cargo run --example overlay-preview -- /tmp/airlock-preview-sheet.png --system-font res/test-fonts'
-	convert /tmp/airlock-preview-sheet.png -crop 1064x1168+64+8072 +repage -transparent 'rgb(46,46,50)' docs/img/overlay-card.png
+	convert /tmp/airlock-preview-sheet.png -crop 632x1168+64+14864 +repage -transparent 'rgb(46,46,50)' docs/img/overlay-card.png
 	cp docs/img/overlay-card.png site/assets/overlay-card.png
 
 

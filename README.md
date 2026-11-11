@@ -4,7 +4,7 @@ Workspace-isolated Alt+Tab for the COSMIC™ desktop: the switcher lists and
 cycles only the windows on the **current workspace**, so nothing you parked
 elsewhere leaks into your focus.
 
-<img src="https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/docs/img/overlay-card.png" width="532" alt="Airlock's Alt+Tab overlay: a dark rounded card listing the current workspace's windows — app icon and title per row, one highlighted, ellipsis rows above and below">
+<img src="https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/docs/img/overlay-card.png" width="316" alt="Airlock's Alt+Tab overlay with grouping on: a dark rounded card listing apps as entries — chevron, window-count pips, and a Ctrl digit per app — the selected app expanded to its window titles, ellipsis row below">
 
 > Airlock is third-party software for the COSMIC™ desktop. It is not official
 > COSMIC software and is not affiliated with or endorsed by System76.
@@ -92,6 +92,9 @@ pipeline the COSMIC launcher uses) beside its title.
   horizontal window tile reveals a small × badge on its icon's top-right
   corner that closes on click. A group entry
   closes its app's front window — every row closes what it activates
+- **The pointing-hand cursor over the card**: from the moment the
+  pointer enters, the cursor turns into the hand — everything on the
+  card is a click target
 - Titles render in the desktop's own interface font — real glyphs,
   real accents, fallback chains for CJK and emoji — at 12 logical px by
   default; a `font` key overrides the family and `font_size` (8–24)

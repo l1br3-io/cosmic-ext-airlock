@@ -3,6 +3,34 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
+## [Unreleased]
+
+### Fixed
+
+- **The × closes again on the labeled vertical card** — with the
+  workspace label showing (`show_workspace = true`), the vertical
+  card's × badge revealed in the right place but its click territory
+  sat 16 px above it, so a click on the visible × fell through and
+  activated the window instead of closing it. The territory now sits
+  exactly under the badge it belongs to.
+
+### Added
+
+- **The pointing-hand cursor over the card** — the cursor turns into
+  the hand the moment it enters the card and stays until it leaves:
+  everything on the card is a click target. Needs the compositor's
+  cursor-shape protocol (COSMIC has it); without it the cursor simply
+  stays whatever it was.
+
+### Changed
+
+- **A bigger × on every thumbnail** — the close badge a hovered window
+  tile reveals on its icon's top-right corner grows from 12 to 16
+  logical px (the × ink keeps its size, gaining air), and its click
+  territory grows with it (16 → 20 px), so the smallest target on the
+  card is easier to see and to hit. Both cards share the one badge, so
+  the vertical rows' × grows with it.
+
 ## [0.4.1] — 2026-11-10
 
 ### Changed

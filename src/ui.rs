@@ -1115,15 +1115,19 @@ const _: () = {
     // is the reservation's truth. (The count pips sit below the title
     // and spend no title width.)
     assert!(CHEVRON_GAP + GLYPH_W * CHEVRON_SCALE <= CHEVRON_COLS * TEXT_W);
-    // The × badge, shared by both cards: the 8-px ink keeps 2 px of
+    // The × badge, shared by both cards: the 8-px ink keeps 4 px of
     // knockout on every side, the hit territory forgives the small
     // target, and the whole badge stays on its icon's corner.
     assert!(CLOSE_BADGE.is_multiple_of(4));
     assert!(CLOSE_BADGE_HIT.is_multiple_of(4));
-    assert!(GLYPH_W * CLOSE_BADGE_SCALE + 2 * 2 == CLOSE_BADGE);
+    assert!(GLYPH_W * CLOSE_BADGE_SCALE + 2 * 4 == CLOSE_BADGE);
     assert!(CLOSE_BADGE_RADIUS < CLOSE_BADGE);
     assert!(CLOSE_BADGE_HIT >= CLOSE_BADGE);
     assert!(CLOSE_BADGE_HIT <= ICON && CLOSE_BADGE_HIT <= TILE_ICON);
+    // The re-pin itself (2026-11-11, the owner's "a bit bigger" call):
+    // frozen like every token so the badge cannot drift by accident.
+    assert!(CLOSE_BADGE == 16);
+    assert!(CLOSE_BADGE_HIT == 20);
     assert!(STRIP_PAD_Y.is_multiple_of(4));
     assert!(STRIP_CARET_GAP.is_multiple_of(4));
     assert!(STRIP_CARET_W == 2);
@@ -1228,24 +1232,29 @@ const CHEVRON_DOWN_GLYPH: [u8; 8] = [0x00, 0x00, 0x42, 0x66, 0x3C, 0x18, 0x00, 0
 /// drawn like every glyph in the vocabulary, never a typed character.
 const CLOSE_GLYPH: [u8; 8] = [0xC3, 0xE7, 0x66, 0x3C, 0x3C, 0x66, 0xE7, 0xC3];
 
-/// The × badge's side, logical px — a 12-px knockout at the icon's
+/// The × badge's side, logical px — a 16-px knockout at the icon's
 /// top-right corner, shared by the vertical rows and the horizontal
 /// tiles so the pointer affordance is identical in either layout. The
 /// knockout (the card background) separates the mark from a colorful
 /// icon, so it reads on every app, and the mark stays secondary to the
-/// thumbnail it closes.
-const CLOSE_BADGE: u32 = 12;
-/// The badge's corner radius, logical px — one third of its side, the
-/// small-chip rounding that keeps the knockout from reading as a
-/// square hole cut in the icon.
-const CLOSE_BADGE_RADIUS: u32 = 4;
+/// thumbnail it closes. Re-pinned 12 → 16 (2026-11-11, the owner's
+/// "a bit bigger" call): the 12-px button read as a speck on the
+/// 48-px tile at glance distance — one 4-grid step up, the × ink
+/// itself unchanged, so the mark stays quiet while its button becomes
+/// findable.
+const CLOSE_BADGE: u32 = 16;
+/// The badge's corner radius, logical px — the knockout's straight
+/// edges hold 4 px with 6-px corner arcs (12/4 kept the same 4-px
+/// straights at a third of the side), the small-chip rounding that
+/// keeps the knockout from reading as a square hole cut in the icon.
+const CLOSE_BADGE_RADIUS: u32 = 6;
 /// The × ink's draw scale inside the badge: the 8×8 glyph at 1×
-/// (8 logical px), leaving 2 px of knockout on every side.
+/// (8 logical px), leaving 4 px of knockout on every side.
 const CLOSE_BADGE_SCALE: u32 = 1;
-/// The badge's click territory, logical px — the 12-px badge plus 2 px
+/// The badge's click territory, logical px — the 16-px badge plus 4 px
 /// of forgiveness on its left and bottom edges, so the small target
 /// stays reachable without widening what the eye reads as the button.
-const CLOSE_BADGE_HIT: u32 = 16;
+const CLOSE_BADGE_HIT: u32 = 20;
 
 /// The number chord a row advertises in its hint band — the single
 /// source of "which N selects this row" for both the renderer (the
@@ -1559,14 +1568,19 @@ fn close_tile_zone_at(left: u32, cell: u32) -> (u32, u32, u32, u32) {
 }
 
 /// The icon cell's top-left corner on a vertical row, logical px — the
-/// row rhythm, the query strip's shift, and the child indent, the same
-/// geometry the renderer paints the icon under. `None` past the model's
-/// rows.
+/// row rhythm, the workspace label's and the query strip's shifts, and
+/// the child indent, the same geometry the renderer paints the icon
+/// under. `None` past the model's rows.
 fn row_icon_origin(model: &OverlayModel, row: usize) -> Option<(u32, u32)> {
     let row_model = model.rows.get(row)?;
     let rhythm = model.profile.rhythm;
     let strip = strip_height_at(&model.query, rhythm, model.profile.text.cell());
-    let top = rhythm.pad_y + strip + row as u32 * (rhythm.row_h + rhythm.row_gap);
+    let label = if model.workspace.is_empty() {
+        0
+    } else {
+        ws_label_height_at(rhythm, model.profile.text.cell())
+    };
+    let top = rhythm.pad_y + label + strip + row as u32 * (rhythm.row_h + rhythm.row_gap);
     let indent = (row_model.kind == RowKind::Child) as u32 * TREE_INDENT;
     Some((PAD_X + indent, top + (rhythm.row_h - ICON) / 2))
 }
@@ -8238,6 +8252,38 @@ mod tests {
             None,
             "the hint band keeps its keyboard-only territory"
         );
+    }
+
+    #[test]
+    fn the_close_zone_rides_the_workspace_label_s_line_with_its_rows() {
+        // The regression the vertical card carried (2026-11-11): the
+        // label's reserved line shifts every row down, `row_at` and the
+        // renderer walk past it — but the ×'s zone anchor didn't, so the
+        // click territory sat `ws_label_height_at` px above the badge it
+        // belongs to and a press on the visible × fell through to
+        // activate. The zone must sit where the renderer paints: the
+        // label's line above the first row, the icon centered in its
+        // rhythm.
+        let mut model = hit_model(3);
+        model.workspace = "Workspace 1".into();
+        let rhythm = model.profile.rhythm;
+        let cell = model.profile.text.cell();
+        let label = ws_label_height_at(rhythm, cell);
+        for row in 0..3 {
+            // The renderer's own anchor, computed independently of
+            // `row_icon_origin`: the label's line, then the row's pitch.
+            let icon_top = rhythm.pad_y
+                + label
+                + row as u32 * (rhythm.row_h + rhythm.row_gap)
+                + (rhythm.row_h - ICON) / 2;
+            let badge_x = PAD_X + ICON - CLOSE_BADGE / 2;
+            let badge_y = icon_top + CLOSE_BADGE / 2;
+            assert_eq!(
+                model.close_zone_at(badge_x as f64, badge_y as f64, 1),
+                Some(row),
+                "row {row}'s × zone must sit under the badge the label-shifted card paints"
+            );
+        }
     }
 
     #[test]
