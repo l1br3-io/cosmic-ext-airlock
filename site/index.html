@@ -35,7 +35,9 @@
           <pre><code class="language-bash">cargo install cosmic-ext-airlock
 airlock install</code></pre>
           <p class="fine">Requires a COSMIC Epoch desktop session and Rust
-          1.93+. <a href="#install">What the installer writes</a>, and how to
+          1.93+, plus pkg-config and the Wayland/xkbcommon headers to build
+          (per-distro list in the <a href="https://github.com/l1br3-io/cosmic-ext-airlock#install">README</a>).
+          <a href="#install">What the installer writes</a>, and how to
           undo it.</p>
         </div>
       </div>
@@ -175,8 +177,14 @@ airlock install</code></pre>
       <div>
         <pre><code class="language-bash">cargo install cosmic-ext-airlock
 airlock install</code></pre>
-        <p>Requires a COSMIC Epoch desktop session and Rust 1.93+. On
-        another compositor the daemon exits with a diagnostic naming the
+        <p>Requires a COSMIC Epoch desktop session and Rust 1.93+.
+        <code>cargo install</code> compiles from source and cannot install
+        system libraries — add the build packages once. On
+        Pop!_OS/Debian/Ubuntu:
+        <code>sudo apt install build-essential pkg-config libwayland-dev
+        libxkbcommon-dev</code>; other distros are listed in the
+        <a href="https://github.com/l1br3-io/cosmic-ext-airlock#install">README</a>.
+        On another compositor the daemon exits with a diagnostic naming the
         missing protocol. <code>airlock install</code> is the complete
         setup (keybind takeover, app icon, desktop entry, commented starter
         config, all user-level);
