@@ -34,8 +34,11 @@ The only switcher surface an external Wayland client can honestly build
 is icon + title (thumbnails are protocol-impossible; research record
 `switcher-ux-and-icons.md` §2.9) — and Airlock does it as a 4 MB RSS,
 single-thread daemon against cosmic-launcher's ≈170 MB alt-tab process,
-at 3–4 ms warm round-trips, with per-workspace isolation and a
-same-application cycling gesture the platform default does not offer.
+  at 3–4 ms warm round-trips, with per-workspace isolation and a
+  same-application cycling gesture the platform default does not offer.
+  The icon+title ceiling stands through every presentation — the flat
+  card, the horizontal tile band, and the grouped tree are all
+  icon-led; no real thumbnails anywhere.
 
 ## Operating Context
 
@@ -81,7 +84,28 @@ same-application cycling gesture the platform default does not offer.
   desktop's density by design; its width never moves. At Spacious the
   `rows` budget auto-clamps to the 720-px fit with one diagnostic —
   the fit is guaranteed by construction. Follow-only by decision: no
-  keys exist, the desktop is the config.
+  keys exist, the desktop is the config. Re-decided 2026-11-09
+  (`width`, `min-width`): **the card is content-sized** — those keys
+  set optional floors (`"auto"` keeps content sizing as the default,
+  `"100%"` spans the invoking output, a % or px count sets a floor),
+  superseding the same day's pin that the width never moves.
+- Card presentations (2026-11-09): the flat vertical MRU card is the
+  default; `layout = "horizontal"` renders the same MRU list as an
+  icon+title tile band (`columns` sizes it — `"auto"` fits
+  two-thirds of the output width or 3–12 pinned; Ctrl+1..9, hover,
+  click, and the wheel address tiles exactly as they address rows);
+  `grouping = true` re-partitions the list into a two-level
+  app/window tree (→ expands and enters, ← collapses and exits, Tab
+  walks the visible rows, ` steps the selected app's windows —
+  0.4.1: from inside a run Tab keeps the run open, and ` on an open
+  group collapses it in place); `show_workspace = true` labels the
+  card with the workspace. Custom card+text colors via the `Theme`
+  keys, contrast-guarded (WCAG 2.2 AA 4.5:1 for titles; the 2026-11-04
+  no-accent hard line stands). Pointer extras: each row/tile carries a
+  hover-revealed × close badge (0.4.2: 16-px ink, 20-px click
+  territory) that closes the window from the card, and the cursor
+  turns to a pointing hand while over the card (needs the compositor's
+  cursor-shape protocol; without it the cursor simply stays).
 - Constraints, durable: RSS < 30 MB and warm press < 50 ms are product
   budgets, not targets; no libcosmic/iced dependency; never write
   outside the user's config and data dirs (`/usr/share` untouched);
@@ -101,11 +125,24 @@ same-application cycling gesture the platform default does not offer.
   (a `font` key overrides the family; size stays the pinned 12 px),
   Unicode renders true glyphs, and the ASCII fold is the zero-fonts
   bitmap floor only; glance legibility on both wallpaper polarities is a floor,
-  not a preference.
+  not a preference. Superseded 2026-11-09: `font_size` makes the text
+  size configurable — 8–24 logical px, default 12; titles, the query
+  strip, hint digits, and captions follow, rows grow and clamp to the
+  720-px fit as at Spacious, and the 8×8 bitmap floor scales too.
 - Decided (2026-11-02): app ID **`io.github.l1br3-io.Airlock`** (the
   real GitHub org), crate `cosmic-ext-airlock` owned personally on
   crates.io, v0.1.0 channels GitHub Release + crates.io (Flathub out of
   scope — a sandboxed keybind daemon fights the Flatpak model).
+  Superseded 2026-11-08 on Flathub only
+  (`docs/research/flatpak-publishing.md`): the submission path is
+  unremarkable and the README roadmap carries it without dates, but the
+  blocker is keybind capture in the sandbox — no GlobalShortcuts
+  backend in xdg-desktop-portal-cosmic, and a `<10 ms` spawn path that
+  is unmeasured; a one-hour VM latency experiment decides submission.
+  The app ID's middle-component dash violates the Flathub naming rule
+  (open owner decision). Channels realized and live: **crates.io
+  (0.4.2 published 2026-11-11, the newest)** with GitHub Release
+  artifacts and cargo-binstall prebuilt binaries.
 
 ## Brand Commitments
 
@@ -122,17 +159,25 @@ same-application cycling gesture the platform default does not offer.
 
 ## Evidence on Hand
 
-- Primary-source research records in `docs/research/`: workspace
-  isolation feasibility, naming/trademark clearance, VM environment,
-  switcher behavior adaptation, switcher UX + icon pipeline (all
-  complete; the records are never edited after the fact).
+- Primary-source research records in `docs/research/`, all complete
+  and never edited after the fact: workspace isolation feasibility,
+  naming/trademark clearance, VM environment, switcher behavior
+  adaptation, switcher UX + icon pipeline — then five more closed
+  2026-11-07 through 2026-11-09: app grouping as treeview (owner
+  superseded its keep-vertical verdict; the horizontal band shipped as
+  the configurable layout), appearance settings, COSMIC appearance
+  stores, Flathub publishing, grouped-window presentation.
+- Published release: live on crates.io through 0.4.2 (2026-11-11),
+  with GitHub Release artifacts and cargo-binstall prebuilt binaries.
+  Prebuilt-binary and system-build-prerequisite install paths are
+  documented in README.
 - Measured performance (2026-10-25, `docs/hardware-checklist.md`):
   4.0 MB RSS / 1 thread, 3–4 ms warm press, ~300 ms cold press.
 - Design preview sheet via the `overlay-preview` example — the honest
   stand-in for visual review off hardware.
 - Absences future work must not fabricate: no screenshots of the new
-  overlay on real hardware yet (CP-OV VM pass pending); no published
-  package, no user counts, no testimonials.
+  overlay on real hardware yet (CP-OV VM pass pending); no user
+  counts, no testimonials.
 
 ## Product Principles
 
