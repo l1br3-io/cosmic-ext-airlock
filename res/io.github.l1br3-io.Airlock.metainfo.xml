@@ -23,6 +23,20 @@
   <url type="homepage">https://github.com/l1br3-io/cosmic-ext-airlock</url>
   <url type="bugtracker">https://github.com/l1br3-io/cosmic-ext-airlock/issues</url>
   <releases>
+    <release version="0.4.3" date="2026-11-13">
+      <description>
+        <ul>
+          <li>Fixed: icons shipped as 8-bit palette PNGs render instead
+              of degrading to a bare glyph — some Flatpak exports
+              (Obsidian's among them) carry their icon masters as
+              indexed PNGs. The rasterizer assembled only RGB and RGBA
+              pixels, so a palette payload was rejected. Indexed
+              sources are now expanded to truecolor by the decoder —
+              palette indices and their tRNS alpha both resolve —
+              before any bytes reach the assembly.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.2" date="2026-11-11">
       <description>
         <ul>

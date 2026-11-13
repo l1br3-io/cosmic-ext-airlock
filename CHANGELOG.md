@@ -3,6 +3,19 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
+## [0.4.3] — 2026-11-13
+
+### Fixed
+
+- **Icons shipped as 8-bit palette PNGs render instead of degrading to
+  a bare glyph** — some Flatpak exports (Obsidian's among them) carry
+  their icon masters as indexed PNGs. The rasterizer assembled only
+  RGB and RGBA pixels, so a palette payload was rejected and the row
+  degraded to a bare glyph. Indexed sources are now expanded to
+  truecolor by the decoder — palette indices and their tRNS alpha both
+  resolve — before any bytes reach the assembly, so those icons render
+  instead of disappearing.
+
 ## [0.4.2] — 2026-11-11
 
 ### Fixed
