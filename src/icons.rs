@@ -325,12 +325,20 @@ fn rasterize_svg(path: &Path, side: u32) -> Option<IconBitmap> {
 /// premultiplied domain (linear filtering is only correct there).
 fn rasterize_png(path: &Path, side: u32) -> Option<IconBitmap> {
     let file = fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
+    let mut decoder = png::Decoder::new(file);
+    // Flatpak exports ship their masters as 8-bit palette PNGs (Obsidian's
+    // report): the raw payload is PLTE indices, which the RGB(A)-only
+    // assembly below rejects, and the row degrades to the glyph. EXPAND
+    // resolves the indices — and the tRNS alpha Obsidian also carries —
+    // into truecolor RGBA before any bytes reach the reader.
+    decoder.set_transformations(png::Transformations::EXPAND);
     let mut reader = decoder.read_info().ok()?;
     let (width, height) = reader.info().size();
     let mut bytes = vec![0; reader.output_buffer_size()];
     reader.next_frame(&mut bytes).ok()?;
-    let color = reader.info().color_type;
+    // With EXPAND the buffer layout is the output color type, which for a
+    // palette source is RGB or RGBA — not the header's Indexed.
+    let (color, _) = reader.output_color_type();
     let argb = rgba_argb(&bytes, width, height, color)?;
     Some(IconBitmap {
         side,
@@ -340,9 +348,10 @@ fn rasterize_png(path: &Path, side: u32) -> Option<IconBitmap> {
 
 /// Assembles straight-alpha PNG bytes into premultiplied
 /// `0xAARRGGBB` pixels. RGB and RGBA pass through (alpha 255 for RGB);
-/// grayscale and palette images are rejected honestly — themed app
-/// icons are RGBA in practice, and the rest of the `png` crate's format
-/// surface is not worth carrying for the remainder.
+/// grayscale images are rejected honestly — palette sources arrive
+/// already expanded by the decoder's EXPAND transform, and the rest of
+/// the `png` crate's format surface is not worth carrying for the
+/// remainder.
 fn rgba_argb(bytes: &[u8], width: u32, height: u32, color: png::ColorType) -> Option<Vec<u32>> {
     let channels = match color {
         png::ColorType::Rgba => 4,
@@ -486,6 +495,18 @@ mod tests {
         path
     }
 
+    fn png_fixture_indexed(
+        name: &str,
+        side: u8,
+        palette: &[[u8; 3]],
+        indices: &[u8],
+        alphas: Option<&[u8]>,
+    ) -> PathBuf {
+        let path = temp_path(name);
+        write_indexed_png(&path, side, palette, indices, alphas);
+        path
+    }
+
     fn write_png(path: &Path, side: u8, color: [u8; 4]) {
         let file = fs::File::create(path).expect("create png fixture");
         let mut encoder = png::Encoder::new(file, side as u32, side as u32);
@@ -497,6 +518,45 @@ mod tests {
             rgba.extend_from_slice(&color);
         }
         writer.write_image_data(&rgba).expect("png pixels");
+    }
+
+    /// An 8-bit palette (Indexed) PNG: `palette` carries RGB triples,
+    /// `indices` carries one palette index per pixel, and `alphas` the
+    /// optional tRNS alpha byte per palette entry (None omits the chunk).
+    /// The layout Flatpak exports actually ship app icons in — Obsidian's
+    /// master is 8-bit colormap with transparency.
+    fn write_indexed_png(
+        path: &Path,
+        side: u8,
+        palette: &[[u8; 3]],
+        indices: &[u8],
+        alphas: Option<&[u8]>,
+    ) {
+        assert_eq!(
+            indices.len(),
+            side as usize * side as usize,
+            "one index per pixel"
+        );
+        let file = fs::File::create(path).expect("create png fixture");
+        let mut encoder = png::Encoder::new(file, side as u32, side as u32);
+        encoder.set_color(png::ColorType::Indexed);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_palette(
+            palette
+                .iter()
+                .flat_map(|c| c.iter().copied())
+                .collect::<Vec<u8>>(),
+        );
+        if let Some(alphas) = alphas {
+            assert_eq!(
+                alphas.len(),
+                palette.len(),
+                "one alpha byte per palette entry"
+            );
+            encoder.set_trns(alphas.to_vec());
+        }
+        let mut writer = encoder.write_header().expect("png header");
+        writer.write_image_data(indices).expect("png pixels");
     }
 
     /// A Flatpak export icon root in a temp dir: each `(theme, size-dir,
@@ -760,6 +820,72 @@ mod tests {
             .expect("icon rasterized");
         assert_eq!(bitmap.side, 64);
         assert_eq!(argb(bitmap.argb[0]), [255, 0x10, 0x20, 0x30]);
+    }
+
+    /// Flatpak-shipped app icons (the Obsidian report) arrive as 8-bit
+    /// palette PNGs — the export's 512×512 master is Indexed. The raw
+    /// payload is palette indices, so a decoder that only reads RGB(A)
+    /// tuples rejects the icon and the row degrades to the glyph. Palette
+    /// entries must expand to truecolor.
+    #[test]
+    fn palette_png_icons_decode_to_truecolor() {
+        let png = png_fixture_indexed(
+            "palette.png",
+            2,
+            &[[0xFF, 0x00, 0x00], [0x00, 0xFF, 0x00]],
+            &[0, 0, 1, 1],
+            None,
+        );
+        let (lookup, _calls) = stub("org.test.palette", png);
+        let mut cache = Cache::with_entries(
+            corpus(&[(
+                "org.test.Palette.desktop",
+                "[Desktop Entry]\nType=Application\nName=Palette\nIcon=org.test.palette\n",
+            )]),
+            lookup,
+        );
+        cache.prepare(["org.test.palette"], ui::ICON, 1, &ui::Palette::dark());
+        let bitmap = cache
+            .bitmap("org.test.palette", ui::ICON, 1, &ui::Palette::dark())
+            .expect("palette icon rasterized");
+        // Pixels wear the palette's colors (premultiplied — both are fully
+        // opaque, so straight), not the raw indices. The 2×2 source upscales
+        // nearest to the icon side, so the last pixel still samples the
+        // source's bottom-right entry.
+        assert_eq!(argb(bitmap.argb[0]), [255, 0xFF, 0x00, 0x00]);
+        let last = bitmap.argb.len() - 1;
+        assert_eq!(argb(bitmap.argb[last]), [255, 0x00, 0xFF, 0x00]);
+    }
+
+    /// Obsidian's export carries a tRNS chunk (its corners are
+    /// transparent); expansion must honor it, keeping the alpha channel —
+    /// a lost tRNS paints every icon as a solid box.
+    #[test]
+    fn palette_png_transparency_survives_expansion() {
+        let png = png_fixture_indexed(
+            "palette-alpha.png",
+            2,
+            &[[0x10, 0x20, 0x30], [0x40, 0x50, 0x60]],
+            &[0, 0, 1, 1],
+            Some(&[0, 255]),
+        );
+        let (lookup, _calls) = stub("org.test.palettealpha", png);
+        let mut cache = Cache::with_entries(
+            corpus(&[(
+                "org.test.PaletteAlpha.desktop",
+                "[Desktop Entry]\nType=Application\nName=PaletteAlpha\nIcon=org.test.palettealpha\n",
+            )]),
+            lookup,
+        );
+        cache.prepare(["org.test.palettealpha"], ui::ICON, 1, &ui::Palette::dark());
+        let bitmap = cache
+            .bitmap("org.test.palettealpha", ui::ICON, 1, &ui::Palette::dark())
+            .expect("palette icon rasterized");
+        // Palette entry 0 is fully transparent (premultiplied to zero);
+        // entry 1 keeps full coverage — again sampled at the last pixel.
+        assert_eq!(bitmap.argb[0], 0);
+        let last = bitmap.argb.len() - 1;
+        assert_eq!(argb(bitmap.argb[last]), [255, 0x40, 0x50, 0x60]);
     }
 
     #[test]
