@@ -345,21 +345,22 @@ pub fn commit_target(open: &Switch, snapshot: &Snapshot) -> Option<Handle> {
         .filter(|&handle| switcher::switchable(snapshot, handle, open.scope))
 }
 
-/// The window a quick toggle should activate: the MRU-second eligible
-/// window under `scope` — the same target one quick Alt+Tab tap reaches —
-/// or `None` when fewer than two windows are eligible, which makes the
-/// toggle a silent no-op. No session, no overlay: the caller activates the
-/// target immediately or does nothing at all.
+/// The window a quick toggle should activate: the second window of
+/// [`switcher::eligible`]'s order under `scope` — the same target one
+/// quick Alt+Tab tap reaches — or `None` when fewer than two windows are
+/// eligible, which makes the toggle a silent no-op. No session, no
+/// overlay: the caller activates the target immediately or does nothing
+/// at all.
 pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> {
     let active = snapshot.active?;
-    switcher::eligible(&snapshot.toplevels, active, scope)
+    switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, scope)
         .get(1)
         .copied()
 }
 
 /// Starts or advances the gesture session's selection by one step.
 ///
-/// A session's first press builds it from the MRU front — the focused
+/// A session's first press builds it from the eligible front — the focused
 /// window's row — so the opening Alt+Tab (Alt+Shift+Tab) is the first
 /// step of the session's linear walk in grouped mode: one visible row
 /// past the active window — the next app entry while the active group
@@ -398,11 +399,16 @@ pub fn ring_step(
         // linear step past the active window's rows. Flat sessions keep
         // the eligible-list ring, no tree. The frozen window set — the
         // query's narrow domain — is the eligible list in both shapes.
-        let eligible = switcher::eligible(&snapshot.toplevels, active, scope);
+        let eligible = switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, scope);
         let (handles, tree) = if grouping {
             (
                 Vec::new(), // grouped selections live on the tree, not a ring
-                Some(switcher::Grouping::new(&snapshot.toplevels, active, scope)),
+                Some(switcher::Grouping::new(
+                    &snapshot.toplevels,
+                    &snapshot.workspaces,
+                    active,
+                    scope,
+                )),
             )
         } else {
             (eligible.clone(), None)
@@ -525,7 +531,7 @@ pub fn session_step(
     // A new same-app session: anchor, narrow, and hold the two-window
     // floor — one window of the app is nothing to cycle.
     let active = snapshot.active?;
-    let app = switcher::app_anchor(&snapshot.toplevels, active, scope)?;
+    let app = switcher::app_anchor(&snapshot.toplevels, &snapshot.workspaces, active, scope)?;
     let view = switcher::app_view(snapshot, &app, scope);
     if view.toplevels.len() < 2 {
         return None;
@@ -2668,7 +2674,7 @@ mod tests {
         assert!(stamped[1].last_activated > stamped[0].last_activated);
 
         // And the MRU order follows: window 2 sorts first.
-        let handles = switcher::eligible(&stamped, WorkspaceId(1), Scope::CurrentWorkspace);
+        let handles = switcher::eligible(&stamped, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(2), Handle(1)]);
     }
 
@@ -3988,20 +3994,36 @@ mod tests {
 
     #[test]
     fn quick_toggle_respects_the_workspace_scope() {
+        // Handle 2 lives on workspace 2 — outside the CurrentWorkspace
+        // list, and under All it follows the invoking workspace's group
+        // (workspace-order, 2026-11-14): with two windows on workspace 1
+        // the toggle target is that workspace's MRU-second (3), not the
+        // globally more recent 2.
         let snap = snapshot(
             vec![
                 toplevel(1, &[1], State::ACTIVATED, 30),
-                // On workspace 2: the MRU-second under All, invisible here.
                 toplevel(2, &[2], State::default(), 20),
                 toplevel(3, &[1], State::default(), 10),
             ],
             Some(1),
         );
-        assert_eq!(quick_toggle_target(&snap, Scope::All), Some(Handle(2)));
+        assert_eq!(quick_toggle_target(&snap, Scope::All), Some(Handle(3)));
         assert_eq!(
             quick_toggle_target(&snap, Scope::CurrentWorkspace),
             Some(Handle(3))
         );
+        // One window on the invoking workspace: under All the target
+        // crosses to the other workspace's front; under
+        // CurrentWorkspace there is nothing to toggle to.
+        let lone = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[2], State::default(), 20),
+            ],
+            Some(1),
+        );
+        assert_eq!(quick_toggle_target(&lone, Scope::All), Some(Handle(2)));
+        assert_eq!(quick_toggle_target(&lone, Scope::CurrentWorkspace), None);
     }
 
     #[test]
@@ -4633,11 +4655,14 @@ mod tests {
     }
 
     #[test]
-    fn ring_step_under_all_lists_cross_workspace_windows_in_mru_order() {
+    fn ring_step_under_all_lists_workspace_major() {
         let snap = snapshot(
             vec![
                 toplevel(1, &[1], State::ACTIVATED, 40),
-                // On workspace 2: excluded by CurrentWorkspace, listed by All.
+                // On workspace 2: excluded by CurrentWorkspace, and under
+                // All it waits behind the invoking workspace's group even
+                // though it is globally more recent than handle 3
+                // (workspace-order, 2026-11-14).
                 toplevel(2, &[2], State::default(), 30),
                 toplevel(3, &[1], State::default(), 20),
             ],
@@ -4660,7 +4685,7 @@ mod tests {
                 TILES,
                 &mut HashSet::new()
             ),
-            Some(Handle(2))
+            Some(Handle(3))
         );
         assert_eq!(
             ring_step(
@@ -4678,7 +4703,7 @@ mod tests {
                 TILES,
                 &mut HashSet::new()
             ),
-            Some(Handle(3))
+            Some(Handle(2))
         );
         assert_eq!(
             ring_step(

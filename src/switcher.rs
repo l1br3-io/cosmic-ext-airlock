@@ -72,8 +72,62 @@ pub enum Scope {
     /// the v1 behavior and the default for workspaces without a setting.
     #[default]
     CurrentWorkspace,
-    /// Every non-minimized window across all workspaces, MRU order.
+    /// Every non-minimized window across all workspaces, workspace-major
+    /// order (see [`eligible`]).
     All,
+}
+
+/// Positions of `workspaces` in workspace order — coordinates sorted
+/// lexicographically, workspace id breaking ties — the order
+/// `format_snapshot` lists by and `settings::active_workspace` counts
+/// positions in. The workspace-order module's one implementation of the
+/// convention, owned here; callers hand it `&snapshot.workspaces`.
+fn workspace_positions(workspaces: &[Workspace]) -> HashMap<WorkspaceId, usize> {
+    let mut sorted: Vec<&Workspace> = workspaces.iter().collect();
+    sorted.sort_by(|a, b| {
+        a.coordinates
+            .cmp(&b.coordinates)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    sorted
+        .into_iter()
+        .enumerate()
+        .map(|(position, workspace)| (workspace.id, position))
+        .collect()
+}
+
+/// The workspace-major sort key of one toplevel: `(tier, workspace
+/// position, Reverse(last_activated))`, ascending.
+///
+/// Tier 0 is the invoking workspace — members and sticky alike (sticky is
+/// visible on every workspace, so it is part of this one by the same rule
+/// `Scope::CurrentWorkspace` applies). Tier 1 is membership in some listed
+/// workspace, keyed by the earliest such workspace's position (2026-11-14
+/// decision 5: a window on several workspaces groups by the invoking
+/// workspace if it is a member, else by its earliest member in workspace
+/// order). Tier 2 is membership empty or entirely unlisted — not part of
+/// the workspace, always at the bottom. MRU is the tiebreak everywhere, so
+/// under `Scope::CurrentWorkspace` — where every eligible window is tier 0
+/// — the key degenerates to pure MRU and the default view's output is
+/// byte-identical (the degenerate case is the safety).
+fn group_key(
+    toplevel: &Toplevel,
+    positions: &HashMap<WorkspaceId, usize>,
+    active: WorkspaceId,
+) -> (u8, usize, std::cmp::Reverse<u64>) {
+    if toplevel.state.contains(State::STICKY) || toplevel.workspaces.contains(&active) {
+        (0, 0, std::cmp::Reverse(toplevel.last_activated))
+    } else {
+        toplevel
+            .workspaces
+            .iter()
+            .filter_map(|id| positions.get(id).copied())
+            .min()
+            .map_or(
+                (2, 0, std::cmp::Reverse(toplevel.last_activated)),
+                |position| (1, position, std::cmp::Reverse(toplevel.last_activated)),
+            )
+    }
 }
 
 /// Windows eligible for switching on `active` under `scope`: visible there
@@ -81,15 +135,29 @@ pub enum Scope {
 /// workspace per zcosmic_toplevel_info_v1), or anywhere at all for
 /// [`Scope::All`].
 ///
-/// Returns handles in MRU order (most recently activated first); ties keep
-/// snapshot order.
-pub fn eligible(toplevels: &[Toplevel], active: WorkspaceId, scope: Scope) -> Vec<Handle> {
+/// Returns handles in the switcher's listing order, and every consumer —
+/// ring, overlay, commit paths — treats it like any other. Under
+/// [`Scope::CurrentWorkspace`] that order is plain MRU (most recently
+/// activated first; ties keep snapshot order). Under [`Scope::All`] it is
+/// workspace-major (2026-11-14): the invoking workspace's windows first
+/// (sticky among them), the other workspaces in workspace order
+/// (coordinates sorted, id breaking ties — the `format_snapshot`
+/// convention), workspace-less windows last; MRU within each group, ties
+/// keep snapshot order.
+pub fn eligible(
+    toplevels: &[Toplevel],
+    workspaces: &[Workspace],
+    active: WorkspaceId,
+    scope: Scope,
+) -> Vec<Handle> {
+    let positions = workspace_positions(workspaces);
     let mut matches: Vec<&Toplevel> = toplevels
         .iter()
         .filter(|toplevel| is_switchable(toplevel, active, scope))
         .collect();
-    // Stable sort: MRU ties keep snapshot order.
-    matches.sort_by_key(|toplevel| std::cmp::Reverse(toplevel.last_activated));
+    // Stable sort: equal keys keep snapshot order, the existing
+    // convention.
+    matches.sort_by_key(|toplevel| group_key(toplevel, &positions, active));
     matches
         .into_iter()
         .map(|toplevel| toplevel.handle)
@@ -126,11 +194,19 @@ pub fn switchable(snapshot: &Snapshot, handle: Handle, scope: Scope) -> bool {
 }
 
 /// The app a same-app session on `active` under `scope` anchors to: the
-/// app_id of the frontmost eligible window in MRU order. An empty app_id
-/// never anchors — windows the compositor cannot attribute never group —
-/// so anchoring walks down the MRU list to the first attributable window.
-pub fn app_anchor(toplevels: &[Toplevel], active: WorkspaceId, scope: Scope) -> Option<String> {
-    eligible(toplevels, active, scope)
+/// app_id of the frontmost window of [`eligible`]'s order — the invoking
+/// workspace's front under [`Scope::All`] (2026-11-14: here outranks
+/// recent), the MRU front under [`Scope::CurrentWorkspace`]. An empty
+/// app_id never anchors — windows the compositor cannot attribute never
+/// group — so anchoring walks down the eligible list to the first
+/// attributable window.
+pub fn app_anchor(
+    toplevels: &[Toplevel],
+    workspaces: &[Workspace],
+    active: WorkspaceId,
+    scope: Scope,
+) -> Option<String> {
+    eligible(toplevels, workspaces, active, scope)
         .iter()
         .find_map(|handle| {
             toplevels
@@ -144,9 +220,9 @@ pub fn app_anchor(toplevels: &[Toplevel], active: WorkspaceId, scope: Scope) -> 
 /// would list on the active workspace under `scope`, narrowed to `app`.
 ///
 /// The result is an ordinary snapshot, so the ring, overlay, and commit
-/// paths treat it like any other. Order follows [`eligible`] exactly (MRU
-/// first, ties keep snapshot order); an empty `app` — like an empty
-/// app_id — groups nothing.
+/// paths treat it like any other. Order follows [`eligible`] exactly
+/// (workspace-major under [`Scope::All`], MRU otherwise); an empty `app` —
+/// like an empty app_id — groups nothing.
 pub fn app_view(snapshot: &Snapshot, app: &str, scope: Scope) -> Snapshot {
     let Some(active) = snapshot.active else {
         return Snapshot {
@@ -155,7 +231,7 @@ pub fn app_view(snapshot: &Snapshot, app: &str, scope: Scope) -> Snapshot {
             active: None,
         };
     };
-    let toplevels = eligible(&snapshot.toplevels, active, scope)
+    let toplevels = eligible(&snapshot.toplevels, &snapshot.workspaces, active, scope)
         .iter()
         .filter_map(|handle| {
             snapshot
@@ -207,8 +283,9 @@ pub fn matches(toplevels: &[Toplevel], handles: &[Handle], query: &str) -> Vec<H
         .collect()
 }
 
-/// A selection ring over the MRU-ordered eligible list: `next`/`previous`
-/// move the selection with wrap-around, and an empty ring selects nothing.
+/// A selection ring over the eligible list ([`eligible`]'s order):
+/// `next`/`previous` move the selection with wrap-around, and an empty
+/// ring selects nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ring {
     handles: Vec<Handle>,
@@ -297,7 +374,7 @@ pub enum RowKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupedRow {
     /// The window this row resolves to at commit time. A parent carries
-    /// its app's MRU-front eligible window — the entry's implied
+    /// its app's front eligible window — the entry's implied
     /// window, `[alt]+1` — so Alt-release on a parent row activates
     /// that window.
     pub handle: Handle,
@@ -308,8 +385,9 @@ pub struct GroupedRow {
 }
 
 /// The eligible list re-partitioned into an app → windows tree: parent
-/// rows in MRU first-appearance order, each followed by its children in
-/// MRU order, top-level leaves at their own first-appearance positions.
+/// rows in first-appearance order over [`eligible`]'s sequence, each
+/// followed by its children in the same order, top-level leaves at their
+/// own first-appearance positions.
 /// The window set freezes at open exactly as the flat list does.
 ///
 /// Expansion is *caller state*, not tree state: groups render collapsed
@@ -325,10 +403,16 @@ pub struct Grouping {
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl Grouping {
-    /// Partitions [`eligible`]'s MRU list on `active` under `scope` into
-    /// the grouped row sequence.
-    pub fn new(toplevels: &[Toplevel], active: WorkspaceId, scope: Scope) -> Self {
-        let handles = eligible(toplevels, active, scope);
+    /// Partitions [`eligible`]'s list on `active` under `scope` (over
+    /// `workspaces`, workspace-major under [`Scope::All`]) into the grouped
+    /// row sequence.
+    pub fn new(
+        toplevels: &[Toplevel],
+        workspaces: &[Workspace],
+        active: WorkspaceId,
+        scope: Scope,
+    ) -> Self {
+        let handles = eligible(toplevels, workspaces, active, scope);
         // App of each eligible handle, parallel to `handles`; empty for
         // windows the compositor cannot attribute.
         let apps: Vec<String> = handles
@@ -362,8 +446,9 @@ impl Grouping {
             } else if emitted.insert(app.as_str()) {
                 // First appearance fronts its app's block as the parent
                 // — the level-1 layer entry, carrying the app's
-                // MRU-front window as its implied window. The app's
-                // *whole* window set follows as children in MRU order,
+                // front window (the head of the eligible list) as its
+                // implied window. The app's *whole* window set follows as
+                // children in eligible order,
                 // front window first: the parent commits what the
                 // sketch numbers `[alt]+1`, so that window is the first
                 // child the card shows.
@@ -424,8 +509,8 @@ impl Grouping {
     }
 
     /// The children of the parent at `parent`: the contiguous
-    /// [`RowKind::Child`] block after it, in frozen MRU order — empty
-    /// for leaves and out-of-range positions.
+    /// [`RowKind::Child`] block after it, in its frozen eligible order —
+    /// empty for leaves and out-of-range positions.
     pub fn children_of(&self, parent: usize) -> Vec<usize> {
         if self
             .rows
@@ -498,6 +583,16 @@ mod tests {
         }
     }
 
+    /// A workspace for the All-scope grouping pins — `id` and coordinates
+    /// under test's choosing.
+    fn workspace(id: u64, coordinates: &[u32]) -> Workspace {
+        Workspace {
+            id: WorkspaceId(id),
+            name: format!("workspace {id}"),
+            coordinates: coordinates.to_vec(),
+        }
+    }
+
     #[test]
     fn eligible_keeps_only_toplevels_on_the_active_workspace() {
         let toplevels = vec![
@@ -505,7 +600,7 @@ mod tests {
             toplevel(2, &[2], State::default(), 0),
             toplevel(3, &[3], State::default(), 0),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(2), Scope::CurrentWorkspace);
+        let handles = eligible(&toplevels, &[], WorkspaceId(2), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(2)]);
     }
 
@@ -515,7 +610,7 @@ mod tests {
             toplevel(1, &[1, 2, 3], State::default(), 0),
             toplevel(2, &[1], State::default(), 0),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(3), Scope::CurrentWorkspace);
+        let handles = eligible(&toplevels, &[], WorkspaceId(3), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(1)]);
     }
 
@@ -524,7 +619,7 @@ mod tests {
         // Sticky windows are visible everywhere, even if the compositor does
         // not list every workspace in their workspace set.
         let toplevels = vec![toplevel(1, &[1], State::STICKY, 0)];
-        let handles = eligible(&toplevels, WorkspaceId(4), Scope::CurrentWorkspace);
+        let handles = eligible(&toplevels, &[], WorkspaceId(4), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(1)]);
     }
 
@@ -534,7 +629,7 @@ mod tests {
             toplevel(1, &[1], State::MINIMIZED, 0),
             toplevel(2, &[1], State::default(), 0),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        let handles = eligible(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(2)]);
     }
 
@@ -545,7 +640,7 @@ mod tests {
             toplevel(2, &[1], State::default(), 30),
             toplevel(3, &[1], State::default(), 20),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        let handles = eligible(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(2), Handle(3), Handle(1)]);
     }
 
@@ -555,28 +650,101 @@ mod tests {
             toplevel(1, &[1], State::default(), 7),
             toplevel(2, &[1], State::default(), 7),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        let handles = eligible(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(handles, vec![Handle(1), Handle(2)]);
     }
 
     #[test]
     fn eligible_on_no_matching_toplevels_is_empty() {
         let toplevels = vec![toplevel(1, &[2], State::default(), 0)];
-        assert!(eligible(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace).is_empty());
+        assert!(eligible(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace).is_empty());
     }
 
     #[test]
-    fn all_scope_lists_cross_workspace_toplevels_in_mru_order() {
-        let toplevels = vec![
-            toplevel(1, &[1], State::default(), 5),
-            // Sticky windows are visible everywhere, so All lists them like
-            // any other window.
-            toplevel(2, &[1], State::STICKY, 40),
-            toplevel(3, &[2], State::default(), 30),
-            toplevel(4, &[1], State::default(), 20),
+    fn all_scope_lists_workspace_major_with_the_invoking_workspace_first() {
+        // Three workspaces in shuffled snapshot order — coordinates (then
+        // id) decide position, never snapshot order. Invoked from the
+        // middle workspace (2).
+        let workspaces = vec![
+            workspace(3, &[2, 0]),
+            workspace(1, &[0, 0]),
+            workspace(2, &[1, 0]),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(1), Scope::All);
-        assert_eq!(handles, vec![Handle(2), Handle(3), Handle(4), Handle(1)]);
+        let toplevels = vec![
+            // Invoking-workspace members (tier 0)...
+            toplevel(1, &[2], State::default(), 10),
+            toplevel(2, &[2], State::default(), 30),
+            // ...sticky among them — visible everywhere means visible
+            // here.
+            toplevel(3, &[1], State::STICKY, 50),
+            // A multi-workspace window that includes the invoking
+            // workspace groups with it.
+            toplevel(8, &[2, 3], State::default(), 5),
+            // Workspace 1's group (coordinates position 0), MRU within...
+            toplevel(4, &[1], State::default(), 20),
+            toplevel(5, &[1], State::default(), 40),
+            // ...and a multi-workspace non-member landing in its earliest
+            // listed workspace (1, not 3).
+            toplevel(7, &[1, 3], State::default(), 35),
+            // Workspace 3's group (position 2) after workspace 1's.
+            toplevel(6, &[3], State::default(), 25),
+            // Workspace-less tail (tier 2) in MRU — even the globally
+            // most recent window (11, membership unlisted) waits at the
+            // bottom.
+            toplevel(9, &[], State::default(), 15),
+            toplevel(10, &[], State::default(), 45),
+            toplevel(11, &[99], State::default(), 55),
+        ];
+        let handles = eligible(&toplevels, &workspaces, WorkspaceId(2), Scope::All);
+        assert_eq!(
+            handles,
+            vec![
+                // Tier 0: invoking workspace plus sticky, MRU within.
+                Handle(3),
+                Handle(2),
+                Handle(1),
+                Handle(8),
+                // Tier 1: workspace 1 (coordinates first)...
+                Handle(5),
+                Handle(7),
+                Handle(4),
+                // ...then workspace 3.
+                Handle(6),
+                // Tier 2: workspace-less, MRU within.
+                Handle(11),
+                Handle(10),
+                Handle(9),
+            ]
+        );
+    }
+
+    #[test]
+    fn all_scope_breaks_mru_ties_by_snapshot_order() {
+        // The two windows tie on last_activated within the same tier:
+        // snapshot order decides, exactly as the CurrentWorkspace sort
+        // does.
+        let workspaces = vec![workspace(1, &[0, 0]), workspace(2, &[1, 0])];
+        let toplevels = vec![
+            toplevel(1, &[1], State::default(), 7),
+            toplevel(2, &[2], State::default(), 7),
+        ];
+        let handles = eligible(&toplevels, &workspaces, WorkspaceId(1), Scope::All);
+        assert_eq!(handles, vec![Handle(1), Handle(2)]);
+    }
+
+    #[test]
+    fn all_scope_orders_equal_coordinate_workspaces_by_id() {
+        // The workspace-order convention: coordinates lexicographic, id
+        // breaking ties (the format_snapshot rule).
+        let workspaces = vec![workspace(5, &[0, 0]), workspace(4, &[0, 0])];
+        let toplevels = vec![
+            toplevel(1, &[5], State::default(), 10),
+            toplevel(2, &[4], State::default(), 5),
+        ];
+        let handles = eligible(&toplevels, &workspaces, WorkspaceId(9), Scope::All);
+        // Workspace 4 sorts before 5 despite the snapshot listing 5
+        // first, so window 2's group leads.
+        assert_eq!(handles, vec![Handle(2), Handle(1)]);
     }
 
     #[test]
@@ -585,7 +753,7 @@ mod tests {
             toplevel(1, &[2], State::MINIMIZED, 30),
             toplevel(2, &[1], State::default(), 10),
         ];
-        let handles = eligible(&toplevels, WorkspaceId(1), Scope::All);
+        let handles = eligible(&toplevels, &[], WorkspaceId(1), Scope::All);
         assert_eq!(handles, vec![Handle(2)]);
     }
 
@@ -610,7 +778,7 @@ mod tests {
             app_window(2, "browser", &[1], State::default(), 20),
         ];
         assert_eq!(
-            app_anchor(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace),
+            app_anchor(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace),
             Some("editor".to_string())
         );
     }
@@ -624,7 +792,7 @@ mod tests {
             app_window(2, "editor", &[1], State::default(), 20),
         ];
         assert_eq!(
-            app_anchor(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace),
+            app_anchor(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace),
             Some("editor".to_string())
         );
     }
@@ -636,7 +804,7 @@ mod tests {
             app_window(2, "", &[1], State::default(), 20),
         ];
         assert_eq!(
-            app_anchor(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace),
+            app_anchor(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace),
             None
         );
     }
@@ -651,12 +819,16 @@ mod tests {
             app_window(3, "editor", &[1], State::default(), 20),
         ];
         assert_eq!(
-            app_anchor(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace),
+            app_anchor(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace),
             Some("editor".to_string())
         );
+        // Under All the eligible front is the invoking workspace's front
+        // (workspace-order, 2026-11-14): here outranks recent, so the
+        // browser — globally most recent, but elsewhere — does not anchor.
+        let workspaces = vec![workspace(1, &[0, 0]), workspace(2, &[1, 0])];
         assert_eq!(
-            app_anchor(&toplevels, WorkspaceId(1), Scope::All),
-            Some("browser".to_string())
+            app_anchor(&toplevels, &workspaces, WorkspaceId(1), Scope::All),
+            Some("editor".to_string())
         );
     }
 
@@ -1021,7 +1193,7 @@ mod tests {
             app_window(5, "a", &[1], State::default(), 10),
             app_window(6, "b", &[1], State::default(), 5),
         ];
-        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        let grouping = Grouping::new(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(
             shape(&grouping),
             vec![
@@ -1048,7 +1220,7 @@ mod tests {
             app_window(3, "a", &[1], State::default(), 20),
             app_window(4, "", &[1], State::default(), 10),
         ];
-        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        let grouping = Grouping::new(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(
             shape(&grouping),
             vec![
@@ -1069,7 +1241,7 @@ mod tests {
             app_window(1, "a", &[1], State::ACTIVATED, 30),
             app_window(2, "solo", &[1], State::default(), 20),
         ];
-        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        let grouping = Grouping::new(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(
             shape(&grouping),
             vec![(RowKind::Leaf, Handle(1)), (RowKind::Leaf, Handle(2))]
@@ -1086,7 +1258,7 @@ mod tests {
             app_window(2, "b", &[1], State::default(), 25),
             app_window(3, "b", &[1], State::default(), 20),
         ];
-        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        let grouping = Grouping::new(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         let parent = &grouping.rows()[1];
         assert_eq!(parent.kind, RowKind::Parent);
         assert_eq!(parent.handle, Handle(2));
@@ -1102,7 +1274,7 @@ mod tests {
             app_window(2, "a", &[1], State::default(), 7),
             app_window(3, "a", &[1], State::default(), 7),
         ];
-        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        let grouping = Grouping::new(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(
             shape(&grouping),
             vec![
@@ -1125,10 +1297,13 @@ mod tests {
             app_window(2, "a", &[2], State::default(), 20),
             app_window(3, "b", &[2], State::default(), 25),
         ];
-        let confined = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        let confined = Grouping::new(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(shape(&confined), vec![(RowKind::Leaf, Handle(1))]);
-        // All-scope MRU: a1, b, a2 — first appearance a then b.
-        let everywhere = Grouping::new(&toplevels, WorkspaceId(1), Scope::All);
+        // All-scope grouped: a1 fronts from the invoking workspace, then
+        // workspace 2's pair MRU within (b before a2) — first appearance
+        // a then b.
+        let workspaces = vec![workspace(1, &[0, 0]), workspace(2, &[1, 0])];
+        let everywhere = Grouping::new(&toplevels, &workspaces, WorkspaceId(1), Scope::All);
         assert_eq!(
             shape(&everywhere),
             vec![
@@ -1143,7 +1318,7 @@ mod tests {
     #[test]
     fn grouped_on_an_empty_eligible_list_is_empty() {
         let toplevels = vec![app_window(1, "a", &[2], State::default(), 30)];
-        let grouping = Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace);
+        let grouping = Grouping::new(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert!(grouping.rows().is_empty());
     }
 
@@ -1158,7 +1333,7 @@ mod tests {
             app_window(5, "b", &[1], State::default(), 20),
             app_window(6, "c", &[1], State::default(), 10),
         ];
-        Grouping::new(&toplevels, WorkspaceId(1), Scope::CurrentWorkspace)
+        Grouping::new(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace)
     }
 
     #[test]
@@ -1192,7 +1367,7 @@ mod tests {
 
     #[test]
     fn walks_on_an_empty_grouping_are_none() {
-        let grouping = Grouping::new(&[], WorkspaceId(1), Scope::CurrentWorkspace);
+        let grouping = Grouping::new(&[], &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(grouping.parent_of(0), None);
     }
 }

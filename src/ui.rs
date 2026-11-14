@@ -1816,8 +1816,8 @@ pub fn band_window(len: usize, sel: usize, tiles: usize, prev: Option<Viewport>)
 /// by `windowing` — the session's `rows` budget and the sticky viewport
 /// it carries (`None` at open) — composing titles through `text` (the
 /// backend the session froze; see [`TextBackend`]). Rows follow
-/// [`switcher::eligible`] order (most recently activated first); every
-/// row hints its Ctrl+N chord ([`RowHint::Ctrl`]).
+/// [`switcher::eligible`] order (workspace-major under [`Scope::All`],
+/// MRU otherwise); every row hints its Ctrl+N chord ([`RowHint::Ctrl`]).
 ///
 /// One list, one budget: window per [`visible_window`], a continuation
 /// row replacing the outermost slot at each truncated edge, and the
@@ -1839,7 +1839,7 @@ pub fn overlay_model(
     mut text: TextBackend<'_>,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
-    let entries = switcher::eligible(&snapshot.toplevels, active, scope);
+    let entries = switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, scope);
     if entries.is_empty() {
         return None;
     }
@@ -1874,7 +1874,7 @@ pub fn overlay_model(
 }
 
 /// Builds the horizontal band for `snapshot` with `selected`
-/// highlighted — the flat list as one row of tiles, MRU-first from the
+/// highlighted — the flat list as one row of tiles, eligible-order from the
 /// left, windowed by `banding` (the session's resolved tile budget and
 /// the sticky band it carries, `None` at open) per [`band_window`].
 /// A tile is the honest analogue the research locked: the app icon
@@ -1899,7 +1899,7 @@ pub fn overlay_model_horizontal(
     mut text: TextBackend<'_>,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
-    let entries = switcher::eligible(&snapshot.toplevels, active, scope);
+    let entries = switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, scope);
     if entries.is_empty() {
         return None;
     }
@@ -7255,6 +7255,7 @@ mod tests {
     fn build_grouped(snap: &Snapshot, selected: usize, expanded: &[&str]) -> Option<OverlayModel> {
         let tree = crate::switcher::Grouping::new(
             &snap.toplevels,
+            &snap.workspaces,
             snap.active.expect("fixture has an active workspace"),
             Scope::CurrentWorkspace,
         );
@@ -7469,6 +7470,7 @@ mod tests {
         // edges truncated.
         let tree = crate::switcher::Grouping::new(
             &snap.toplevels,
+            &snap.workspaces,
             snap.active.expect("fixture has an active workspace"),
             Scope::CurrentWorkspace,
         );
@@ -10824,6 +10826,7 @@ mod tests {
     ) -> Option<OverlayModel> {
         let tree = crate::switcher::Grouping::new(
             &snap.toplevels,
+            &snap.workspaces,
             snap.active.expect("fixture has an active workspace"),
             Scope::CurrentWorkspace,
         );
