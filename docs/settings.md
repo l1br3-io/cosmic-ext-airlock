@@ -252,8 +252,9 @@ clamps to six.
   count dots under its icon. The card's one caption, fixed top-center,
   names the commit target — the selected window's own title — and
   truncates with an ellipsis when it outgrows the card. A list longer
-  than the strip ends in a `…` tile, and stepping past it scrolls
-  just enough to keep the selection on a tile. **Left** and
+  than the strip ends in a `…` tile — its dots at full text strength,
+  with the hidden windows' count pips beneath — and stepping past it
+  scrolls just enough to keep the selection on a tile. **Left** and
   **Right** become the primary step keys — **Up** and **Down** still
   step, as aliases — and **Ctrl+1..9** addresses tiles in reading
   order, left to right, the digit shown on each of the first nine.

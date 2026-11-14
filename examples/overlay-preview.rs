@@ -540,11 +540,12 @@ fn combined_scenarios(
             ..RowModel::default()
         }
     };
-    let dots = || RowModel {
+    let dots = |hidden: usize| RowModel {
         title: String::new(),
         icon: None,
         selected: false,
         handle: None,
+        count: hidden,
         ..RowModel::default()
     };
     // apps: (label, window count); windows: the focused app's titles.
@@ -601,7 +602,7 @@ fn combined_scenarios(
         let mut rows: Vec<RowModel> =
             full[viewport.start..viewport.start + viewport.content].to_vec();
         if viewport.bottom {
-            rows.push(dots());
+            rows.push(dots(full.len() - viewport.start - viewport.content));
         }
         // The width freeze: the closed and open shapes' slots, whichever
         // the strip shows now.
@@ -783,6 +784,9 @@ fn horizontal_scenarios(
                 icon: None,
                 selected: false,
                 handle: None,
+                // The dots tile's own magnitude: the windows past the
+                // edge, so the sheet judges the real pips.
+                count: count - viewport.start - viewport.content,
                 ..RowModel::default()
             });
         }
@@ -893,13 +897,15 @@ fn row(title: &str, icon: Option<Rc<IconBitmap>>, selected: bool) -> RowModel {
 }
 
 /// The continuation row at a truncated edge, exactly as `overlay_model`
-/// builds it: no handle, no icon, no title — just its dots.
-fn dots_row() -> RowModel {
+/// builds it: no handle, no icon, no title — its dots at full ink over
+/// the hidden count's pips.
+fn dots_row(hidden: usize) -> RowModel {
     RowModel {
         title: String::new(),
         icon: None,
         selected: false,
         handle: None,
+        count: hidden,
         ..RowModel::default()
     }
 }
@@ -923,7 +929,7 @@ fn windowed(
     let mut rows =
         Vec::with_capacity(viewport.top as usize + viewport.content + viewport.bottom as usize);
     if viewport.top {
-        rows.push(dots_row());
+        rows.push(dots_row(viewport.start));
     }
     let first = viewport.start + viewport.top as usize;
     for index in first..first + viewport.content {
@@ -934,7 +940,7 @@ fn windowed(
         ));
     }
     if viewport.bottom {
-        rows.push(dots_row());
+        rows.push(dots_row(count - viewport.start - viewport.content));
     }
     let cols = titles
         .iter()
@@ -1416,10 +1422,11 @@ fn scenarios(
                     entry_row("code — airlock", icons[5].clone(), false, 4),
                     entry_row("un-attributable", None, false, 5),
                 ];
-                let vp = ui::visible_window(long.len(), 5, ui::DEFAULT_ROWS, None);
+                let total = long.len();
+                let vp = ui::visible_window(total, 5, ui::DEFAULT_ROWS, None);
                 let mut windowed_rows = Vec::new();
                 if vp.top {
-                    windowed_rows.push(dots_row());
+                    windowed_rows.push(dots_row(vp.start));
                 }
                 windowed_rows.extend(
                     long.into_iter()
@@ -1427,7 +1434,7 @@ fn scenarios(
                         .take(vp.content),
                 );
                 if vp.bottom {
-                    windowed_rows.push(dots_row());
+                    windowed_rows.push(dots_row(total - vp.start - vp.content));
                 }
                 windowed_rows
             },

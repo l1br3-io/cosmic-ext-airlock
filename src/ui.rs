@@ -341,6 +341,13 @@ pub const PIP_SIDE: u32 = 6;
 /// tile's line. Re-frozen beside [`PIP_SIDE`] on the G4 sheet,
 /// 2026-11-09.
 pub const PIP_STEP: u32 = 10;
+/// The count where pips saturate — three, everywhere pips paint: on a
+/// multi-window parent (glance-tiles G2, 2026-11-09) and on the `…`
+/// overflow tile, where the count is the windows past the edge
+/// (more-tile-prominence.md §5 L2, 2026-11-14). Promoted from the
+/// inline `.min(3)` when the overflow tile joined the vocabulary — one
+/// named ceiling so the two readings can never drift apart.
+pub const PIP_MAX: usize = 3;
 /// Clearing between a parent's title line and its count pips, logical
 /// px — the gap the default row's centered line already leaves. The row
 /// height is derived from it (see [`Rhythm::with_text`]) so the pips
@@ -1294,8 +1301,9 @@ impl RowHint {
 /// One rendered row: a title, an optional app icon, and whether it is
 /// the selection. `icon: None` draws the generic window glyph. A
 /// continuation row at a truncated edge is the same shape with `handle:
-/// None` and nothing else — the missing handle is what makes every input
-/// guard (hover, click, Ctrl+N) treat it as inert.
+/// None`, no title, and `count` set to the windows past the edge — the
+/// missing handle is what makes every input guard (hover, click, Ctrl+N)
+/// treat it as inert.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RowModel {
     pub title: String,
@@ -1311,7 +1319,9 @@ pub struct RowModel {
     /// flat row. Drives the child indent, the parent's count pips and
     /// caret, and nothing else — input addressing reads `handle`.
     pub kind: RowKind,
-    /// On a parent row, the app's window count the pips show; zero
+    /// The count the pips show, saturating at [`PIP_MAX`]: on a parent
+    /// row, the app's window count; on a continuation row, the windows
+    /// past that edge (more-tile-prominence.md §5 L2, 2026-11-14); zero
     /// everywhere else.
     pub count: usize,
     /// The number chord the hint band paints for this row; `None` on
@@ -1881,7 +1891,9 @@ pub fn overlay_model(
 /// over the clamped title, the selection filling the whole tile cell,
 /// the Ctrl+N chord as a corner badge — reading order over the
 /// displayed content tiles, ≤ 9, every displayed hint wired. A
-/// truncated trailing edge spends its last tile on the wordless `…`.
+/// truncated trailing edge spends its last tile on the `…` — full-ink
+/// dots over the hidden count's pips (more-tile-prominence.md §5
+/// L1+L2, 2026-11-14).
 /// Returns `None` under the same emptiness contract as
 /// [`overlay_model`].
 // Nine render inputs — the banding joined the seam beside the
@@ -1931,7 +1943,7 @@ pub fn overlay_model_horizontal(
         });
     }
     if band.bottom {
-        rows.push(continuation_row());
+        rows.push(continuation_row(entries.len() - band.start - band.content));
     }
     // The card is the tile grid: wide-short, the `…` tile inside the
     // slots (the spec's "card width = N × tile pitch"), floored at the
@@ -2172,7 +2184,9 @@ pub fn overlay_model_grouped_horizontal(
         });
     }
     if window.bottom {
-        rows.push(continuation_row());
+        rows.push(continuation_row(
+            sequence.len() - window.start - window.content,
+        ));
     }
     // The frozen grid: the daemon's max of the two shapes, whatever
     // the strip is showing now, floored at the caption's guarantee and
@@ -2347,16 +2361,17 @@ fn finish_model(
     bands: Vec<u32>,
 ) -> Option<OverlayModel> {
     let band = bands.iter().copied().max().unwrap_or(0);
-    let viewport = visible_window(rows.len(), sel, windowing.rows, windowing.prev);
+    let total = rows.len();
+    let viewport = visible_window(total, sel, windowing.rows, windowing.prev);
     let mut windowed =
         Vec::with_capacity(viewport.top as usize + viewport.content + viewport.bottom as usize);
     if viewport.top {
-        windowed.push(continuation_row());
+        windowed.push(continuation_row(viewport.start));
     }
     let first = viewport.start + viewport.top as usize;
     windowed.extend(rows.into_iter().skip(first).take(viewport.content));
     if viewport.bottom {
-        windowed.push(continuation_row());
+        windowed.push(continuation_row(total - viewport.start - viewport.content));
     }
     let count = windowed.len() as u32;
     // The title band's width is the widest row's own measure — columns ×
@@ -2390,15 +2405,19 @@ fn finish_model(
 }
 
 /// The continuation row at a truncated edge: the `…` affordance in a
-/// full row slot, riding the row rhythm. Not hoverable, not clickable,
-/// not number-addressable, never selected — its missing handle is what
+/// full row slot, riding the row rhythm, `hidden` the windows past the
+/// edge — the count its pips show (`min(PIP_MAX)`, at least one: the
+/// row exists only because something is hidden; more-tile-prominence.md
+/// §5 L2, 2026-11-14). Not hoverable, not clickable, not
+/// number-addressable, never selected — its missing handle is what
 /// every input guard already reads.
-fn continuation_row() -> RowModel {
+fn continuation_row(hidden: usize) -> RowModel {
     RowModel {
         title: String::new(),
         icon: None,
         selected: false,
         handle: None,
+        count: hidden,
         ..RowModel::default()
     }
 }
@@ -2856,19 +2875,20 @@ pub fn render(
         let top =
             rhythm.pad_y + label_line + strip + index as u32 * (rhythm.row_h + rhythm.row_gap);
         // Continuation row: the `…` glyph card-centered on the titles'
-        // own line, in the muted derivation — the hint color, quieter
-        // than any title and legible on both card fills and both
-        // wallpaper polarities. Nothing else paints on this row: no
-        // band, no icon, no title, no hint — a row beyond addressability
-        // earns nothing but its dots. The glyph paints `TEXT_W` wide, so
+        // own line. Re-pinned 2026-11-14 (more-tile-prominence.md §5
+        // L1+L2): the glyph moved from the muted derivation to the full
+        // text ink — the hint color never survived a light-backdrop
+        // glance (3.60:1, below AA) — and the row's pip territory now
+        // carries the hidden count, muted like every pip. Nothing else
+        // paints on this row: no band, no icon, no title, no hint. The
+        // glyph paints `TEXT_W` wide, so
         // its box centers on `TEXT_W` exactly as `dots_y` centers on
         // `TEXT_H`; centering on the font cell biased the ink 2 px right
         // of the card's center line. Frozen 2026-11-08 on the LV3 sheet
-        // after a two-round preview loop (the TH4 pattern): every token
-        // kept as built — the muted reuse (55%, the hints' own color),
-        // card-centered placement, the font's own glyph at text scale —
-        // the native-resolution round passing both palettes over both
-        // backdrops at even perceived weight.
+        // after a two-round preview loop (the TH4 pattern): card-centered
+        // placement and the font's own glyph at text scale stand as
+        // built — the native-resolution round passed both palettes over
+        // both backdrops at even perceived weight.
         if row.handle.is_none() {
             // A titled addressable-nothing is the no-matches verdict
             // (`type-filter`): its words paint in the muted derivation —
@@ -2927,11 +2947,11 @@ pub fn render(
                         dots_x * scale,
                         dots_y * scale,
                         cell * scale / GLYPH_W,
-                        palette.muted,
+                        palette.text,
                     );
                 }
                 TextBackend::System { system, query } => {
-                    // The font's own `…` on the same muted line: the
+                    // The font's own `…` on the card-centered line: the
                     // measured ink centers on the card (the LV3
                     // card-centered rule, now against real metrics),
                     // the baseline by the ink box.
@@ -2945,12 +2965,25 @@ pub fn render(
                         canvas,
                         stride,
                         scale,
-                        palette.muted,
+                        palette.text,
                         dots_x,
                         baseline,
                         lw,
                     );
                 }
+            }
+            // The overflow's own count, the band tile's rule on a full
+            // row: full-weight dots for the prominence, muted pips for
+            // the magnitude, centered like the dots above them and
+            // sitting where a parent's pips sit (the row's bottom
+            // padding). No fill, no hint — the row stays addressable to
+            // nothing (more-tile-prominence.md §5 L1+L2, 2026-11-14).
+            if row.count >= 1 {
+                let pips = row.count.min(PIP_MAX) as u32;
+                let pip_y = top + rhythm.row_h - rhythm.row_pad_y - PIP_SIDE;
+                let span = (pips - 1) * PIP_STEP;
+                let first_x = lw / 2 - span / 2 - PIP_SIDE / 2;
+                paint_pips(canvas, stride, scale, first_x, pip_y, pips, palette.muted);
             }
             continue;
         }
@@ -3092,7 +3125,7 @@ pub fn render(
         // re-pinned 2026-11-09). Leaves and children earn neither.
         if row.kind == RowKind::Parent {
             if row.count >= 2 {
-                let pips = row.count.min(3) as u32;
+                let pips = row.count.min(PIP_MAX) as u32;
                 let pip_y = top + rhythm.row_h - rhythm.row_pad_y - PIP_SIDE;
                 paint_pips(canvas, stride, scale, title_x, pip_y, pips, palette.muted);
             }
@@ -3225,10 +3258,13 @@ fn border_ring(
 /// centered on the icon line, the clamped title beneath, and the Ctrl+N
 /// chord as a corner badge (top-left of the badge row, muted like every
 /// hint — placement frozen on the CL4 sheet, 2026-11-08). The `…` tile
-/// paints its
-/// muted glyph centered on the icon line and nothing else — no band,
-/// no icon, no title, no badge (a tile beyond addressability earns
-/// nothing but its dots).
+/// paints its glyph at full text weight — the caret's own ink, not the
+/// hint derivation, so the affordance survives a glance on either
+/// backdrop — centered on the icon line, with the hidden count's pips
+/// in the pip territory every tile reserves, muted like every pip. No
+/// band, no icon, no title, no badge (a tile beyond addressability
+/// earns dots at full ink and its magnitude, nothing else —
+/// more-tile-prominence.md §5 L1+L2, 2026-11-14).
 /// Paints one band of tiles — `tiles` at a card top of `y0` — the shared
 /// tile renderer behind the flat horizontal band and the grouped strip.
 /// A tile is the honest analogue the
@@ -3266,7 +3302,7 @@ fn render_band(
                         dots_x * scale,
                         dots_y * scale,
                         cell * scale / GLYPH_W,
-                        palette.muted,
+                        palette.text,
                     );
                 }
                 TextBackend::System { system, query } => {
@@ -3282,12 +3318,26 @@ fn render_band(
                         canvas,
                         stride,
                         scale,
-                        palette.muted,
+                        palette.text,
                         dots_x,
                         baseline,
                         lw,
                     );
                 }
+            }
+            // The overflow's own count: pips = the windows past the
+            // edge, saturating like every other count (PIP_MAX), in the
+            // pip territory every tile already reserves. Muted, like
+            // every pip — the full-weight dots carry the prominence,
+            // the pips carry the magnitude (more-tile-prominence.md §5
+            // L1+L2, 2026-11-14). No band, no fill, no icon: the tile
+            // stays addressable to nothing.
+            if tile.count >= 1 {
+                let pips = tile.count.min(PIP_MAX) as u32;
+                let pip_y = y0 + cell + TILE_PARENT_GAP + TILE_ICON + PIP_GAP;
+                let span = (pips - 1) * PIP_STEP;
+                let first_x = left + TILE_W / 2 - span / 2 - PIP_SIDE / 2;
+                paint_pips(canvas, stride, scale, first_x, pip_y, pips, palette.muted);
             }
             continue;
         }
@@ -3352,7 +3402,7 @@ fn render_band(
         // territory, never a fill shape, never a corner digit (the
         // notification-count reading R4 cautions against).
         if tile.count >= 2 {
-            let pips = tile.count.min(3) as u32;
+            let pips = tile.count.min(PIP_MAX) as u32;
             let pip_y = icon_y + TILE_ICON + PIP_GAP;
             let span = (pips - 1) * PIP_STEP;
             let first_x = left + TILE_W / 2 - span / 2 - PIP_SIDE / 2;
@@ -5078,7 +5128,10 @@ mod tests {
         // drift unnoticed. The digest was re-pinned 2026-11-09 with the
         // hint/chevron pass (bare digits, the inline caret); it is
         // re-captured whenever a judged design change moves the card,
-        // never to make an accidental change pass.
+        // never to make an accidental change pass. Re-pinned
+        // 2026-11-14 with the `…` tile pass: full-ink dots and the
+        // hidden count's pips on both truncated edges
+        // (more-tile-prominence.md §5 L1+L2).
         let model = overlay_model(
             &digest_snapshot(),
             Handle(1),
@@ -5102,7 +5155,7 @@ mod tests {
             hash = hash.wrapping_mul(0x1000_0000_01b3);
         }
         assert_eq!(
-            hash, 12_296_646_189_867_322_197,
+            hash, 3_058_868_248_834_347_293,
             "the default-profile render must be the pinned bytes"
         );
     }
@@ -6463,9 +6516,9 @@ mod tests {
 
     #[test]
     fn a_truncated_band_appends_one_continuation_tile() {
-        // Six windows, four tiles: four content tiles then one wordless
-        // `…` tile — handle `None`, inert to every input, never hinted,
-        // never banded.
+        // Six windows, four tiles: four content tiles then one `…` tile
+        // — handle `None`, inert to every input, never hinted, never
+        // banded, and carrying the three hidden windows as its count.
         let snap = band_snapshot(6);
         let model = build_band(&snap, Handle(1), 4, None).expect("eligible windows exist");
         // The dots spend a content tile: three windows plus the dots is
@@ -6474,6 +6527,10 @@ mod tests {
         let dots = model.rows.last().expect("the trailing tile");
         assert_eq!(dots.handle, None, "the continuation tile carries no window");
         assert_eq!(dots.hint, None, "the continuation tile hints no chord");
+        assert_eq!(
+            dots.count, 3,
+            "the continuation tile carries the hidden count"
+        );
         assert!(!dots.selected);
         assert_eq!(model.viewport.content, 3);
         assert!(model.viewport.bottom);
@@ -8051,26 +8108,113 @@ mod tests {
             );
             for slot in [0, 9] {
                 let mut paints = 0;
-                let mut muted = 0;
+                let mut full_ink = 0;
+                let mut pips = 0;
                 for (x, y) in row_band_points(slot, model.width) {
                     let argb = pixel(&canvas, stride, x, y);
                     assert_ne!(
                         argb, palette.selected_bg,
                         "a selection band intersected the dots row at slot {slot}"
                     );
+                    if argb == palette.text {
+                        full_ink += 1;
+                    }
                     if argb == palette.muted {
-                        muted += 1;
+                        pips += 1;
                     }
                     if argb != palette.background {
                         paints += 1;
                     }
                 }
-                assert!(muted > 0, "slot {slot}: the dots paint in the muted color");
+                assert!(full_ink > 0, "slot {slot}: the dots paint at full text ink");
+                assert!(pips > 0, "slot {slot}: the hidden count's pips paint muted");
                 assert!(
                     paints < row_band_points(slot, model.width).count(),
                     "slot {slot}: the dots row must stay card fill, not a band"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_dots_tile_paints_the_hidden_count() {
+        // The `…` tile's own magnitude: the windows past the edge sit in
+        // the pip territory every tile reserves, muted like every pip,
+        // under dots at full text ink (more-tile-prominence.md §5
+        // L1+L2, 2026-11-14). Exact census, the parents' own rule.
+        let snap = band_snapshot(6);
+        let model = build_band(&snap, Handle(1), 4, None).expect("eligible windows exist");
+        let dots = model.rows.last().expect("the trailing tile");
+        assert_eq!(dots.count, 3, "six windows, three shown, three hidden");
+        let canvas = render_bitmap(&model);
+        let palette = Palette::dark();
+        let left = TILE_PAD_X + 3 * (TILE_W + TILE_GAP);
+        let dots_top = band_strip_top() + TEXT_H + TILE_PARENT_GAP;
+        let mut ink = 0;
+        for ly in dots_top..dots_top + TILE_ICON {
+            for lx in left..left + TILE_W {
+                ink += u32::from(probe(&canvas, model.width, lx, ly) == palette.text);
+            }
+        }
+        assert!(ink > 0, "the dots paint at full text ink");
+        let pip_top = dots_top + TILE_ICON + PIP_GAP;
+        let mut pips = 0;
+        for ly in pip_top..pip_top + PIP_SIDE {
+            for lx in left..left + TILE_W {
+                pips += u32::from(probe(&canvas, model.width, lx, ly) == palette.muted);
+            }
+        }
+        assert_eq!(pips, 3 * PIP_SIDE * PIP_SIDE, "the pip census is exact");
+    }
+
+    #[test]
+    fn the_dots_rows_carry_the_hidden_count_on_vertical_cards() {
+        // The vertical card's edges report their own magnitude: the top
+        // edge hides exactly one window here and shows one pip, the
+        // bottom edge's six hide past `PIP_MAX` and saturate — the
+        // parent pip rule's count vocabulary, one row over
+        // (more-tile-prominence.md §5 L2, 2026-11-14).
+        let snap = long_snapshot(15);
+        let model = build_windowed(
+            &snap,
+            Handle(10),
+            DEFAULT_ROWS,
+            Some(Viewport {
+                start: 0,
+                content: DEFAULT_ROWS + 1,
+                top: false,
+                bottom: true,
+            }),
+        )
+        .expect("eligible windows exist");
+        let top_dots = &model.rows[0];
+        let bottom_dots = model.rows.last().expect("the trailing row");
+        assert_eq!(top_dots.handle, None, "slot 0 is the top dots row");
+        assert_eq!(bottom_dots.handle, None, "the last slot is the dots row");
+        assert_eq!(
+            top_dots.count, 1,
+            "the carried start hides exactly one window above"
+        );
+        assert_eq!(
+            bottom_dots.count, 6,
+            "the bottom edge hides the remaining six"
+        );
+        let (canvas, stride) = rendered(&model, 2);
+        let palette = Palette::dark();
+        for (slot, hidden) in [(0usize, 1usize), (9usize, PIP_MAX)] {
+            let row_top = PAD_Y + slot as u32 * (ROW_H + ROW_GAP);
+            let pip_y = row_top + ROW_H - ROW_PAD_Y - PIP_SIDE;
+            let mut pips = 0;
+            for ly in pip_y..pip_y + PIP_SIDE {
+                for lx in SELECT_INSET..model.width - SELECT_INSET {
+                    pips += u32::from(pixel(&canvas, stride, lx * 2, ly * 2) == palette.muted);
+                }
+            }
+            assert_eq!(
+                pips,
+                hidden as u32 * PIP_SIDE * PIP_SIDE,
+                "slot {slot}: the pip census is exact"
+            );
         }
     }
 
@@ -8163,12 +8307,12 @@ mod tests {
         let mut ink: Vec<u32> = Vec::new();
         for y in (PAD_Y * 2)..(PAD_Y + ROW_H) * 2 {
             for x in 0..model.width * 2 {
-                if pixel(&canvas, stride, x, y) == palette.muted {
+                if pixel(&canvas, stride, x, y) == palette.text {
                     ink.push(x);
                 }
             }
         }
-        assert!(!ink.is_empty(), "the dots row paints muted ink");
+        assert!(!ink.is_empty(), "the dots row paints full-ink dots");
         ink.sort_unstable();
         ink.dedup();
         // Set font columns of the ellipsis, mapped to device spans.
