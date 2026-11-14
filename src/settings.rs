@@ -25,6 +25,12 @@ const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 /// [`ui::COLUMNS_MAX`]; a test pins the pair.
 const COLUMNS_PROBLEM: &str = "`columns` must be \"auto\" or a whole number between 3 and 12";
 
+/// The `all_windows_key` diagnostic (all-windows, 2026-11-14): the value
+/// names a keysym under the binding's fixed Alt modifier, and the
+/// compositor is the authority airlock cannot check offline — so any
+/// non-empty name parses and only the shape rejects here.
+const ALL_WINDOWS_KEY_PROBLEM: &str = "`all_windows_key` must be a non-empty key name";
+
 /// One `[[workspace]]` rule.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceRule {
@@ -110,6 +116,14 @@ pub struct Settings {
     /// metric — title band, query strip, caption line, band height —
     /// resolves from it at open.
     pub font_size: u32,
+    /// The key the all-windows binding holds under its fixed Alt
+    /// modifier (all-windows, 2026-11-14): a keysym name — canonical X
+    /// names like "Escape", "grave", "Tab" — the compositor resolves, so
+    /// any non-empty name parses and only the shape rejects. The
+    /// `-previous` twin adds Shift, and a key whose keysym changes under
+    /// Shift (letters, digits) makes that twin unreliable. Missing key =
+    /// "Escape".
+    pub all_windows_key: String,
     pub workspaces: Vec<WorkspaceRule>,
 }
 
@@ -128,6 +142,7 @@ impl Default for Settings {
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
             font_size: ui::DEFAULT_FONT_SIZE,
+            all_windows_key: "Escape".to_owned(),
             workspaces: Vec::new(),
         }
     }
@@ -348,6 +363,27 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
                 .to_owned(),
         ),
     };
+    let all_windows_key = match root.get("all_windows_key") {
+        None => "Escape".to_owned(),
+        Some(value) => {
+            // Shape only: a keysym name the compositor resolves —
+            // airlock holds no table to check it against offline. A
+            // padded name trims so the binding never carries the
+            // padding into the compositor config.
+            let key = value
+                .as_str()
+                .ok_or(SettingsError::InvalidFile {
+                    problem: ALL_WINDOWS_KEY_PROBLEM,
+                })?
+                .trim();
+            if key.is_empty() {
+                return Err(SettingsError::InvalidFile {
+                    problem: ALL_WINDOWS_KEY_PROBLEM,
+                });
+            }
+            key.to_owned()
+        }
+    };
     let font_size = match root.get("font_size") {
         None => ui::DEFAULT_FONT_SIZE,
         Some(value) => {
@@ -376,6 +412,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             selection,
             font,
             font_size,
+            all_windows_key,
             ..Settings::default()
         });
     };
@@ -402,6 +439,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         selection,
         font,
         font_size,
+        all_windows_key,
         workspaces,
     })
 }
@@ -790,6 +828,7 @@ isolated = false
                 selection: SelectionSetting::Accent,
                 font: crate::text::FontSetting::Default,
                 font_size: ui::DEFAULT_FONT_SIZE,
+                all_windows_key: "Escape".to_owned(),
                 workspaces: vec![
                     WorkspaceRule {
                         reference: WorkspaceRef::Name("code".to_owned()),
@@ -964,6 +1003,97 @@ isolated = false
             error.to_string(),
             "settings: `font_size` must be between 8 and 24"
         );
+    }
+
+    // --- The all_windows_key (all-windows A2.1, 2026-11-14) --------------
+
+    #[test]
+    fn parse_defaults_all_windows_key_to_escape_when_absent() {
+        assert_eq!(
+            Settings::parse(b"").expect("empty").all_windows_key,
+            "Escape"
+        );
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert_eq!(rules_only.all_windows_key, "Escape");
+        assert_eq!(Settings::default().all_windows_key, "Escape");
+    }
+
+    #[test]
+    fn parse_reads_any_non_empty_key_name_verbatim() {
+        // The compositor is the keysym authority airlock cannot check
+        // offline: canonical X names and anything else non-empty alike
+        // parse, with no validation beyond the shape. Whitespace trims —
+        // a padded name would bind a padded keysym.
+        for (config, key) in [
+            (&b"all_windows_key = \"Tab\"\n"[..], "Tab"),
+            (b"all_windows_key = \"grave\"\n", "grave"),
+            (b"all_windows_key = \"F13\"\n", "F13"),
+            (b"all_windows_key = \"  Tab  \"\n", "Tab"),
+        ] {
+            let settings = Settings::parse(config).expect("valid key name");
+            assert_eq!(
+                settings.all_windows_key,
+                key,
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_rejects_a_non_string_all_windows_key_with_the_named_problem() {
+        for config in [
+            &b"all_windows_key = 1\n"[..],
+            b"all_windows_key = true\n",
+            b"[all_windows_key]\nname = \"x\"\n",
+        ] {
+            let error = Settings::parse(config).expect_err("non-string key name");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: "`all_windows_key` must be a non-empty key name"
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_rejects_an_empty_all_windows_key_with_the_named_problem() {
+        // The empty string and one that trims empty: the same named
+        // diagnostic, never a silent default.
+        for config in [
+            &b"all_windows_key = \"\"\n"[..],
+            b"all_windows_key = \"   \"\n",
+        ] {
+            let error = Settings::parse(config).expect_err("empty key name");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: "`all_windows_key` must be a non-empty key name"
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn a_bad_all_windows_key_fails_the_whole_file() {
+        // The last-good contract, same as every key: no partial set.
+        let config = b"theme = \"dark\"\nall_windows_key = \"\"\n";
+        assert!(Settings::parse(config).is_err());
+    }
+
+    #[test]
+    fn parse_coexists_all_windows_key_with_the_other_keys() {
+        let config =
+            b"theme = \"light\"\nall_windows_key = \"grave\"\n\n[[workspace]]\nname = \"code\"\n";
+        let settings = Settings::parse(config).expect("valid config");
+        assert_eq!(settings.all_windows_key, "grave");
+        assert_eq!(settings.theme, ThemeSetting::Light);
+        assert_eq!(settings.workspaces.len(), 1);
     }
 
     #[test]
@@ -1854,6 +1984,7 @@ isolated = false
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
             font_size: ui::DEFAULT_FONT_SIZE,
+            all_windows_key: "Escape".to_owned(),
             workspaces: vec![rule(WorkspaceRef::Name("browse".to_owned()), false)],
         };
         let scope = scope_for(
@@ -1881,6 +2012,7 @@ isolated = false
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
             font_size: ui::DEFAULT_FONT_SIZE,
+            all_windows_key: "Escape".to_owned(),
             workspaces: vec![rule(WorkspaceRef::Position(2), false)],
         };
         let scope = scope_for(
@@ -1909,6 +2041,7 @@ isolated = false
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
             font_size: ui::DEFAULT_FONT_SIZE,
+            all_windows_key: "Escape".to_owned(),
             workspaces: vec![
                 rule(WorkspaceRef::Position(1), true),
                 rule(WorkspaceRef::Name("code".to_owned()), false),
@@ -1939,6 +2072,7 @@ isolated = false
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
             font_size: ui::DEFAULT_FONT_SIZE,
+            all_windows_key: "Escape".to_owned(),
             workspaces: vec![rule(WorkspaceRef::Position(1), false)],
         };
         let scope = scope_for(
@@ -1966,6 +2100,7 @@ isolated = false
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
             font_size: ui::DEFAULT_FONT_SIZE,
+            all_windows_key: "Escape".to_owned(),
             workspaces: vec![rule(WorkspaceRef::Position(9), false)],
         };
         let scope = scope_for(
@@ -1993,6 +2128,7 @@ isolated = false
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
             font_size: ui::DEFAULT_FONT_SIZE,
+            all_windows_key: "Escape".to_owned(),
             workspaces: vec![
                 rule(WorkspaceRef::Name("browse".to_owned()), false),
                 rule(WorkspaceRef::Name("browse".to_owned()), true),
@@ -2023,6 +2159,7 @@ isolated = false
             selection: SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
             font_size: ui::DEFAULT_FONT_SIZE,
+            all_windows_key: "Escape".to_owned(),
             workspaces: vec![rule(WorkspaceRef::Name("elsewhere".to_owned()), false)],
         };
         let scope = scope_for(
@@ -2222,6 +2359,7 @@ isolated = false
                 selection: SelectionSetting::Accent,
                 font: crate::text::FontSetting::Default,
                 font_size: ui::DEFAULT_FONT_SIZE,
+                all_windows_key: "Escape".to_owned(),
                 workspaces: vec![rule(WorkspaceRef::Name("code".to_owned()), false)]
             }
         );

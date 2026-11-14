@@ -4789,6 +4789,7 @@ mod tests {
             selection: crate::ui::SelectionSetting::Accent,
             font: crate::text::FontSetting::Default,
             font_size: crate::ui::DEFAULT_FONT_SIZE,
+            all_windows_key: "Escape".to_owned(),
             workspaces: vec![crate::settings::WorkspaceRule {
                 reference: crate::settings::WorkspaceRef::Name("browse".to_owned()),
                 isolated: false,

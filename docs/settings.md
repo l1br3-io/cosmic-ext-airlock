@@ -42,6 +42,7 @@ layout = "vertical"    # the tall card; "horizontal" lays it out as a band of ti
 # min-width = "auto"   # the card's never-below width; same values as width (the default: "auto")
 grouping = false       # the flat list (the default); true groups it by app
 # show_workspace = false # label the card with the workspace you pressed on (the default: false)
+# all_windows_key = "Escape" # the key Alt+ holds for the all-windows card (the default: "Escape")
 
 [[workspace]]
 name = "code"          # matches a workspace COSMIC reports as named "code"
@@ -72,7 +73,9 @@ many windows it keeps in view (see [Rows](#rows)); `layout` picks the
 card's axis and `columns` the horizontal band's width (see
 [Layout](#layout)); `grouping` picks the list's shape (see
 [Grouping](#grouping)); `show_workspace` labels the card with the
-workspace you pressed on (see [Show workspace](#show-workspace)).
+workspace you pressed on (see [Show workspace](#show-workspace));
+`all_windows_key` names the key the all-windows binding holds (see
+[All windows key](#all-windows-key)).
 
 ## Referencing workspaces
 
@@ -415,6 +418,25 @@ freezes with the session. A non-boolean value
 (`show_workspace = 1`, `show_workspace = "yes"`) is named in a
 diagnostic and the last-good settings apply.
 
+## All windows key
+
+`all_windows_key` names the key the all-windows binding holds under its
+fixed Alt modifier — `Alt+Escape` by default, opening the switcher over
+every non-minimized window on every workspace, the `[[workspace]]`
+isolation rules aside. The value is a key name — a canonical X keysym
+name like `"Escape"`, `"grave"`, `"Tab"` — that the compositor
+resolves: any non-empty string parses, and `airlock install` writes it
+verbatim into the binding. The backwards twin (`Alt+Shift+` the key)
+adds Shift, so prefer a key whose keysym Shift leaves alone — letters
+and digits change under Shift, which makes the backwards twin
+unreliable.
+
+The default is `"Escape"`. A change applies when you re-run
+`airlock install`: the binding lives in the compositor's config, which
+only the installer writes. A wrong type (`all_windows_key = 1`) or an
+empty string is named in a diagnostic and the last-good settings apply,
+like any malformed edit.
+
 ## What `isolated = false` changes
 
 Alt+Tab / Shift+Alt+Tab on that workspace lists every non-minimized
@@ -482,6 +504,11 @@ A bad config never breaks switching:
 - **A bad `grouping` value** — `grouping = 1`, `grouping = "yes"` —
   is named in a diagnostic ("`grouping` must be a boolean") and the
   last-good settings apply, like any malformed edit.
+- **A bad `all_windows_key` value** — a wrong type
+  (`all_windows_key = 1`, `[all_windows_key]`) or an empty or
+  whitespace-only string — is named in one diagnostic
+  ("`all_windows_key` must be a non-empty key name") and the last-good
+  settings apply.
 - **Unknown keys are ignored** — extra keys inside an entry cost nothing.
 - **Size cap** — files over 1 MiB are ignored entirely (defaults apply);
   the read runs on the gesture path and must stay cheap.

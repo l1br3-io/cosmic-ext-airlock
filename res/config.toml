@@ -52,6 +52,17 @@
 # font_size = 12        # card text size, logical px: 8–24 (the default:
                         # 12). Icons, paddings, and gaps stay fixed.
 
+# --- Keybinds ---------------------------------------------------------
+
+# all_windows_key = "Escape" # the key Alt+ holds to open the all-windows
+                        # card — every workspace's windows, isolation
+                        # aside. A key name (canonical X keysym names like
+                        # "Escape", "grave", "Tab"); the default: Escape.
+                        # Shift+the key walks backwards — prefer a key
+                        # whose keysym Shift leaves alone (letters and
+                        # digits change under it). Re-run `airlock
+                        # install` to apply a change.
+
 # --- Workspace rules --------------------------------------------------
 
 # Rules below opt a workspace OUT of isolation. Workspaces without an
