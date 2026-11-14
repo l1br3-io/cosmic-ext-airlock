@@ -249,6 +249,17 @@ h1, h2 { text-wrap: balance; }
 
 .row-section p { max-width: 68ch; }
 
+/* Feature groups: a term above its list, a step below the section title
+   and clear of the paragraph that follows the list before it. */
+
+.row-section > div > h3 {
+  margin: 24px 0 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.row-section > div > h3 + ul { margin-top: 8px; }
+
 @media (min-width: 860px) {
   .row-section {
     display: grid;

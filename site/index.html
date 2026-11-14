@@ -78,79 +78,84 @@ airlock install</code></pre>
       </div>
     </section>
 
-    <section id="how-it-works" class="row-section">
-      <h2>How it works</h2>
+    <section id="features" class="row-section">
+      <h2>Features</h2>
       <div>
         <p>Hold <kbd>Alt</kbd>, tap <kbd>Tab</kbd>: an overlay lists the
-        current workspace's windows, most recently used first. Rows are the
-        application's themed icon (the same pipeline the COSMIC launcher
-        uses) beside its title.</p>
-        <table class="keys">
-          <thead>
-            <tr><th>Key</th><th>Action</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>Hold <kbd>Alt</kbd>, tap <kbd>Tab</kbd></td><td>Open the overlay</td></tr>
-            <tr><td><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Step forward or back; arrow keys work too</td></tr>
-            <tr><td>Release <kbd>Alt</kbd></td><td>Switch to the selection and dismiss</td></tr>
-            <tr><td><kbd>Enter</kbd></td><td>Confirm without releasing <kbd>Alt</kbd></td></tr>
-            <tr><td><kbd>Escape</kbd></td><td>Dismiss without switching</td></tr>
-            <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd></td><td>Switch to the Nth window at once, like a click; each row shows its digit</td></tr>
-            <tr><td><kbd>Alt</kbd>+<kbd>`</kbd></td><td>Cycle the current application's windows (<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>`</kbd> steps backwards)</td></tr>
-            <tr><td><kbd>Alt</kbd>+<kbd>Esc</kbd></td><td>Jump to the second-most-recent window, no overlay</td></tr>
-            <tr><td><kbd>Alt</kbd>+<kbd>-</kbd></td><td>Close the selected window; the card stays up for the next</td></tr>
-          </tbody>
-        </table>
-        <p>Pointer: hover moves the selection, click switches, the wheel steps
-        the list, and resting on a window row reveals an <strong>×</strong>
-        that closes it. A quick tap, released before the overlay appears,
-        still switches.</p>
-        <div class="rows">
-          <div class="row">
-            <h3>Type to filter</h3>
-            <p>While the card is up, typing narrows it to the windows whose
-            title or app name matches.
-            <a href="how-it-works.html#type-to-filter">How it narrows</a>.</p>
-          </div>
-          <div class="row">
-            <h3>Group by app</h3>
-            <p><code>grouping = true</code> turns the list into a per-app
-            tree; an entry commits its app's front window, and <kbd>→</kbd>
-            expands it.
-            <a href="how-it-works.html#grouped-mode">The tree's keys</a>.</p>
-          </div>
-          <div class="row">
-            <h3>A horizontal band</h3>
-            <p><code>layout = "horizontal"</code> lays the same list out as
-            a wide band of tiles, stepped with Left/Right.
-            <a href="how-it-works.html#the-card">Both cards</a>.</p>
-          </div>
-          <div class="row">
-            <h3>Card width</h3>
-            <p><code>width</code> and <code>min-width</code> hold either
-            card at a floor: <code>"auto"</code> sizes from content,
-            <code>"100%"</code> fills the screen, or set a pixel count.
-            <a href="settings.html#width">Width</a>.</p>
-          </div>
-          <div class="row">
-            <h3>Close from the card</h3>
-            <p><kbd>Alt</kbd>+<kbd>-</kbd> or the icon's × badge closes a
-            window without leaving the gesture.
-            <a href="how-it-works.html#closing-windows">What closes what</a>.</p>
-          </div>
-          <div class="row">
-            <h3>Real type</h3>
-            <p>Titles render in the desktop's own interface font, Unicode
-            included; <code>font</code> overrides the family and
-            <code>font_size</code> the size (8–24 px).
-            <a href="settings.html#font-size">Font size</a>.</p>
-          </div>
-        </div>
-        <p>Sticky windows appear on every workspace, minimized windows appear
-        on none, and a window on another workspace can never be reached through
-        Airlock. A workspace can opt into the global list; see
-        <a href="settings.html">Settings</a>.</p>
-        <p>Every key, pointer rule, and card measurement is documented in
+        current workspace's windows, most recently used first — each row its
+        application's themed icon beside its title. Release <kbd>Alt</kbd> to
+        switch; <kbd>Enter</kbd> confirms without releasing;
+        <kbd>Escape</kbd> dismisses; a tap released before the overlay
+        appears still switches.</p>
+
+        <h3>What the list shows</h3>
+        <ul>
+          <li><strong>Workspace isolation</strong> — plain
+          <kbd>Alt</kbd>+<kbd>Tab</kbd> reaches only the current
+          workspace's windows; a workspace can opt into the global list
+          (<a href="settings.html">Settings</a>)</li>
+          <li><strong>All-windows mode</strong> —
+          <kbd>Alt</kbd>+<kbd>Esc</kbd> opens the same card over every
+          workspace's windows, grouped by workspace with yours first;
+          <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>Esc</kbd> steps it
+          backwards</li>
+          <li><strong>Type to filter</strong> — while the card is up,
+          typing narrows it by title or app name, case-insensitive; works
+          in every mode</li>
+          <li><strong>Workspace label</strong> —
+          <code>show_workspace = true</code> names the workspace you
+          pressed on, the anchor for workspaces opted out of isolation</li>
+        </ul>
+        <p>Sticky windows appear on every workspace; minimized windows
+        nowhere; one <kbd>Alt</kbd>+<kbd>Esc</kbd> press reaches any window
+        regardless of the rules.</p>
+
+        <h3>Choosing and closing</h3>
+        <ul>
+          <li><strong>Direct access</strong> — <kbd>Ctrl</kbd>+<kbd>N</kbd>
+          (1–9, keypad included) switches to the Nth window at once, like
+          a click; each row shows its digit</li>
+          <li><strong>App cycling</strong> — <kbd>Alt</kbd>+<kbd>`</kbd>
+          (the key above <kbd>Tab</kbd>) cycles the current
+          application's windows; <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>`</kbd>
+          steps backwards</li>
+          <li><strong>Quick-toggle</strong> —
+          <code>airlock quick-toggle</code> flips to the second-most-recent
+          window without an overlay; no default key — bind it in Settings →
+          Input → Keyboard → Shortcuts → Custom</li>
+          <li><strong>Close from the card</strong> —
+          <kbd>Alt</kbd>+<kbd>-</kbd> closes the selected row's window and
+          the card stays up; hovering a row reveals a × badge that closes
+          on click</li>
+          <li><strong>Pointer input</strong> — hover moves the selection,
+          click switches, the wheel steps; the pointing-hand cursor marks
+          every click target</li>
+        </ul>
+
+        <h3>Layout and appearance</h3>
+        <ul>
+          <li><strong>App grouping</strong> — the list becomes a per-app
+          tree: collapsed app entries commit their most recently used
+          window, <kbd>→</kbd> expands one and <kbd>←</kbd> collapses it;
+          on the horizontal band the selected tile opens its run in
+          place</li>
+          <li><strong>Horizontal layout</strong> —
+          <code>layout = "horizontal"</code> lays the same list out as a
+          wide strip of icon-only tiles under one caption naming what
+          release would activate</li>
+          <li><strong>Card sizing</strong> — a long list never grows the
+          card (<code>rows</code> stay in view, 8 by default,
+          <code>…</code> marking the truncated edges); <code>columns</code>
+          and <code>width</code>/<code>min-width</code> fit the strip to
+          the screen</li>
+          <li><strong>Fonts</strong> — titles render in the desktop's
+          interface font, accents, CJK and emoji included, at 12 logical px
+          by default; <code>font</code> and <code>font_size</code>
+          override</li>
+        </ul>
+
+        <p>Every key, pointer rule, the frozen-list rule, and the card's
+        measurements:
         <a href="how-it-works.html">how the switcher behaves</a>.</p>
       </div>
     </section>
