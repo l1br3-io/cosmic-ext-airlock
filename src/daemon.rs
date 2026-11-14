@@ -1912,7 +1912,12 @@ pub fn run() -> Result<(), RunError> {
                             // invoke steps its frozen ring. Activation waits
                             // for the Alt release — or Escape, focus loss,
                             // or the timeouts to end the session instead.
-                            ipc::Invoke::Cycle(direction) | ipc::Invoke::CycleApp(direction) => {
+                            // CycleAll rides the same arm until its scope
+                            // override lands (all-windows A1.3); no installed
+                            // surface sends `w`/`v` before the stub exists.
+                            ipc::Invoke::Cycle(direction)
+                            | ipc::Invoke::CycleApp(direction)
+                            | ipc::Invoke::CycleAll(direction) => {
                                 let same_app = matches!(command, ipc::Invoke::CycleApp(_));
                                 if let GestureOutput::Step(direction) =
                                     gesture.feed(GestureInput::Invoke(direction))

@@ -1,9 +1,9 @@
 //! Unix-socket IPC between the spawn stubs and the daemon.
 //!
 //! Wire protocol: the stub connects, writes one command byte (`n`, `p`, `s`,
-//! `b`, or `q`), and blocks for one ack byte (`a`). One byte each way is the
-//! whole frame — anything longer is a protocol error and the connection is
-//! dropped.
+//! `b`, `q`, `w`, or `v`), and blocks for one ack byte (`a`). One byte each
+//! way is the whole frame — anything longer is a protocol error and the
+//! connection is dropped.
 
 use std::io::{self, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -37,6 +37,10 @@ pub enum Invoke {
     Cycle(Direction),
     /// Open — or step — the same-app session (`s` / `b`).
     CycleApp(Direction),
+    /// Open the all-windows session — every workspace, ignoring the
+    /// `isolated` rules (`w` / `v`, chosen 2026-11-14: outside the installed
+    /// base and clear of the byte-stable `n`/`p`/`s`/`b`/`q`).
+    CycleAll(Direction),
     /// Switch to the MRU-second window immediately, no overlay (`q`).
     QuickToggle,
 }
@@ -49,6 +53,8 @@ impl Invoke {
             Invoke::Cycle(Direction::Previous) => b'p',
             Invoke::CycleApp(Direction::Next) => b's',
             Invoke::CycleApp(Direction::Previous) => b'b',
+            Invoke::CycleAll(Direction::Next) => b'w',
+            Invoke::CycleAll(Direction::Previous) => b'v',
             Invoke::QuickToggle => b'q',
         }
     }
@@ -102,6 +108,8 @@ pub fn parse_command(byte: u8) -> Option<Invoke> {
         b'p' => Some(Invoke::Cycle(Direction::Previous)),
         b's' => Some(Invoke::CycleApp(Direction::Next)),
         b'b' => Some(Invoke::CycleApp(Direction::Previous)),
+        b'w' => Some(Invoke::CycleAll(Direction::Next)),
+        b'v' => Some(Invoke::CycleAll(Direction::Previous)),
         b'q' => Some(Invoke::QuickToggle),
         _ => None,
     }
@@ -314,6 +322,11 @@ mod tests {
             Some(Invoke::CycleApp(Direction::Previous))
         );
         assert_eq!(parse_command(b'q'), Some(Invoke::QuickToggle));
+        assert_eq!(parse_command(b'w'), Some(Invoke::CycleAll(Direction::Next)));
+        assert_eq!(
+            parse_command(b'v'),
+            Some(Invoke::CycleAll(Direction::Previous))
+        );
     }
 
     #[test]
@@ -333,6 +346,8 @@ mod tests {
         assert_eq!(parse_command(b'S'), None);
         assert_eq!(parse_command(b'B'), None);
         assert_eq!(parse_command(b'Q'), None);
+        assert_eq!(parse_command(b'W'), None);
+        assert_eq!(parse_command(b'V'), None);
         // The ack byte is not a command.
         assert_eq!(parse_command(ACK), None);
         assert_eq!(parse_command(0), None);
@@ -346,6 +361,8 @@ mod tests {
             Invoke::CycleApp(Direction::Next),
             Invoke::CycleApp(Direction::Previous),
             Invoke::QuickToggle,
+            Invoke::CycleAll(Direction::Next),
+            Invoke::CycleAll(Direction::Previous),
         ];
         for invoke in invokes {
             assert_eq!(parse_command(invoke.wire_byte()), Some(invoke));
