@@ -404,10 +404,15 @@ fn empty_user_file_is_rejected() {
 
 #[test]
 fn custom_fresh_install_creates_marked_file_and_uninstall_removes_it() {
-    let install = custom_install_content(None).expect("install");
+    let install = custom_install_content(None, "Escape").expect("install");
     assert_eq!(
         install.in_place,
-        ["Alt+grave", "Alt+Shift+grave", "Alt+Esc"]
+        [
+            "Alt+grave",
+            "Alt+Shift+grave",
+            "Alt+Escape",
+            "Alt+Shift+Escape"
+        ]
     );
     assert!(install.skipped.is_empty(), "{:?}", install.skipped);
     assert!(
@@ -417,19 +422,30 @@ fn custom_fresh_install_creates_marked_file_and_uninstall_removes_it() {
         "missing absent-file marker:\n{}",
         install.content
     );
-    for command in [SAME_APP_CMD, SAME_APP_PREV_CMD, QUICK_TOGGLE_CMD] {
+    for command in [
+        SAME_APP_CMD,
+        SAME_APP_PREV_CMD,
+        SHOW_ALL_CMD,
+        SHOW_ALL_PREV_CMD,
+    ] {
         assert!(
             install.content.contains(&format!("Spawn(\"{command}\")")),
             "{command} not bound:\n{}",
             install.content
         );
     }
+    // Quick-toggle is retired: no binding spawns it anymore.
+    assert!(
+        !install.content.contains(QUICK_TOGGLE_CMD),
+        "quick-toggle must be bound nowhere:\n{}",
+        install.content
+    );
 
     // Re-install over the fresh file is a byte-identical no-op.
-    let again = custom_install_content(Some(&install.content)).expect("reinstall");
+    let again = custom_install_content(Some(&install.content), "Escape").expect("reinstall");
     assert_eq!(again.content, install.content);
 
-    match custom_uninstall_content(&install.content).expect("uninstall") {
+    match custom_uninstall_content(&install.content, "Escape").expect("uninstall") {
         CustomUninstall::RemoveFile => {}
         other => panic!("expected RemoveFile, got {other:?}"),
     }
@@ -437,15 +453,15 @@ fn custom_fresh_install_creates_marked_file_and_uninstall_removes_it() {
 
 #[test]
 fn custom_install_preserves_user_entries_and_uninstall_restores_bytes() {
-    let install = custom_install_content(Some(CUSTOM_USER_FILE)).expect("install");
-    assert_eq!(install.in_place.len(), 3);
+    let install = custom_install_content(Some(CUSTOM_USER_FILE), "Escape").expect("install");
+    assert_eq!(install.in_place.len(), 4);
     assert!(
         install.content.contains("): Spawn(\"xeyes\"),\n"),
         "user entry lost:\n{}",
         install.content
     );
 
-    match custom_uninstall_content(&install.content).expect("uninstall") {
+    match custom_uninstall_content(&install.content, "Escape").expect("uninstall") {
         CustomUninstall::Restored { content } => assert_eq!(content, CUSTOM_USER_FILE),
         other => panic!("expected Restored, got {other:?}"),
     }
@@ -461,13 +477,15 @@ fn custom_install_output_parses_as_cosmic_shortcut_map() {
     for (label, expected, content) in [
         (
             "fresh install",
-            3,
-            custom_install_content(None).expect("fresh install").content,
+            4,
+            custom_install_content(None, "Escape")
+                .expect("fresh install")
+                .content,
         ),
         (
             "over a cosmic-written user file",
-            4,
-            custom_install_content(Some(CUSTOM_USER_FILE))
+            5,
+            custom_install_content(Some(CUSTOM_USER_FILE), "Escape")
                 .expect("install over user file")
                 .content,
         ),
@@ -487,7 +505,7 @@ fn custom_install_output_parses_as_cosmic_shortcut_map() {
 
 #[test]
 fn emitted_bindings_use_bare_keysyms_and_canonical_names() {
-    let install = custom_install_content(None).expect("install");
+    let install = custom_install_content(None, "Escape").expect("install");
     assert!(
         install.content.contains("key: \"grave\""),
         "keysym must be a bare string:\n{}",
@@ -495,7 +513,7 @@ fn emitted_bindings_use_bare_keysyms_and_canonical_names() {
     );
     assert!(
         install.content.contains("key: \"Escape\""),
-        "quick toggle must bind the canonical Escape keysym:\n{}",
+        "the all-windows family must bind the canonical Escape keysym:\n{}",
         install.content
     );
     assert!(
@@ -509,13 +527,16 @@ fn emitted_bindings_use_bare_keysyms_and_canonical_names() {
 fn legacy_0_1_0_file_is_healed_by_reinstall() {
     // Re-running install over 0.1.0's malformed file replaces the
     // Some-form entries with valid ones — a repair path for bitten users.
-    let healed = custom_install_content(Some(CUSTOM_LEGACY_0_1_0)).expect("reinstall");
-    assert_eq!(healed.in_place.len(), 3, "{:?}", healed.in_place);
+    // The 0.1.0 quick-toggle entry on "Esc" is retired-ours: dropped and
+    // counted as a migration, not left as a duplicate or a skip.
+    let healed = custom_install_content(Some(CUSTOM_LEGACY_0_1_0), "Escape").expect("reinstall");
+    assert_eq!(healed.in_place.len(), 4, "{:?}", healed.in_place);
+    assert_eq!(healed.migrated, ["Alt+Esc"], "{:?}", healed.migrated);
     let parsed: cosmic_schema::Shortcuts =
         ron::from_str(&healed.content).expect("healed file must parse for cosmic");
     assert_eq!(
         parsed.len(),
-        3,
+        4,
         "only airlock's entries:\n{}",
         healed.content
     );
@@ -531,7 +552,7 @@ fn legacy_0_1_0_file_uninstalls_and_restores_user_bytes() {
         "    (\n        modifiers: [\n            Super,\n        ],\n        key: \"A\",\n    ): Spawn(\"xeyes\"),\n",
         "}",
     );
-    match custom_uninstall_content(legacy_with_user).expect("uninstall") {
+    match custom_uninstall_content(legacy_with_user, "Escape").expect("uninstall") {
         CustomUninstall::Restored { content } => assert_eq!(
             content,
             concat!(
@@ -544,9 +565,9 @@ fn legacy_0_1_0_file_uninstalls_and_restores_user_bytes() {
         other => panic!("expected Restored, got {other:?}"),
     }
 
-    // The pure 0.1.0 fresh-install file: only airlock owned it, so the
-    // marker path deletes it.
-    match custom_uninstall_content(CUSTOM_LEGACY_0_1_0).expect("uninstall") {
+    // The pure 0.1.0 fresh-install file: only airlock owned it (grave
+    // pair plus the retired quick-toggle), so the marker path deletes it.
+    match custom_uninstall_content(CUSTOM_LEGACY_0_1_0, "Escape").expect("uninstall") {
         CustomUninstall::RemoveFile => {}
         other => panic!("expected RemoveFile, got {other:?}"),
     }
@@ -554,9 +575,12 @@ fn legacy_0_1_0_file_uninstalls_and_restores_user_bytes() {
 
 #[test]
 fn custom_install_skips_user_held_binding_and_names_it() {
-    let install = custom_install_content(Some(CUSTOM_HELD_GRAVE)).expect("install");
+    let install = custom_install_content(Some(CUSTOM_HELD_GRAVE), "Escape").expect("install");
     assert_eq!(install.skipped, ["Alt+grave"]);
-    assert_eq!(install.in_place, ["Alt+Shift+grave", "Alt+Esc"]);
+    assert_eq!(
+        install.in_place,
+        ["Alt+Shift+grave", "Alt+Escape", "Alt+Shift+Escape"]
+    );
     assert!(
         install.content.contains("Spawn(\"my own thing\")"),
         "held entry modified:\n{}",
@@ -564,7 +588,7 @@ fn custom_install_skips_user_held_binding_and_names_it() {
     );
 
     // The held entry survives the round-trip untouched.
-    match custom_uninstall_content(&install.content).expect("uninstall") {
+    match custom_uninstall_content(&install.content, "Escape").expect("uninstall") {
         CustomUninstall::Restored { content } => assert_eq!(content, CUSTOM_HELD_GRAVE),
         other => panic!("expected Restored, got {other:?}"),
     }
@@ -572,8 +596,8 @@ fn custom_install_skips_user_held_binding_and_names_it() {
 
 #[test]
 fn custom_reinstall_is_byte_identical() {
-    let once = custom_install_content(Some(CUSTOM_USER_FILE)).expect("install");
-    let twice = custom_install_content(Some(&once.content)).expect("reinstall");
+    let once = custom_install_content(Some(CUSTOM_USER_FILE), "Escape").expect("install");
+    let twice = custom_install_content(Some(&once.content), "Escape").expect("reinstall");
     assert_eq!(
         once.content, twice.content,
         "second install changed the file"
@@ -582,8 +606,8 @@ fn custom_reinstall_is_byte_identical() {
 
 #[test]
 fn custom_install_after_cosmic_rewrite_refreshes_without_duplicates() {
-    let install = custom_install_content(Some(CUSTOM_REWRITTEN)).expect("install");
-    assert_eq!(install.in_place.len(), 3);
+    let install = custom_install_content(Some(CUSTOM_REWRITTEN), "Escape").expect("install");
+    assert_eq!(install.in_place.len(), 4);
     assert_eq!(
         install
             .content
@@ -596,7 +620,7 @@ fn custom_install_after_cosmic_rewrite_refreshes_without_duplicates() {
 
     // Uninstall still recognizes the re-serialized entry and restores the
     // user-only file byte-exactly.
-    match custom_uninstall_content(&install.content).expect("uninstall") {
+    match custom_uninstall_content(&install.content, "Escape").expect("uninstall") {
         CustomUninstall::Restored { content } => assert_eq!(content, CUSTOM_USER_FILE),
         other => panic!("expected Restored, got {other:?}"),
     }
@@ -604,7 +628,7 @@ fn custom_install_after_cosmic_rewrite_refreshes_without_duplicates() {
 
 #[test]
 fn custom_uninstall_without_airlock_entries_reports_not_installed() {
-    match custom_uninstall_content(CUSTOM_USER_FILE).expect("uninstall") {
+    match custom_uninstall_content(CUSTOM_USER_FILE, "Escape").expect("uninstall") {
         CustomUninstall::NotInstalled => {}
         other => panic!("expected NotInstalled, got {other:?}"),
     }
@@ -612,12 +636,16 @@ fn custom_uninstall_without_airlock_entries_reports_not_installed() {
 
 #[test]
 fn custom_disable_action_on_our_key_is_held_not_clobbered() {
-    // Hand-written compact file: the user disabled Alt+Esc themselves.
+    // Hand-written compact file: the user disabled Alt+Escape themselves.
     // Bare keysym in cosmic's real form (canonical "Escape" name).
     let held = "{\n    (modifiers: [Alt], key: \"Escape\"): Disable,\n}";
-    let install = custom_install_content(Some(held)).expect("install");
-    assert_eq!(install.skipped, ["Alt+Esc"]);
-    assert_eq!(install.in_place, ["Alt+grave", "Alt+Shift+grave"]);
+    let install = custom_install_content(Some(held), "Escape").expect("install");
+    assert_eq!(install.skipped, ["Alt+Escape"]);
+    // The Shift twin is free and installs; only the held key is skipped.
+    assert_eq!(
+        install.in_place,
+        ["Alt+grave", "Alt+Shift+grave", "Alt+Shift+Escape"]
+    );
     assert!(
         install.content.contains("Disable,"),
         "user's Disable entry modified:\n{}",
@@ -635,7 +663,9 @@ fn custom_modifier_order_and_compact_forms_are_recognized() {
         "}\n",
     );
     assert_eq!(
-        custom_install_content(Some(bare)).expect("install").skipped,
+        custom_install_content(Some(bare), "Escape")
+            .expect("install")
+            .skipped,
         ["Alt+Shift+grave"]
     );
 
@@ -645,7 +675,7 @@ fn custom_modifier_order_and_compact_forms_are_recognized() {
         "}\n",
     );
     assert_eq!(
-        custom_install_content(Some(legacy_some))
+        custom_install_content(Some(legacy_some), "Escape")
             .expect("install")
             .skipped,
         ["Alt+Shift+grave"]
@@ -667,8 +697,8 @@ fn custom_description_with_paren_colon_does_not_break_parsing() {
         "    ): Spawn(\"xeyes\"),\n",
         "}\n",
     );
-    let install = custom_install_content(Some(nasty)).expect("install");
-    assert_eq!(install.in_place.len(), 3);
+    let install = custom_install_content(Some(nasty), "Escape").expect("install");
+    assert_eq!(install.in_place.len(), 4);
     assert!(
         install.content.contains("launch thing ): carefully"),
         "nasty description lost:\n{}",
@@ -684,12 +714,145 @@ fn custom_description_with_paren_colon_does_not_break_parsing() {
 
 #[test]
 fn custom_empty_map_file_gains_entries_and_uninstalls_to_empty_map() {
-    let install = custom_install_content(Some("{}")).expect("install");
-    assert_eq!(install.in_place.len(), 3);
-    match custom_uninstall_content(&install.content).expect("uninstall") {
+    let install = custom_install_content(Some("{}"), "Escape").expect("install");
+    assert_eq!(install.in_place.len(), 4);
+    match custom_uninstall_content(&install.content, "Escape").expect("uninstall") {
         CustomUninstall::Restored { content } => assert_eq!(content, "{}"),
         other => panic!("expected Restored, got {other:?}"),
     }
+}
+
+// --- The Esc family, retirement, migration (all-windows A3.1) ----------
+
+#[test]
+fn custom_install_binds_the_esc_family_with_the_configured_key() {
+    // The default and a configured key alike: both twins written, the
+    // configured name verbatim.
+    let default = custom_install_content(None, "Escape").expect("default key");
+    assert_eq!(
+        default.in_place,
+        [
+            "Alt+grave",
+            "Alt+Shift+grave",
+            "Alt+Escape",
+            "Alt+Shift+Escape"
+        ]
+    );
+    assert_eq!(
+        default.content.matches("key: \"Escape\"").count(),
+        2,
+        "both twins bind Escape:\n{}",
+        default.content
+    );
+
+    let tab = custom_install_content(None, "Tab").expect("configured key");
+    assert_eq!(
+        tab.in_place,
+        ["Alt+grave", "Alt+Shift+grave", "Alt+Tab", "Alt+Shift+Tab"]
+    );
+    assert_eq!(
+        tab.content.matches("key: \"Tab\"").count(),
+        2,
+        "both twins bind the configured key verbatim:\n{}",
+        tab.content
+    );
+    // A non-Escape configured key carries no Esc legacy: 0.1.0's
+    // quick-toggle entry on "Esc" must not hold the Tab binding.
+    let legacy = concat!(
+        "{\n",
+        "    (modifiers: [Alt], key: Some(\"Esc\")): Spawn(\"airlock quick-toggle\"),\n",
+        "}\n",
+    );
+    let over_legacy = custom_install_content(Some(legacy), "Tab").expect("install");
+    assert!(over_legacy.skipped.is_empty(), "{:?}", over_legacy.skipped);
+    assert_eq!(over_legacy.migrated, ["Alt+Esc"]);
+}
+
+#[test]
+fn custom_install_migrates_a_retired_quick_toggle_entry() {
+    // The 0.4-era default binding, in cosmic's real serialization and in
+    // 0.1.0's legacy `Some("Esc")` form: both are airlock-owned — removed
+    // and rebound to the new command, one migration line, no duplicate.
+    for (label, entry) in [
+        (
+            "canonical keysym",
+            concat!(
+                "{\n",
+                "    (modifiers: [Alt], key: \"Escape\", description: Some(\"Airlock: quick toggle\")): Spawn(\"airlock quick-toggle\"),\n",
+                "}\n",
+            ),
+        ),
+        (
+            "legacy Some(Esc)",
+            concat!(
+                "{\n",
+                "    (modifiers: [Alt], key: Some(\"Esc\"), description: Some(\"Airlock: quick toggle\")): Spawn(\"airlock quick-toggle\"),\n",
+                "}\n",
+            ),
+        ),
+    ] {
+        let install = custom_install_content(Some(entry), "Escape").expect("install migrates");
+        assert_eq!(
+            install.migrated,
+            ["Alt+Esc"],
+            "{label}: {:?}",
+            install.migrated
+        );
+        assert!(
+            install.skipped.is_empty(),
+            "{label}: a retired entry is never a skip: {:?}",
+            install.skipped
+        );
+        assert_eq!(
+            install.content.matches("Escape").count(),
+            2,
+            "{label}: exactly one Escape-keyed binding pair survives:\n{}",
+            install.content
+        );
+        assert!(
+            !install.content.contains(QUICK_TOGGLE_CMD),
+            "{label}: the retired command must be gone:\n{}",
+            install.content
+        );
+        assert!(
+            install
+                .content
+                .contains(&format!("Spawn(\"{SHOW_ALL_CMD}\")")),
+            "{label}: the new command must be bound:\n{}",
+            install.content
+        );
+    }
+}
+
+#[test]
+fn custom_install_skips_a_foreign_entry_on_the_esc_key() {
+    // A genuinely user-held Escape binding — different command — is
+    // never taken: skipped with the diagnostic, entry untouched. The
+    // Shift twin still installs.
+    let held = concat!(
+        "{\n",
+        "    (modifiers: [Alt], key: \"Escape\"): Spawn(\"xeyes\"),\n",
+        "}\n",
+    );
+    let install = custom_install_content(Some(held), "Escape").expect("install");
+    assert_eq!(install.skipped, ["Alt+Escape"]);
+    assert!(
+        install.migrated.is_empty(),
+        "a foreign entry is never a migration: {:?}",
+        install.migrated
+    );
+    assert!(
+        install.content.contains("Spawn(\"xeyes\")"),
+        "foreign entry modified:\n{}",
+        install.content
+    );
+    assert!(
+        !install
+            .content
+            .contains(&format!("Spawn(\"{SHOW_ALL_CMD}\")")),
+        "a held key must not gain the new binding:\n{}",
+        install.content
+    );
 }
 
 /// Unique disposable directory (no tempfile dependency).
@@ -756,8 +919,12 @@ fn run_at_installs_and_restores_both_files_touching_nothing_else() {
     assert!(installed_actions.contains(&format!("WindowSwitcher: \"{NEXT_CMD}\"")));
     let installed_custom = read_file(&locations.custom);
     assert!(
-        installed_custom.contains(&format!("Spawn(\"{QUICK_TOGGLE_CMD}\")")),
-        "quick-toggle not installed:\n{installed_custom}"
+        installed_custom.contains(&format!("Spawn(\"{SHOW_ALL_CMD}\")")),
+        "show-all-windows not installed:\n{installed_custom}"
+    );
+    assert!(
+        !installed_custom.contains(QUICK_TOGGLE_CMD),
+        "quick-toggle must be bound nowhere:\n{installed_custom}"
     );
     assert!(
         installed_custom.contains("): Spawn(\"xeyes\"),\n"),
@@ -818,6 +985,54 @@ fn run_at_creates_missing_config_dirs_on_fresh_install() {
     assert!(
         !locations.config.exists(),
         "the unedited starter must leave with the rest"
+    );
+}
+
+// --- Install reads all_windows_key from the config (all-windows A3.1) ---
+
+#[test]
+fn install_binds_the_esc_family_from_a_configured_all_windows_key() {
+    let dir = TempDir::new("configured-key");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+    write_file(&locations.config, "all_windows_key = \"Tab\"\n");
+
+    let report = run_at(false, &locations).expect("install");
+    let installed_custom = read_file(&locations.custom);
+    assert_eq!(
+        installed_custom.matches("key: \"Tab\"").count(),
+        2,
+        "both twins must bind the configured key:\n{installed_custom}"
+    );
+    assert!(
+        !installed_custom.contains("key: \"Escape\""),
+        "the default must not leak over a configured key:\n{installed_custom}"
+    );
+    // A present, parseable config is not a fallback: the report stays
+    // quiet about one.
+    assert!(
+        !report.contains("fell back"),
+        "a valid config must not report a fallback: {report}"
+    );
+}
+
+#[test]
+fn install_falls_back_to_the_default_key_over_a_malformed_config() {
+    let dir = TempDir::new("malformed-key");
+    let locations = locations_for(dir.path());
+    write_file(&locations.system_default, SYSTEM_DEFAULT);
+    write_file(&locations.config, "all_windows_key = \n");
+
+    let report = run_at(false, &locations).expect("install never fails over config");
+    assert!(
+        report.contains("all_windows_key fell back to Escape"),
+        "the report must name the fallback: {report}"
+    );
+    let installed_custom = read_file(&locations.custom);
+    assert_eq!(
+        installed_custom.matches("key: \"Escape\"").count(),
+        2,
+        "the default key stands:\n{installed_custom}"
     );
 }
 

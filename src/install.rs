@@ -1,9 +1,14 @@
 //! User-level shortcut takeover: `airlock install` points COSMIC's
 //! `WindowSwitcher`/`WindowSwitcherPrevious` system actions at this binary
-//! and claims three bindings in the sibling `custom` shortcuts file —
-//! `Alt+grave`, `Alt+Shift+grave`, `Alt+Esc` — spawning the same-app and
-//! quick-toggle stubs; `airlock install --uninstall` puts the pre-install
-//! state back byte-exactly.
+//! and claims four bindings in the sibling `custom` shortcuts file —
+//! `Alt+grave`, `Alt+Shift+grave`, and the all-windows family under the
+//! configured `all_windows_key` (`Alt+Escape` / `Alt+Shift+Escape` by
+//! default) — spawning the same-app and all-windows stubs;
+//! `airlock install --uninstall` puts the pre-install state back
+//! byte-exactly. The 0.4-era `Alt+Esc` quick-toggle binding is retired:
+//! a re-run of install migrates it to the new command (all-windows
+//! A3.1, 2026-11-14); quick-toggle stays available as a CLI stub, bound
+//! nowhere by default.
 //!
 //! Boundary (spec): the only files this module may ever write are the
 //! user's `system_actions` and `custom` shortcuts files, exactly
@@ -39,8 +44,14 @@ const PREV_CMD: &str = "airlock shift-alt-tab";
 const SAME_APP_CMD: &str = "airlock same-app";
 /// Command the Alt+Shift+grave custom binding spawns.
 const SAME_APP_PREV_CMD: &str = "airlock same-app-previous";
-/// Command the Alt+Esc custom binding spawns.
+/// Command the Alt+Esc custom binding spawns. Retired from the default
+/// bindings (all-windows, 2026-11-14): the CLI stub remains, bound
+/// nowhere by default — README documents binding it by hand.
 const QUICK_TOGGLE_CMD: &str = "airlock quick-toggle";
+/// Command the Alt+`all_windows_key` custom binding spawns.
+const SHOW_ALL_CMD: &str = "airlock show-all-windows";
+/// Command the Alt+Shift+`all_windows_key` custom binding spawns.
+const SHOW_ALL_PREV_CMD: &str = "airlock show-all-windows-previous";
 /// Prefix of every backup marker line install writes.
 const MARKER_PREFIX: &str = "// airlock-v1 ";
 /// Marker value when no user file existed before install.
@@ -200,6 +211,23 @@ fn manage_system_actions(uninstall: bool, locations: &Locations) -> Result<Strin
     ))
 }
 
+/// The `all_windows_key` the Esc-family bindings hold (all-windows A3.1):
+/// the user's config value via [`crate::settings::Settings::parse`]. A
+/// missing or malformed config never fails the install — the default key
+/// stands — and a malformed one is flagged so the report says so:
+/// settings can never break switching, and cannot break installing
+/// either.
+fn all_windows_key_at(locations: &Locations) -> (String, bool) {
+    let default = || crate::settings::Settings::default().all_windows_key;
+    match fs::read(&locations.config) {
+        Ok(bytes) => match crate::settings::Settings::parse(&bytes) {
+            Ok(settings) => (settings.all_windows_key, false),
+            Err(_) => (default(), true),
+        },
+        Err(_) => (default(), false),
+    }
+}
+
 /// Installs or uninstalls the custom bindings at [`Locations::custom`].
 ///
 /// # Errors
@@ -207,6 +235,7 @@ fn manage_system_actions(uninstall: bool, locations: &Locations) -> Result<Strin
 /// Returns a human-readable diagnostic when the file can't be read or
 /// written or has an unexpected shape.
 fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, String> {
+    let (all_windows_key, config_unparsed) = all_windows_key_at(locations);
     let current = read_optional(&locations.custom)?;
     if uninstall {
         let Some(current) = current else {
@@ -215,7 +244,7 @@ fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, Strin
                 locations.custom.display()
             ));
         };
-        return match custom_uninstall_content(&current)? {
+        return match custom_uninstall_content(&current, &all_windows_key)? {
             CustomUninstall::Restored { content } => {
                 write_atomic(&locations.custom, content.as_bytes())?;
                 Ok(format!(
@@ -239,7 +268,7 @@ fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, Strin
         };
     }
 
-    let plan = custom_install_content(current.as_deref())?;
+    let plan = custom_install_content(current.as_deref(), &all_windows_key)?;
     if let Some(dir) = locations.custom.parent() {
         fs::create_dir_all(dir)
             .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
@@ -261,6 +290,16 @@ fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, Strin
         report.push_str(&format!(
             "; skipped {key} — already bound to another command, free it in Settings → \
              Input → Keyboard → Shortcuts → Custom and re-run install"
+        ));
+    }
+    for retired in &plan.migrated {
+        report.push_str(&format!(
+            "; migrated {retired} — quick-toggle retired, rebound to {SHOW_ALL_CMD}"
+        ));
+    }
+    if config_unparsed {
+        report.push_str(&format!(
+            "; all_windows_key fell back to {all_windows_key} — the config did not parse"
         ));
     }
     if plan.skipped.is_empty() {
@@ -803,52 +842,97 @@ fn write_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
 /// One custom binding airlock claims in the `custom` shortcuts file.
 struct CustomBinding {
     /// Human-readable binding name, for diagnostics.
-    display: &'static str,
+    display: String,
     /// Modifier names in the order COSMIC serializes them.
     modifiers: &'static [&'static str],
     /// Keysym name of the key (level-0, per cosmic-comp matching), as a
     /// bare string in the emitted file — canonical X names ("Escape",
     /// "grave"), never abbreviations.
-    key: &'static str,
+    key: String,
     /// Keysym names earlier releases emitted for this binding (empty when
-    /// none). 0.1.0 bound the quick toggle as `"Esc"` — not a keysym — so
-    /// its entries must be matched by the legacy name to uninstall or heal
-    /// a 0.1.0 machine.
-    legacy_keys: &'static [&'static str],
+    /// none). 0.1.0 bound the quick toggle as `"Esc"` — not a keysym —
+    /// so its entries must be matched by the legacy name to uninstall or
+    /// heal a 0.1.0 machine.
+    legacy_keys: Vec<&'static str>,
     /// Command the binding spawns.
     command: &'static str,
     /// Description cosmic-settings shows for the entry.
-    description: &'static str,
+    description: String,
 }
 
-/// The three bindings the `same-app` module adds; marker/restore discipline
-/// mirrors the `system_actions` handling above.
-const CUSTOM_BINDINGS: &[CustomBinding] = &[
-    CustomBinding {
-        display: "Alt+grave",
-        modifiers: &["Alt"],
-        key: "grave",
-        legacy_keys: &[],
-        command: SAME_APP_CMD,
-        description: "Airlock: same app windows",
-    },
-    CustomBinding {
-        display: "Alt+Shift+grave",
-        modifiers: &["Alt", "Shift"],
-        key: "grave",
-        legacy_keys: &[],
-        command: SAME_APP_PREV_CMD,
-        description: "Airlock: same app windows, backwards",
-    },
-    CustomBinding {
-        display: "Alt+Esc",
-        modifiers: &["Alt"],
-        key: "Escape",
-        legacy_keys: &["Esc"],
-        command: QUICK_TOGGLE_CMD,
-        description: "Airlock: quick toggle",
-    },
-];
+/// The bindings an install claims: the static grave pair plus the
+/// all-windows family under `all_windows_key` (all-windows A3.1,
+/// 2026-11-14). Built per run because the key is the user's config
+/// value; the legacy `"Esc"` name counts only while the configured key
+/// is the canonical `"Escape"` it once mis-serialized as.
+fn custom_bindings(all_windows_key: &str) -> Vec<CustomBinding> {
+    let esc_legacy = if all_windows_key == "Escape" {
+        vec!["Esc"]
+    } else {
+        Vec::new()
+    };
+    vec![
+        CustomBinding {
+            display: "Alt+grave".to_owned(),
+            modifiers: &["Alt"],
+            key: "grave".to_owned(),
+            legacy_keys: Vec::new(),
+            command: SAME_APP_CMD,
+            description: "Airlock: same app windows".to_owned(),
+        },
+        CustomBinding {
+            display: "Alt+Shift+grave".to_owned(),
+            modifiers: &["Alt", "Shift"],
+            key: "grave".to_owned(),
+            legacy_keys: Vec::new(),
+            command: SAME_APP_PREV_CMD,
+            description: "Airlock: same app windows, backwards".to_owned(),
+        },
+        CustomBinding {
+            display: format!("Alt+{all_windows_key}"),
+            modifiers: &["Alt"],
+            key: all_windows_key.to_owned(),
+            legacy_keys: esc_legacy,
+            command: SHOW_ALL_CMD,
+            description: "Airlock: every workspace's windows".to_owned(),
+        },
+        CustomBinding {
+            display: format!("Alt+Shift+{all_windows_key}"),
+            modifiers: &["Alt", "Shift"],
+            key: all_windows_key.to_owned(),
+            legacy_keys: Vec::new(),
+            command: SHOW_ALL_PREV_CMD,
+            description: "Airlock: every workspace's windows, backwards".to_owned(),
+        },
+    ]
+}
+
+/// A binding an earlier release installed that this one no longer does
+/// (all-windows A3.1, 2026-11-14): the 0.4-era `Alt+Esc` quick-toggle,
+/// retired when the Esc family moved to `show-all-windows`. Under
+/// today's ownership rules a leftover entry would look user-held — it
+/// holds the new binding's key while spawning a different command — so
+/// it is recognized here instead: an entry matching a retired binding's
+/// key+modifiers *and* spawning its command is airlock-owned, removed
+/// by the rebuild and reported as a migration, never a skip.
+struct RetiredBinding {
+    /// Human-readable binding name, for the migration report.
+    display: &'static str,
+    /// Modifier names of the retired binding.
+    modifiers: &'static [&'static str],
+    /// Keysym names the retired entries carry — canonical and legacy
+    /// alike, matching the existing legacy-key mechanism.
+    keys: &'static [&'static str],
+    /// Command the retired binding spawned.
+    command: &'static str,
+}
+
+const RETIRED_BINDINGS: &[RetiredBinding] = &[RetiredBinding {
+    display: "Alt+Esc",
+    modifiers: &["Alt"],
+    keys: &["Escape", "Esc"],
+    command: QUICK_TOGGLE_CMD,
+}];
 
 /// Marker line install records when it creates the `custom` file, so
 /// uninstall can delete it again. Stripped by any cosmic-settings rewrite;
@@ -861,9 +945,12 @@ struct CustomInstall {
     content: String,
     /// Bindings in place after the install (added or refreshed), by display
     /// name.
-    in_place: Vec<&'static str>,
+    in_place: Vec<String>,
     /// Bindings skipped because a user entry already holds the key.
-    skipped: Vec<&'static str>,
+    skipped: Vec<String>,
+    /// Retired bindings whose stale entries this install removed and
+    /// rebound (all-windows A3.1): quick-toggle entries on the Esc key.
+    migrated: Vec<&'static str>,
 }
 
 /// What uninstall did to the `custom` file.
@@ -921,6 +1008,29 @@ impl CustomEntry {
                     .iter()
                     .any(|owned| owned.eq_ignore_ascii_case(modifier))
             })
+    }
+
+    /// Whether this entry binds a retired binding's modifier set and key
+    /// — the twin of [`CustomEntry::holds`] over [`RetiredBinding`]'s
+    /// key list, legacy names included.
+    fn holds_retired(&self, retired: &RetiredBinding) -> bool {
+        self.key
+            .as_deref()
+            .is_some_and(|key| retired.keys.contains(&key))
+            && self.modifiers.len() == retired.modifiers.len()
+            && retired.modifiers.iter().all(|modifier| {
+                self.modifiers
+                    .iter()
+                    .any(|owned| owned.eq_ignore_ascii_case(modifier))
+            })
+    }
+
+    /// Whether this entry is a stale retired binding airlock once wrote —
+    /// the key held and the retired command spawned.
+    fn is_retired_ours(&self) -> bool {
+        RETIRED_BINDINGS
+            .iter()
+            .any(|retired| self.holds_retired(retired) && self.spawns(retired.command))
     }
 
     /// Whether this entry spawns `command` — airlock's own entry, however
@@ -1033,34 +1143,44 @@ fn opening_brace_index(lines: &[&str]) -> Option<usize> {
         .position(|line| line.trim_start().starts_with('{'))
 }
 
-/// Whether an entry is airlock's own for some binding.
-fn entry_is_ours(entry: &CustomEntry) -> bool {
-    CUSTOM_BINDINGS
+/// Whether an entry is airlock's own for some binding — a current one or
+/// a retired one, so stale entries never survive a rebuild or an
+/// uninstall.
+fn entry_is_ours(entry: &CustomEntry, bindings: &[CustomBinding]) -> bool {
+    bindings
         .iter()
         .any(|binding| entry.holds(binding) && entry.spawns(binding.command))
+        || entry.is_retired_ours()
 }
 
 /// Plans the installed `custom`-file content over `current` (`None` when no
 /// file exists). Airlock's entries are written in one canonical line each,
 /// inserted right after the opening brace; every other byte of the file is
 /// preserved. A binding a user entry already holds is never taken: it is
-/// reported skipped.
+/// reported skipped. A stale retired entry on a new binding's key is
+/// airlock's own — dropped by the rebuild and reported as a migration,
+/// never a skip (all-windows A3.1).
 ///
 /// # Errors
 ///
 /// Returns a diagnostic when the file has no opening brace to insert after;
 /// it is then left untouched.
-fn custom_install_content(current: Option<&str>) -> Result<CustomInstall, String> {
+fn custom_install_content(
+    current: Option<&str>,
+    all_windows_key: &str,
+) -> Result<CustomInstall, String> {
+    let bindings = custom_bindings(all_windows_key);
     let Some(current) = current else {
         let mut content = format!("{CUSTOM_ABSENT_MARKER}\n{{\n");
-        for binding in CUSTOM_BINDINGS {
+        for binding in &bindings {
             content.push_str(&custom_entry_line(binding));
         }
         content.push('}');
         return Ok(CustomInstall {
             content,
-            in_place: CUSTOM_BINDINGS.iter().map(|b| b.display).collect(),
+            in_place: bindings.iter().map(|b| b.display.clone()).collect(),
             skipped: Vec::new(),
+            migrated: Vec::new(),
         });
     };
 
@@ -1074,16 +1194,28 @@ fn custom_install_content(current: Option<&str>) -> Result<CustomInstall, String
 
     let mut in_place = Vec::new();
     let mut skipped = Vec::new();
-    for binding in CUSTOM_BINDINGS {
+    for binding in &bindings {
         match entries.iter().find(|entry| entry.holds(binding)) {
             // A previous airlock install (possibly re-serialized by
             // cosmic-settings): refreshed at the canonical position.
-            Some(entry) if entry.spawns(binding.command) => in_place.push(binding.display),
+            Some(entry) if entry.spawns(binding.command) => in_place.push(binding.display.clone()),
+            // A stale retired entry (the 0.4 quick-toggle) holds the key:
+            // the rebuild drops it and the new binding lands in its place.
+            Some(entry) if entry.is_retired_ours() => in_place.push(binding.display.clone()),
             // A user entry holds the key; it is never touched.
-            Some(_) => skipped.push(binding.display),
-            None => in_place.push(binding.display),
+            Some(_) => skipped.push(binding.display.clone()),
+            None => in_place.push(binding.display.clone()),
         }
     }
+    let migrated: Vec<&'static str> = RETIRED_BINDINGS
+        .iter()
+        .filter(|retired| {
+            entries
+                .iter()
+                .any(|entry| entry.holds_retired(retired) && entry.spawns(retired.command))
+        })
+        .map(|retired| retired.display)
+        .collect();
 
     // A one-line empty map (`{}`) is split so the entries have a place to
     // go; every other shape keeps its own brace line verbatim.
@@ -1093,15 +1225,15 @@ fn custom_install_content(current: Option<&str>) -> Result<CustomInstall, String
         content.push_str(line);
     }
     content.push_str(if empty_map { "{\n" } else { lines[brace] });
-    for binding in CUSTOM_BINDINGS {
+    for binding in &bindings {
         if in_place.contains(&binding.display) {
             content.push_str(&custom_entry_line(binding));
         }
     }
     for (index, line) in lines.iter().enumerate().skip(brace + 1) {
-        let owned = entries
-            .iter()
-            .any(|entry| entry_is_ours(entry) && index >= entry.span.0 && index < entry.span.1);
+        let owned = entries.iter().any(|entry| {
+            entry_is_ours(entry, &bindings) && index >= entry.span.0 && index < entry.span.1
+        });
         if !owned {
             content.push_str(line);
         }
@@ -1113,6 +1245,7 @@ fn custom_install_content(current: Option<&str>) -> Result<CustomInstall, String
         content,
         in_place,
         skipped,
+        migrated,
     })
 }
 
@@ -1125,7 +1258,11 @@ fn custom_install_content(current: Option<&str>) -> Result<CustomInstall, String
 /// # Errors
 ///
 /// Returns a diagnostic for content this module refuses to touch.
-fn custom_uninstall_content(current: &str) -> Result<CustomUninstall, String> {
+fn custom_uninstall_content(
+    current: &str,
+    all_windows_key: &str,
+) -> Result<CustomUninstall, String> {
+    let bindings = custom_bindings(all_windows_key);
     let lines = split_lines(current);
     let entries = parse_custom_entries(&lines);
     let marker_line = lines
@@ -1133,7 +1270,7 @@ fn custom_uninstall_content(current: &str) -> Result<CustomUninstall, String> {
         .position(|line| line.trim_end_matches(['\n', '\r']) == CUSTOM_ABSENT_MARKER);
     let ours: Vec<&CustomEntry> = entries
         .iter()
-        .filter(|entry| entry_is_ours(entry))
+        .filter(|entry| entry_is_ours(entry, &bindings))
         .collect();
 
     if ours.is_empty() && marker_line.is_none() {
