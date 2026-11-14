@@ -3,6 +3,30 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
+## [0.4.4] — 2026-11-15
+
+### Added
+
+- **Alt+Esc opens the card over every workspace** — hold Alt, tap Esc:
+  the overlay lists all workspaces' windows, grouped by workspace with
+  yours first, and **Alt+Shift+Esc** steps backwards through it. The
+  key moves with the new `all_windows_key` setting (a keysym name,
+  default Escape), and the CLI gains the same two moves:
+  `airlock show-all-windows` and `airlock show-all-windows-previous`.
+
+### Changed
+
+- **Quick-toggle leaves the default bindings** — its old Alt+Esc spot
+  is now the all-windows card's, and the one-window jump is bound
+  nowhere. Re-running `airlock install` migrates: the stale Alt+Esc
+  entries come out, the new family goes in, and the report says so.
+  Bind quick-toggle yourself in Settings → Input → Keyboard →
+  Shortcuts → Custom if you use it.
+- **The `…` tile counts what it hides** — a truncated list's dots
+  paint at full text strength instead of the faint hint ink, and the
+  hidden windows' count appears beneath them as the same count dots
+  parent tiles use, saturating at three.
+
 ## [0.4.3] — 2026-11-13
 
 ### Fixed
