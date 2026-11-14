@@ -1336,6 +1336,33 @@ struct Step {
     scope_override: Option<Scope>,
 }
 
+/// The cycle invokes' [`Step`] (all-windows A1.3, 2026-11-14): the
+/// direction rides the command, `CycleApp` alone narrows a fresh session
+/// to the current application, and `CycleAll` alone forces a fresh
+/// session's scope past the workspace rules — every other invoke leaves
+/// the scope to `resolve_scope`. `QuickToggle` owns no step; its arm
+/// never builds one.
+fn invoke_step(command: ipc::Invoke) -> Option<Step> {
+    match command {
+        ipc::Invoke::Cycle(direction) => Some(Step {
+            direction,
+            same_app: false,
+            scope_override: None,
+        }),
+        ipc::Invoke::CycleApp(direction) => Some(Step {
+            direction,
+            same_app: true,
+            scope_override: None,
+        }),
+        ipc::Invoke::CycleAll(direction) => Some(Step {
+            direction,
+            same_app: false,
+            scope_override: Some(Scope::All),
+        }),
+        ipc::Invoke::QuickToggle => None,
+    }
+}
+
 /// Live settings state: the parsed rules plus the source that watches
 /// them. Refreshed only at session open — one bounded read per
 /// invocation, so nothing on the gesture path blocks on file reads.
@@ -1924,27 +1951,19 @@ pub fn run() -> Result<(), RunError> {
                             // scope at open: Scope::All unconditionally,
                             // the workspace rules cannot veto it
                             // (all-windows spec, 2026-11-14).
-                            ipc::Invoke::Cycle(direction)
-                            | ipc::Invoke::CycleApp(direction)
-                            | ipc::Invoke::CycleAll(direction) => {
-                                let same_app = matches!(command, ipc::Invoke::CycleApp(_));
-                                let scope_override = match command {
-                                    ipc::Invoke::CycleAll(_) => Some(Scope::All),
-                                    _ => None,
-                                };
-                                if let GestureOutput::Step(direction) =
-                                    gesture.feed(GestureInput::Invoke(direction))
+                            ipc::Invoke::Cycle(_)
+                            | ipc::Invoke::CycleApp(_)
+                            | ipc::Invoke::CycleAll(_) => {
+                                let step = invoke_step(command).expect("the cycle arms own a step");
+                                if let GestureOutput::Step(_direction) =
+                                    gesture.feed(GestureInput::Invoke(step.direction))
                                 {
                                     step_and_show(
                                         &mut session,
                                         &mut gesture,
                                         &mut open,
                                         &snapshot,
-                                        Step {
-                                            direction,
-                                            same_app,
-                                            scope_override,
-                                        },
+                                        step,
                                         &mut settings,
                                         &mut icons,
                                         &mut expanded,
@@ -4267,6 +4286,55 @@ mod tests {
         );
         let session = open.expect("all-windows session opened");
         assert_eq!(commit_target(&session, &snap), Some(Handle(4)));
+    }
+
+    #[test]
+    fn invoke_step_pins_each_invoke_to_its_step() {
+        // The serve loop's own decision, extracted so it can be pinned
+        // (the loop itself needs a live Wayland session and stays
+        // VM-gated): the direction rides the command, only CycleApp
+        // narrows a fresh session to the current app, and only CycleAll
+        // forces a fresh session's scope past the workspace rules — the
+        // plain cycles leave the scope to resolve_scope, and QuickToggle
+        // owns no step at all.
+        for (command, direction, same_app, scope_override) in [
+            (
+                ipc::Invoke::Cycle(Direction::Next),
+                Direction::Next,
+                false,
+                None,
+            ),
+            (
+                ipc::Invoke::Cycle(Direction::Previous),
+                Direction::Previous,
+                false,
+                None,
+            ),
+            (
+                ipc::Invoke::CycleApp(Direction::Next),
+                Direction::Next,
+                true,
+                None,
+            ),
+            (
+                ipc::Invoke::CycleAll(Direction::Next),
+                Direction::Next,
+                false,
+                Some(Scope::All),
+            ),
+            (
+                ipc::Invoke::CycleAll(Direction::Previous),
+                Direction::Previous,
+                false,
+                Some(Scope::All),
+            ),
+        ] {
+            let step = invoke_step(command).expect("a cycle invoke owns a step");
+            assert_eq!(step.direction, direction, "{command:?}");
+            assert_eq!(step.same_app, same_app, "{command:?}");
+            assert_eq!(step.scope_override, scope_override, "{command:?}");
+        }
+        assert!(invoke_step(ipc::Invoke::QuickToggle).is_none());
     }
 
     #[test]
