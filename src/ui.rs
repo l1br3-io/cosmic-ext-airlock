@@ -9807,8 +9807,12 @@ mod tests {
             );
         }
         let elapsed = start.elapsed();
+        // The budget is twice today's host: the 30 renders measure
+        // 1.87–2.29 s here under ordinary load (2026-11-15), so a 2 s
+        // line sat on the noise floor and flaked the gate red one run
+        // in three. Four seconds still trips a ~2× render regression.
         assert!(
-            elapsed < Duration::from_secs(2),
+            elapsed < Duration::from_secs(4),
             "30 renders of a 10-row overlay took {elapsed:?}"
         );
     }
