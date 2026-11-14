@@ -1323,11 +1323,17 @@ fn hovered_row(
 /// shows the query's tail (TF3).
 const QUERY_MAX: usize = 64;
 
-/// One step request into [`step_and_show`]: the direction, and whether a
-/// *new* session should narrow to the current application.
+/// One step request into [`step_and_show`]: the direction, whether a
+/// *new* session should narrow to the current application, and the
+/// scope a *new* session must open under regardless of the workspace
+/// rules — `Some(Scope::All)` from the all-windows invoke, `None` from
+/// every path that resolves the scope from settings (all-windows
+/// A1.3, 2026-11-14). An already-open session replays its frozen scope
+/// either way; the override is an open-time input only.
 struct Step {
     direction: Direction,
     same_app: bool,
+    scope_override: Option<Scope>,
 }
 
 /// Live settings state: the parsed rules plus the source that watches
@@ -1586,6 +1592,7 @@ pub fn run() -> Result<(), RunError> {
                         Step {
                             direction,
                             same_app: false,
+                            scope_override: None,
                         },
                         &mut settings,
                         &mut icons,
@@ -1864,6 +1871,7 @@ pub fn run() -> Result<(), RunError> {
                             Step {
                                 direction,
                                 same_app: false,
+                                scope_override: None,
                             },
                             &mut settings,
                             &mut icons,
@@ -1912,13 +1920,18 @@ pub fn run() -> Result<(), RunError> {
                             // invoke steps its frozen ring. Activation waits
                             // for the Alt release — or Escape, focus loss,
                             // or the timeouts to end the session instead.
-                            // CycleAll rides the same arm until its scope
-                            // override lands (all-windows A1.3); no installed
-                            // surface sends `w`/`v` before the stub exists.
+                            // CycleAll rides the same arm but forces the
+                            // scope at open: Scope::All unconditionally,
+                            // the workspace rules cannot veto it
+                            // (all-windows spec, 2026-11-14).
                             ipc::Invoke::Cycle(direction)
                             | ipc::Invoke::CycleApp(direction)
                             | ipc::Invoke::CycleAll(direction) => {
                                 let same_app = matches!(command, ipc::Invoke::CycleApp(_));
+                                let scope_override = match command {
+                                    ipc::Invoke::CycleAll(_) => Some(Scope::All),
+                                    _ => None,
+                                };
                                 if let GestureOutput::Step(direction) =
                                     gesture.feed(GestureInput::Invoke(direction))
                                 {
@@ -1930,6 +1943,7 @@ pub fn run() -> Result<(), RunError> {
                                         Step {
                                             direction,
                                             same_app,
+                                            scope_override,
                                         },
                                         &mut settings,
                                         &mut icons,
@@ -2016,8 +2030,9 @@ fn activate_row(
 /// Applies one `Step`: advance the session ring and refresh the overlay.
 ///
 /// `same_app` decides which ring a *new* session opens (see
-/// [`session_step`]); an already-open session is stepped as-is whatever
-/// key stepped it.
+/// [`session_step`]); `scope_override` — when set — decides its scope
+/// outright, workspace rules aside. An already-open session is stepped
+/// as-is whatever key stepped it.
 ///
 /// The overlay lists what the session lists: a same-app session's frozen
 /// anchor re-filters the fresh snapshot, a plain session lists every
@@ -2147,7 +2162,11 @@ fn step_and_show(
             // open-path value.
             label = workspace_label(snapshot, &settings.settings);
             (
-                resolve_scope(snapshot, &settings.settings),
+                // The all-windows invoke bypasses the rules: its forced
+                // scope stands, resolve_scope only answers for the paths
+                // that consult it (all-windows A1.3, 2026-11-14).
+                step.scope_override
+                    .unwrap_or_else(|| resolve_scope(snapshot, &settings.settings)),
                 palette,
                 profile,
                 rows,
@@ -4102,6 +4121,152 @@ mod tests {
                 expected
             );
         }
+    }
+
+    // --- The all-windows bypass (all-windows A1.3, 2026-11-14) -----------
+
+    /// The bypass fixture: workspace 1 ("code") active and isolated by
+    /// config, holding two windows, with two more on workspace 2 the
+    /// rules would hide.
+    fn isolated_snapshot() -> Snapshot {
+        Snapshot {
+            workspaces: vec![
+                switcher::Workspace {
+                    id: WorkspaceId(1),
+                    name: "code".to_owned(),
+                    coordinates: vec![1],
+                },
+                switcher::Workspace {
+                    id: WorkspaceId(2),
+                    name: "web".to_owned(),
+                    coordinates: vec![2],
+                },
+            ],
+            ..snapshot(
+                vec![
+                    toplevel(1, &[1], State::ACTIVATED, 40),
+                    toplevel(2, &[1], State::default(), 30),
+                    toplevel(3, &[2], State::default(), 20),
+                    toplevel(4, &[2], State::default(), 10),
+                ],
+                Some(1),
+            )
+        }
+    }
+
+    /// Config that isolates workspace "code".
+    fn isolated_settings() -> crate::settings::Settings {
+        crate::settings::Settings {
+            workspaces: vec![crate::settings::WorkspaceRule {
+                reference: crate::settings::WorkspaceRef::Name("code".to_owned()),
+                isolated: true,
+            }],
+            ..crate::settings::Settings::default()
+        }
+    }
+
+    #[test]
+    fn all_windows_open_lists_cross_workspace_windows_in_mru_order() {
+        let snap = isolated_snapshot();
+        // The isolation is on record and resolve_scope obeys it — the
+        // rules the bypass ignores. The all-windows invoke forces
+        // Scope::All into the open, so the ring widens anyway.
+        assert_eq!(
+            resolve_scope(&snap, &isolated_settings()),
+            Scope::CurrentWorkspace
+        );
+        let mut open = None;
+        assert_eq!(
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Next,
+                Scope::All,
+                false,
+                Palette::dark(),
+                StyleProfile::default(),
+                DEFAULT_ROWS,
+                false,
+                crate::text::TextDecision::Bitmap,
+                crate::ui::LayoutSetting::Vertical,
+                crate::ui::ColumnsSetting::Auto,
+                TILES,
+                &mut HashSet::new()
+            ),
+            Some(Handle(2)),
+            "the opening press lands on the MRU-second window, cross-workspace"
+        );
+        let session = open.expect("all-windows session opened");
+        assert_eq!(session.scope, Scope::All);
+        assert_eq!(
+            session.ring.handles().to_vec(),
+            vec![Handle(1), Handle(2), Handle(3), Handle(4)]
+        );
+    }
+
+    #[test]
+    fn plain_cycle_open_on_the_isolated_workspace_stays_workspace_scoped() {
+        let snap = isolated_snapshot();
+        let settings = isolated_settings();
+        // The regression pin: the plain Alt+Tab path consults
+        // resolve_scope, and on the isolated workspace it stays narrow —
+        // the bypass widens only itself.
+        let scope = resolve_scope(&snap, &settings);
+        assert_eq!(scope, Scope::CurrentWorkspace);
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            scope,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Vertical,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut HashSet::new(),
+        );
+        let session = open.expect("plain session opened");
+        assert_eq!(session.scope, Scope::CurrentWorkspace);
+        assert_eq!(
+            session.ring.handles().to_vec(),
+            vec![Handle(1), Handle(2)],
+            "workspace 2's windows never enter the plain ring"
+        );
+    }
+
+    #[test]
+    fn commit_target_under_an_all_session_selects_a_cross_workspace_window() {
+        let snap = isolated_snapshot();
+        let mut open = None;
+        // Previous wraps to the MRU-last window — workspace 2's least
+        // recent. Committing it needs nothing new: switchable under
+        // Scope::All already crosses workspaces.
+        assert_eq!(
+            session_step(
+                &mut open,
+                &snap,
+                Direction::Previous,
+                Scope::All,
+                false,
+                Palette::dark(),
+                StyleProfile::default(),
+                DEFAULT_ROWS,
+                false,
+                crate::text::TextDecision::Bitmap,
+                crate::ui::LayoutSetting::Vertical,
+                crate::ui::ColumnsSetting::Auto,
+                TILES,
+                &mut HashSet::new()
+            ),
+            Some(Handle(4))
+        );
+        let session = open.expect("all-windows session opened");
+        assert_eq!(commit_target(&session, &snap), Some(Handle(4)));
     }
 
     #[test]
