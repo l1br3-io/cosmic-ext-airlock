@@ -4195,6 +4195,45 @@ mod tests {
         }
     }
 
+    /// A three-workspace snapshot whose recency interleaves the
+    /// workspaces — invoked from "code" (the coordinates-middle one:
+    /// "chat" sorts first, "web" last) with a workspace-less window more
+    /// recent than every non-invoking window, so flat MRU order
+    /// (1, 7, 2, 3, 4, 5, 6) and the grouped order disagree.
+    fn grouped_all_snapshot() -> Snapshot {
+        Snapshot {
+            workspaces: vec![
+                switcher::Workspace {
+                    id: WorkspaceId(1),
+                    name: "code".to_owned(),
+                    coordinates: vec![1],
+                },
+                switcher::Workspace {
+                    id: WorkspaceId(2),
+                    name: "web".to_owned(),
+                    coordinates: vec![2],
+                },
+                switcher::Workspace {
+                    id: WorkspaceId(3),
+                    name: "chat".to_owned(),
+                    coordinates: vec![0],
+                },
+            ],
+            ..snapshot(
+                vec![
+                    toplevel(1, &[1], State::ACTIVATED, 40),
+                    toplevel(3, &[1], State::default(), 30),
+                    toplevel(6, &[1], State::default(), 15),
+                    toplevel(4, &[3], State::default(), 25),
+                    toplevel(2, &[2], State::default(), 35),
+                    toplevel(5, &[2], State::default(), 20),
+                    toplevel(7, &[], State::default(), 38),
+                ],
+                Some(1),
+            )
+        }
+    }
+
     /// Config that isolates workspace "code".
     fn isolated_settings() -> crate::settings::Settings {
         crate::settings::Settings {
@@ -4207,11 +4246,12 @@ mod tests {
     }
 
     #[test]
-    fn all_windows_open_lists_cross_workspace_windows_in_mru_order() {
+    fn all_windows_open_lists_workspace_major() {
         let snap = isolated_snapshot();
         // The isolation is on record and resolve_scope obeys it — the
         // rules the bypass ignores. The all-windows invoke forces
-        // Scope::All into the open, so the ring widens anyway.
+        // Scope::All into the open, so the ring widens anyway. On this
+        // fixture recency and the grouped order agree ([1, 2, 3, 4]).
         assert_eq!(
             resolve_scope(&snap, &isolated_settings()),
             Scope::CurrentWorkspace
@@ -4243,6 +4283,79 @@ mod tests {
             session.ring.handles().to_vec(),
             vec![Handle(1), Handle(2), Handle(3), Handle(4)]
         );
+
+        // Where the two orders disagree, the open builds the grouped one
+        // (workspace-order, 2026-11-14): "code"'s windows first (MRU
+        // within), then "chat" and "web" in coordinates order (MRU
+        // within each), the workspace-less window last despite being
+        // globally second-most-recent. The flat MRU run
+        // (1, 7, 2, 3, 4, 5, 6) is what dies here.
+        let grouped = grouped_all_snapshot();
+        let mut open = None;
+        assert_eq!(
+            session_step(
+                &mut open,
+                &grouped,
+                Direction::Next,
+                Scope::All,
+                false,
+                Palette::dark(),
+                StyleProfile::default(),
+                DEFAULT_ROWS,
+                false,
+                crate::text::TextDecision::Bitmap,
+                crate::ui::LayoutSetting::Vertical,
+                crate::ui::ColumnsSetting::Auto,
+                TILES,
+                &mut HashSet::new()
+            ),
+            Some(Handle(3)),
+            "the opening press lands on the invoking workspace's MRU-second"
+        );
+        let session = open.expect("all-windows session opened");
+        assert_eq!(session.scope, Scope::All);
+        assert_eq!(
+            session.ring.handles().to_vec(),
+            vec![
+                Handle(1),
+                Handle(3),
+                Handle(6),
+                Handle(4),
+                Handle(2),
+                Handle(5),
+                Handle(7)
+            ],
+            "invoking workspace MRU, then chat (coordinates-first) and web, workspace-less last"
+        );
+    }
+
+    #[test]
+    fn quick_toggle_matches_the_all_open_press_on_a_grouped_snapshot() {
+        // Quick-tap parity rides the shared ordering by construction: the
+        // toggle's target is the eligible list's second entry and the
+        // opening press lands on the frozen ring's second entry — the
+        // same list, so they agree wherever the orders disagree. The pin
+        // keeps that true.
+        let snap = grouped_all_snapshot();
+        let mut open = None;
+        let press = session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::All,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Vertical,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut HashSet::new(),
+        );
+        assert_eq!(press, Some(Handle(3)));
+        assert_eq!(quick_toggle_target(&snap, Scope::All), press);
     }
 
     #[test]
