@@ -297,6 +297,11 @@ fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, Strin
             "; migrated {retired} — quick-toggle retired, rebound to {SHOW_ALL_CMD}"
         ));
     }
+    for stale in &plan.orphaned {
+        report.push_str(&format!(
+            "; removed stale {stale} — installed under a previous all_windows_key"
+        ));
+    }
     if config_unparsed {
         report.push_str(&format!(
             "; all_windows_key fell back to {all_windows_key} — the config did not parse"
@@ -951,6 +956,10 @@ struct CustomInstall {
     /// Retired bindings whose stale entries this install removed and
     /// rebound (all-windows A3.1): quick-toggle entries on the Esc key.
     migrated: Vec<&'static str>,
+    /// Stale entries a previous `all_windows_key` installed, removed by
+    /// this install and named in the report (the ship-review follow-up):
+    /// the family an earlier run wrote under a different key.
+    orphaned: Vec<String>,
 }
 
 /// What uninstall did to the `custom` file.
@@ -1031,6 +1040,38 @@ impl CustomEntry {
         RETIRED_BINDINGS
             .iter()
             .any(|retired| self.holds_retired(retired) && self.spawns(retired.command))
+    }
+
+    /// Whether this entry is an airlock-written orphan of a previous
+    /// `all_windows_key` (the ship-review follow-up to all-windows A3.1):
+    /// it spawns one of the two commands whose key the setting names but
+    /// holds none of today's bindings — the fingerprint of an install
+    /// made under a different key. Claimed as airlock's own: dropped by
+    /// the rebuild, named in the report, removed by uninstall. Scoped to
+    /// the show-all-windows commands, the only ones whose key the setting
+    /// moves — a hand-bound `airlock quick-toggle` on some other key
+    /// (README documents the recipe) survives untouched.
+    fn is_orphaned_ours(&self, bindings: &[CustomBinding]) -> bool {
+        (self.spawns(SHOW_ALL_CMD) || self.spawns(SHOW_ALL_PREV_CMD))
+            && !bindings.iter().any(|binding| self.holds(binding))
+    }
+
+    /// The entry's own display name — "Alt+Shift+Escape", modifiers
+    /// capitalized, key verbatim — for the orphan report.
+    fn display(&self) -> String {
+        let mut name = self
+            .modifiers
+            .iter()
+            .map(|modifier| capitalized(modifier))
+            .collect::<Vec<_>>()
+            .join("+");
+        if let Some(key) = &self.key {
+            if !name.is_empty() {
+                name.push('+');
+            }
+            name.push_str(key);
+        }
+        name
     }
 
     /// Whether this entry spawns `command` — airlock's own entry, however
@@ -1136,6 +1177,16 @@ fn quoted_string(text: &str) -> Option<String> {
     Some(text[start..end].to_string())
 }
 
+/// ` "alt"` → `"Alt"`, for report display names built from parsed
+/// entries (modifiers are stored lowercased).
+fn capitalized(word: &str) -> String {
+    let mut characters = word.chars();
+    match characters.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + characters.as_str(),
+        None => word.to_owned(),
+    }
+}
+
 /// Index of the first line opening the map.
 fn opening_brace_index(lines: &[&str]) -> Option<usize> {
     lines
@@ -1143,14 +1194,15 @@ fn opening_brace_index(lines: &[&str]) -> Option<usize> {
         .position(|line| line.trim_start().starts_with('{'))
 }
 
-/// Whether an entry is airlock's own for some binding — a current one or
-/// a retired one, so stale entries never survive a rebuild or an
-/// uninstall.
+/// Whether an entry is airlock's own for some binding — a current one, a
+/// retired one, or an orphan a previous `all_windows_key` left behind —
+/// so stale entries never survive a rebuild or an uninstall.
 fn entry_is_ours(entry: &CustomEntry, bindings: &[CustomBinding]) -> bool {
     bindings
         .iter()
         .any(|binding| entry.holds(binding) && entry.spawns(binding.command))
         || entry.is_retired_ours()
+        || entry.is_orphaned_ours(bindings)
 }
 
 /// Plans the installed `custom`-file content over `current` (`None` when no
@@ -1181,6 +1233,7 @@ fn custom_install_content(
             in_place: bindings.iter().map(|b| b.display.clone()).collect(),
             skipped: Vec::new(),
             migrated: Vec::new(),
+            orphaned: Vec::new(),
         });
     };
 
@@ -1216,6 +1269,13 @@ fn custom_install_content(
         })
         .map(|retired| retired.display)
         .collect();
+    // Stale families from a previous key, named by their own entries:
+    // the display is the old binding's name, not today's.
+    let orphaned: Vec<String> = entries
+        .iter()
+        .filter(|entry| entry.is_orphaned_ours(&bindings))
+        .map(|entry| entry.display())
+        .collect();
 
     // A one-line empty map (`{}`) is split so the entries have a place to
     // go; every other shape keeps its own brace line verbatim.
@@ -1246,6 +1306,7 @@ fn custom_install_content(
         in_place,
         skipped,
         migrated,
+        orphaned,
     })
 }
 

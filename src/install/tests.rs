@@ -855,6 +855,94 @@ fn custom_install_skips_a_foreign_entry_on_the_esc_key() {
     );
 }
 
+#[test]
+fn a_previous_all_windows_keys_family_is_dropped_not_orphaned() {
+    // The key-change workflow (docs: change all_windows_key, re-run
+    // install): the file holds exactly what a previous install wrote
+    // under Escape; the config now names Tab. The stale family spawns
+    // airlock's own show-all-windows commands while holding none of
+    // today's bindings — airlock-owned, dropped by the rebuild, and
+    // named in the report. Before the fix it survived forever and
+    // uninstall could never remove it.
+    let previous = custom_install_content(None, "Escape").expect("previous install");
+    let rekeyed = custom_install_content(Some(&previous.content), "Tab").expect("re-keyed");
+    assert_eq!(
+        rekeyed.in_place,
+        ["Alt+grave", "Alt+Shift+grave", "Alt+Tab", "Alt+Shift+Tab"]
+    );
+    assert!(rekeyed.skipped.is_empty(), "{:?}", rekeyed.skipped);
+    assert!(
+        rekeyed.migrated.is_empty(),
+        "an orphan is not a quick-toggle migration: {:?}",
+        rekeyed.migrated
+    );
+    assert_eq!(
+        rekeyed.orphaned,
+        ["Alt+Escape", "Alt+Shift+Escape"],
+        "{:?}",
+        rekeyed.orphaned
+    );
+    assert_eq!(
+        rekeyed.content.matches("key: \"Escape\"").count(),
+        0,
+        "the stale family must be gone:\n{}",
+        rekeyed.content
+    );
+    assert_eq!(
+        rekeyed.content.matches("key: \"Tab\"").count(),
+        2,
+        "the new family must be bound:\n{}",
+        rekeyed.content
+    );
+    assert!(
+        rekeyed.content.contains("key: \"grave\""),
+        "the grave pair is untouched by a key change:\n{}",
+        rekeyed.content
+    );
+}
+
+#[test]
+fn uninstall_removes_a_previous_keys_stale_family() {
+    // Uninstall under a changed key claims its own orphans too: over
+    // the bare previous install the marker plus no user entries means
+    // RemoveFile, exactly as an unchanged-key uninstall; over a file
+    // with user entries the stale family goes, while entries airlock
+    // cannot own — a foreign command, and a hand-bound quick-toggle on
+    // a foreign key (README documents the recipe) — survive untouched.
+    let previous = custom_install_content(None, "Escape").expect("previous install");
+
+    match custom_uninstall_content(&previous.content, "Tab").expect("uninstall bare") {
+        CustomUninstall::RemoveFile => {}
+        other => panic!("expected RemoveFile, got {other:?}"),
+    }
+
+    let with_user = format!(
+        "{}    (modifiers: [Ctrl], key: \"t\"): Spawn(\"airlock quick-toggle\"),\n    (modifiers: [Alt], key: \"F1\"): Spawn(\"xeyes\"),\n}}",
+        previous.content.trim_end_matches('}')
+    );
+    match custom_uninstall_content(&with_user, "Tab").expect("uninstall with user entries") {
+        CustomUninstall::Restored { content } => {
+            assert!(
+                content.contains("Spawn(\"airlock quick-toggle\")"),
+                "a hand-bound quick-toggle on a foreign key survives:\n{content}"
+            );
+            assert!(
+                content.contains("Spawn(\"xeyes\")"),
+                "a user entry survives:\n{content}"
+            );
+            assert!(
+                !content.contains(SHOW_ALL_CMD) && !content.contains(SHOW_ALL_PREV_CMD),
+                "the stale family must be gone:\n{content}"
+            );
+            assert!(
+                !content.contains(SAME_APP_CMD),
+                "the current grave pair goes with it:\n{content}"
+            );
+        }
+        other => panic!("expected Restored, got {other:?}"),
+    }
+}
+
 /// Unique disposable directory (no tempfile dependency).
 struct TempDir(PathBuf);
 
