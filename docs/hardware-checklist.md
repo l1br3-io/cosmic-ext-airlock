@@ -104,7 +104,9 @@ binary.
 ### Same-app and quick toggle
 
 - [ ] Alt+grave opens the overlay listing only the current application's
-      windows, MRU order; Tab walks them; Alt release commits
+      windows — MRU order on an isolated workspace, the app's windows
+      grouped by workspace under `isolated = false`; Tab walks them;
+      Alt release commits
 - [ ] Alt+Shift+grave opens the same list stepping backwards
 - [ ] An application with a single window in scope is a silent no-op — no
       overlay, no switch
@@ -120,7 +122,9 @@ binary.
 ### All windows (Alt+Esc)
 
 - [ ] On a workspace whose rules isolate it, Alt+Esc opens the card over
-      every non-minimized window on every workspace, MRU order — the
+      every non-minimized window on every workspace, grouped by
+      workspace — the invoking workspace's windows first, other
+      workspaces after in workspace order, workspace-less last — the
       rules cannot veto this invoke; Tab and the arrows walk it
 - [ ] Alt release commits to a window parked on another workspace: the
       switch lands there

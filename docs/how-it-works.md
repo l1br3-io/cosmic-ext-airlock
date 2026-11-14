@@ -172,16 +172,18 @@ the rules say. See [settings.md](settings.md).
 `airlock install` also claims four more keys.
 
 - Hold **Alt** and tap **grave** (the key above **Tab**): the overlay
-  lists only the current application's windows in MRU order. The same
-  gesture, the same isolation rule; `isolated = false` widens the list
-  to that application's windows everywhere. An application with fewer
-  than two windows in scope does nothing.
+  lists only the current application's windows — MRU order on an
+  isolated workspace; under `isolated = false`, that application's
+  windows everywhere in the grouped order of the Alt+Esc card below. An
+  application with fewer than two windows in scope does nothing.
 - **Alt+Shift+grave** opens it stepping backwards.
-- **Alt+Esc** opens the card over every workspace's windows, MRU order
-  — the `[[workspace]]` isolation rules aside, this one invoke bypasses
-  them. **Alt+Shift+Esc** opens it stepping backwards. The key is the
-  `all_windows_key` setting, `Escape` by default; see
-  [settings.md](settings.md#all-windows-key).
+- **Alt+Esc** opens the card over every workspace's windows, grouped by
+  workspace — the invoking workspace's windows first, the other
+  workspaces in workspace order, workspace-less windows last, most
+  recent within each group — the `[[workspace]]` isolation rules aside,
+  this one invoke bypasses them. **Alt+Shift+Esc** opens it stepping
+  backwards. The key is the `all_windows_key` setting, `Escape` by
+  default; see [settings.md](settings.md#all-windows-key).
 - Quick-toggle — the old no-overlay flip to the MRU-second window —
   keeps its `airlock quick-toggle` command but no default key; bind it
   by hand in Settings → Input → Keyboard → Shortcuts → Custom if you

@@ -88,9 +88,12 @@ pipeline the COSMIC launcher uses) beside its title.
   workspaces opted out of isolation, where the list crosses workspaces — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#show-workspace)
 - **Every window, for one press** — `Alt+Esc` opens the same card over
-  every workspace's windows, MRU order, the isolation rules aside;
-  `Alt+Shift+Esc` steps it backwards. The key under the fixed Alt
-  modifier is the `all_windows_key` setting (`Escape` by default) — see
+  every workspace's windows, grouped by workspace — the invoking
+  workspace's windows first, the other workspaces in workspace order,
+  workspace-less windows last, most recent within each group — the
+  isolation rules aside; `Alt+Shift+Esc` steps it backwards. The key
+  under the fixed Alt modifier is the `all_windows_key` setting
+  (`Escape` by default) — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#all-windows-key)
 - **Close windows from the card**: Alt+minus closes the selected row's
   window and the card stays up for the next; hovering a window row or

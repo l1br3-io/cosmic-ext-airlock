@@ -50,7 +50,7 @@ isolated = true        # the default — shown for completeness
 
 [[workspace]]
 index = 2              # the 2nd workspace in COSMIC's order, named or not
-isolated = false       # Alt+Tab here cycles all windows, MRU
+isolated = false       # Alt+Tab here cycles all windows, workspace-grouped
 ```
 
 ## Keys
@@ -62,7 +62,7 @@ flag:
 |-----|------|---------|
 | `name` | string | Matches a workspace COSMIC reports with exactly this name |
 | `index` | whole number ≥ 1 | Matches the workspace at this 1-based position |
-| `isolated` | boolean | `true` (default): only this workspace's windows; `false`: all windows, MRU |
+| `isolated` | boolean | `true` (default): only this workspace's windows; `false`: all windows, grouped by workspace (this workspace's first) |
 
 An entry needs `name` or `index` — never both.
 
@@ -444,12 +444,14 @@ like any malformed edit.
 ## What `isolated = false` changes
 
 Alt+Tab / Shift+Alt+Tab on that workspace lists every non-minimized
-window across all workspaces in MRU order (sticky windows are naturally
-included everywhere). Committing a selection parked on another workspace
-switches to it and focuses it — the gesture can take you across
-workspaces, like the stock switcher. Mid-gesture the rules of the core
-still hold: the list is never swapped under a held Alt, and a workspace
-switch voids the session.
+window across all workspaces, grouped by workspace: the invoking
+workspace's windows first, the other workspaces in workspace order,
+workspace-less windows last, most recent within each group (sticky
+windows ride with the invoking workspace's group). Committing a
+selection parked on another workspace switches to it and focuses it —
+the gesture can take you across workspaces, like the stock switcher.
+Mid-gesture the rules of the core still hold: the list is never swapped
+under a held Alt, and a workspace switch voids the session.
 
 ## Live apply
 
@@ -524,8 +526,8 @@ A bad config never breaks switching:
 - Rename a matched workspace in COSMIC; the entry follows the name on the
   next press
 - On an `isolated = false` workspace, Alt+Tab walks every non-minimized
-  window in MRU order, and committing one parked elsewhere switches to
-  it
+  window, grouped by workspace (this workspace's first), and committing
+  one parked elsewhere switches to it
 - Set `theme = "light"` on a dark-mode desktop; the next Alt+Tab paints
   the light card (`"dark"` paints the dark card on a light-mode desktop)
 - With `theme = "auto"`, flip COSMIC's dark mode; the next Alt+Tab
