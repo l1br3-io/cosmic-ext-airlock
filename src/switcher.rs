@@ -810,9 +810,12 @@ mod tests {
     }
 
     #[test]
-    fn app_anchor_follows_the_scope_not_just_recency() {
-        // The MRU-front window lives on another workspace: under the v1
-        // scope the anchor comes from this workspace's front window.
+    fn app_anchor_under_all_anchors_the_invoking_workspaces_front() {
+        // The global MRU front (browser, 40) lives on workspace 2; the
+        // invoking workspace is 1. Under All the eligible front is the
+        // invoking workspace's front — here outranks recent
+        // (workspace-order, 2026-11-14) — so editor anchors. The
+        // CurrentWorkspace scope reaches the same anchor by confinement.
         let toplevels = vec![
             app_window(1, "browser", &[2], State::default(), 40),
             app_window(2, "editor", &[1], State::ACTIVATED, 30),
@@ -822,9 +825,6 @@ mod tests {
             app_anchor(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace),
             Some("editor".to_string())
         );
-        // Under All the eligible front is the invoking workspace's front
-        // (workspace-order, 2026-11-14): here outranks recent, so the
-        // browser — globally most recent, but elsewhere — does not anchor.
         let workspaces = vec![workspace(1, &[0, 0]), workspace(2, &[1, 0])];
         assert_eq!(
             app_anchor(&toplevels, &workspaces, WorkspaceId(1), Scope::All),
@@ -869,19 +869,42 @@ mod tests {
     }
 
     #[test]
-    fn app_view_under_all_scope_crosses_workspaces() {
+    fn app_view_under_all_lists_the_apps_windows_grouped() {
+        // Editor windows across three workspaces, invoked from the middle
+        // one (2): the app's run inside the grouped order — invoking
+        // workspace first, then the others in workspace order,
+        // workspace-less last, MRU within each group. The app's old flat
+        // MRU run (1, 2, 3, 4, 6 by recency) is what dies here.
         let snapshot = Snapshot {
             toplevels: vec![
-                app_window(1, "editor", &[1], State::ACTIVATED, 30),
-                app_window(2, "editor", &[2], State::default(), 20),
+                app_window(1, "editor", &[2], State::default(), 30),
+                app_window(2, "editor", &[1], State::default(), 25),
+                app_window(3, "editor", &[3], State::default(), 20),
+                app_window(4, "editor", &[2], State::default(), 15),
+                // Another app's window on the invoking workspace — never
+                // in the view.
+                app_window(5, "browser", &[2], State::ACTIVATED, 40),
+                // Workspace-less editor window: the tail.
+                app_window(6, "editor", &[], State::default(), 10),
             ],
-            workspaces: Vec::new(),
-            active: Some(WorkspaceId(1)),
+            workspaces: vec![
+                workspace(1, &[0, 0]),
+                workspace(2, &[1, 0]),
+                workspace(3, &[2, 0]),
+            ],
+            active: Some(WorkspaceId(2)),
         };
+        let view = app_view(&snapshot, "editor", Scope::All);
+        let handles: Vec<Handle> = view.toplevels.iter().map(|t| t.handle).collect();
+        assert_eq!(
+            handles,
+            vec![Handle(1), Handle(4), Handle(2), Handle(3), Handle(6)]
+        );
+        // The confined view still lists only this workspace's editor
+        // windows, MRU within.
         let confined = app_view(&snapshot, "editor", Scope::CurrentWorkspace);
-        assert_eq!(confined.toplevels.len(), 1);
-        let everywhere = app_view(&snapshot, "editor", Scope::All);
-        assert_eq!(everywhere.toplevels.len(), 2);
+        let confined_handles: Vec<Handle> = confined.toplevels.iter().map(|t| t.handle).collect();
+        assert_eq!(confined_handles, vec![Handle(1), Handle(4)]);
     }
 
     #[test]
@@ -1282,6 +1305,54 @@ mod tests {
                 (RowKind::Child, Handle(1)),
                 (RowKind::Child, Handle(2)),
                 (RowKind::Child, Handle(3)),
+            ]
+        );
+    }
+
+    #[test]
+    fn grouped_under_all_follows_the_workspace_major_order() {
+        // Two multi-window apps spread over two workspaces plus a
+        // single-window app on a third, invoked from workspace 2 (the
+        // coordinates-middle one). Parent rows appear in grouped
+        // first-appearance order — a's invoking-workspace window fronts,
+        // b's follows — and each app's children follow in grouped order:
+        // the invoking workspace's windows before the other workspace's.
+        // The flat MRU run (1, 7, 5, 3, 4, 6) is what dies here.
+        let toplevels = vec![
+            // a on workspace 1: handles 3 (25), 4 (10).
+            app_window(3, "a", &[1], State::default(), 25),
+            app_window(4, "a", &[1], State::default(), 10),
+            // a on the invoking workspace 2: handle 1 (40) — the front.
+            app_window(1, "a", &[2], State::ACTIVATED, 40),
+            // b on the invoking workspace 2: handle 5 (30); on
+            // workspace 1: handle 6 (5).
+            app_window(5, "b", &[2], State::default(), 30),
+            app_window(6, "b", &[1], State::default(), 5),
+            // Single-window c on workspace 3: a leaf at its grouped
+            // position, behind workspaces 1 and 2.
+            app_window(7, "c", &[3], State::default(), 35),
+        ];
+        let workspaces = vec![
+            workspace(1, &[0, 0]),
+            workspace(2, &[1, 0]),
+            workspace(3, &[2, 0]),
+        ];
+        let grouping = Grouping::new(&toplevels, &workspaces, WorkspaceId(2), Scope::All);
+        // Grouped order: 1, 5 (workspace 2, MRU), 3, 4, 6 (workspace 1),
+        // 7 (workspace 3) — first appearances a, b, then c's leaf. Each
+        // app's children follow in that same order: a's run 1, 3, 4
+        // (invoking workspace first), b's run 5, 6.
+        assert_eq!(
+            shape(&grouping),
+            vec![
+                (RowKind::Parent, Handle(1)),
+                (RowKind::Child, Handle(1)),
+                (RowKind::Child, Handle(3)),
+                (RowKind::Child, Handle(4)),
+                (RowKind::Parent, Handle(5)),
+                (RowKind::Child, Handle(5)),
+                (RowKind::Child, Handle(6)),
+                (RowKind::Leaf, Handle(7)),
             ]
         );
     }
