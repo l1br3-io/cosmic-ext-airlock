@@ -25,11 +25,17 @@ const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 /// [`ui::COLUMNS_MAX`]; a test pins the pair.
 const COLUMNS_PROBLEM: &str = "`columns` must be \"auto\" or a whole number between 3 and 12";
 
-/// The `all_windows_key` diagnostic (all-windows, 2026-11-14): the value
-/// names a keysym under the binding's fixed Alt modifier, and the
-/// compositor is the authority airlock cannot check offline — so any
-/// non-empty name parses and only the shape rejects here.
-const ALL_WINDOWS_KEY_PROBLEM: &str = "`all_windows_key` must be a non-empty key name";
+/// The `all_windows_key` diagnostic (all-windows, 2026-11-14; charset
+/// added in the ship-review follow-up): the value names a keysym under
+/// the binding's fixed Alt modifier, and the compositor is the authority
+/// airlock cannot check offline — which *names* exist is its call. The
+/// name's shape is not: a keysym name is ASCII letters, digits, and `_`
+/// (every canonical X name's charset), and install writes the value
+/// inside a quoted RON map key, where anything else — a quote above all
+/// — breaks the compositor's whole shortcuts file. The shape rejects
+/// here; the name's existence never does.
+const ALL_WINDOWS_KEY_PROBLEM: &str =
+    "`all_windows_key` must be a keysym name (letters, digits, or `_`)";
 
 /// One `[[workspace]]` rule.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -367,16 +373,22 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         None => "Escape".to_owned(),
         Some(value) => {
             // Shape only: a keysym name the compositor resolves —
-            // airlock holds no table to check it against offline. A
-            // padded name trims so the binding never carries the
-            // padding into the compositor config.
+            // airlock holds no table to check names against offline.
+            // The shape is the keysym charset (see
+            // [`ALL_WINDOWS_KEY_PROBLEM`]); a padded name trims so the
+            // binding never carries the padding into the compositor
+            // config.
             let key = value
                 .as_str()
                 .ok_or(SettingsError::InvalidFile {
                     problem: ALL_WINDOWS_KEY_PROBLEM,
                 })?
                 .trim();
-            if key.is_empty() {
+            if key.is_empty()
+                || !key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            {
                 return Err(SettingsError::InvalidFile {
                     problem: ALL_WINDOWS_KEY_PROBLEM,
                 });
@@ -1019,15 +1031,16 @@ isolated = false
     }
 
     #[test]
-    fn parse_reads_any_non_empty_key_name_verbatim() {
+    fn parse_reads_keysym_names_verbatim() {
         // The compositor is the keysym authority airlock cannot check
-        // offline: canonical X names and anything else non-empty alike
-        // parse, with no validation beyond the shape. Whitespace trims —
-        // a padded name would bind a padded keysym.
+        // offline — airlock validates only the name's shape, the charset
+        // every canonical X keysym name shares. Whitespace trims: a
+        // padded name would bind a padded keysym.
         for (config, key) in [
             (&b"all_windows_key = \"Tab\"\n"[..], "Tab"),
             (b"all_windows_key = \"grave\"\n", "grave"),
             (b"all_windows_key = \"F13\"\n", "F13"),
+            (b"all_windows_key = \"XF86AudioMute\"\n", "XF86AudioMute"),
             (b"all_windows_key = \"  Tab  \"\n", "Tab"),
         ] {
             let settings = Settings::parse(config).expect("valid key name");
@@ -1051,7 +1064,7 @@ isolated = false
             assert_eq!(
                 error,
                 SettingsError::InvalidFile {
-                    problem: "`all_windows_key` must be a non-empty key name"
+                    problem: ALL_WINDOWS_KEY_PROBLEM
                 },
                 "{}",
                 String::from_utf8_lossy(config)
@@ -1071,7 +1084,34 @@ isolated = false
             assert_eq!(
                 error,
                 SettingsError::InvalidFile {
-                    problem: "`all_windows_key` must be a non-empty key name"
+                    problem: ALL_WINDOWS_KEY_PROBLEM
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_rejects_key_names_outside_the_keysym_charset() {
+        // A keysym name is ASCII letters, digits, and `_` — the shape
+        // every canonical X name shares. Anything else is a typo or a
+        // mistake, and install writes the value inside a quoted RON map
+        // key, where a quote breaks the compositor's whole file: the
+        // shape rejects here. The compositor stays the authority over
+        // which names *exist*; the charset only guards the file's syntax.
+        for config in [
+            &b"all_windows_key = \"say \\\"hi\\\"\"\n"[..],
+            b"all_windows_key = \"two words\"\n",
+            b"all_windows_key = \"Tab!\"\n",
+            b"all_windows_key = \"Tab-Previous\"\n",
+            b"all_windows_key = \"caf\xC3\xA9\"\n",
+        ] {
+            let error = Settings::parse(config).expect_err("not a keysym name");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: ALL_WINDOWS_KEY_PROBLEM
                 },
                 "{}",
                 String::from_utf8_lossy(config)

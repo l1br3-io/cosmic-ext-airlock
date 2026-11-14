@@ -425,11 +425,15 @@ fixed Alt modifier — `Alt+Escape` by default, opening the switcher over
 every non-minimized window on every workspace, the `[[workspace]]`
 isolation rules aside. The value is a key name — a canonical X keysym
 name like `"Escape"`, `"grave"`, `"Tab"` — that the compositor
-resolves: any non-empty string parses, and `airlock install` writes it
-verbatim into the binding. The backwards twin (`Alt+Shift+` the key)
-adds Shift, so prefer a key whose keysym Shift leaves alone — letters
-and digits change under Shift, which makes the backwards twin
-unreliable.
+resolves: any keysym name (ASCII letters, digits, or `_`) parses, and
+`airlock install` writes it verbatim into the binding. Whether the name
+exists is the compositor's call, which airlock cannot check offline —
+but a value outside that charset can only be a typo, and the installer
+writes it inside the compositor's config syntax, where a quote would
+break the whole file, so the shape rejects at parse. The backwards
+twin (`Alt+Shift+` the key) adds Shift, so prefer a key whose keysym
+Shift leaves alone — letters and digits change under Shift, which makes
+the backwards twin unreliable.
 
 The default is `"Escape"`. A change applies when you re-run
 `airlock install`: the binding lives in the compositor's config, which
@@ -505,10 +509,11 @@ A bad config never breaks switching:
   is named in a diagnostic ("`grouping` must be a boolean") and the
   last-good settings apply, like any malformed edit.
 - **A bad `all_windows_key` value** — a wrong type
-  (`all_windows_key = 1`, `[all_windows_key]`) or an empty or
-  whitespace-only string — is named in one diagnostic
-  ("`all_windows_key` must be a non-empty key name") and the last-good
-  settings apply.
+  (`all_windows_key = 1`, `[all_windows_key]`), an empty or
+  whitespace-only string, or a string outside the keysym charset (a
+  quote, a space, punctuation, non-ASCII) — is named in one diagnostic
+  ("`all_windows_key` must be a keysym name (letters, digits, or
+  `_`)") and the last-good settings apply.
 - **Unknown keys are ignored** — extra keys inside an entry cost nothing.
 - **Size cap** — files over 1 MiB are ignored entirely (defaults apply);
   the read runs on the gesture path and must stay cheap.
