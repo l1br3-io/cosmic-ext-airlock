@@ -14,6 +14,12 @@ pub enum Command {
     SameApp,
     /// Spawn stub: same as [`Command::SameApp`], stepping backwards.
     SameAppPrevious,
+    /// Spawn stub: ask the daemon to cycle through every workspace's
+    /// windows, isolation aside.
+    ShowAllWindows,
+    /// Spawn stub: same as [`Command::ShowAllWindows`], stepping
+    /// backwards.
+    ShowAllWindowsPrevious,
     /// Spawn stub: ask the daemon to switch to the previous window with no
     /// overlay at all.
     QuickToggle,
@@ -52,6 +58,10 @@ pub fn parse(args: &[String]) -> Result<Command, ParseError> {
         "shift-alt-tab" => no_extra_args(rest).map(|()| Command::ShiftAltTab),
         "same-app" => no_extra_args(rest).map(|()| Command::SameApp),
         "same-app-previous" => no_extra_args(rest).map(|()| Command::SameAppPrevious),
+        "show-all-windows" => no_extra_args(rest).map(|()| Command::ShowAllWindows),
+        "show-all-windows-previous" => {
+            no_extra_args(rest).map(|()| Command::ShowAllWindowsPrevious)
+        }
         "quick-toggle" => no_extra_args(rest).map(|()| Command::QuickToggle),
         "install" => {
             let (uninstall, rest) = match rest.first().map(String::as_str) {
@@ -86,15 +96,17 @@ pub fn usage() -> &'static str {
     "usage: airlock <command>
 
 commands:
-  daemon                    run the switcher daemon (foreground)
-  alt-tab                   switch to the next window on this workspace
-  shift-alt-tab             switch to the previous window on this workspace
-  same-app                  cycle through the current application's windows
-  same-app-previous         cycle backwards through the current application's windows
-  quick-toggle              switch to the previous window without the overlay
-  install [--uninstall]     take over (or restore) the Alt+Tab keybind
-  list                      print toplevels, workspaces, and the active workspace
-  --version                 print the binary name and version
+  daemon                      run the switcher daemon (foreground)
+  alt-tab                     switch to the next window on this workspace
+  shift-alt-tab               switch to the previous window on this workspace
+  same-app                    cycle through the current application's windows
+  same-app-previous           cycle backwards through the current application's windows
+  show-all-windows            cycle through every window on every workspace
+  show-all-windows-previous   cycle backwards through every window on every workspace
+  quick-toggle                switch to the previous window without the overlay
+  install [--uninstall]       take over (or restore) the Alt+Tab keybind
+  list                        print toplevels, workspaces, and the active workspace
+  --version                   print the binary name and version
 "
 }
 
@@ -141,6 +153,38 @@ mod tests {
         assert_eq!(
             parse(&args(&["same-app-previous"])),
             Ok(Command::SameAppPrevious)
+        );
+    }
+
+    #[test]
+    fn parses_show_all_windows() {
+        assert_eq!(
+            parse(&args(&["show-all-windows"])),
+            Ok(Command::ShowAllWindows)
+        );
+    }
+
+    #[test]
+    fn parses_show_all_windows_previous() {
+        assert_eq!(
+            parse(&args(&["show-all-windows-previous"])),
+            Ok(Command::ShowAllWindowsPrevious)
+        );
+    }
+
+    #[test]
+    fn extra_arg_after_show_all_windows_reports_unexpected() {
+        assert_eq!(
+            parse(&args(&["show-all-windows", "now"])),
+            Err(ParseError::Unexpected("now".to_string()))
+        );
+    }
+
+    #[test]
+    fn extra_arg_after_show_all_windows_previous_reports_unexpected() {
+        assert_eq!(
+            parse(&args(&["show-all-windows-previous", "now"])),
+            Err(ParseError::Unexpected("now".to_string()))
         );
     }
 
@@ -256,6 +300,8 @@ mod tests {
             "shift-alt-tab",
             "same-app",
             "same-app-previous",
+            "show-all-windows",
+            "show-all-windows-previous",
             "quick-toggle",
             "install",
             "list",
