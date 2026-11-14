@@ -111,10 +111,25 @@ binary.
 - [ ] On a default isolated workspace the list holds that application's
       windows here; on one with `isolated = false`
       ([settings](settings.md)), that application's windows everywhere
-- [ ] Alt+Esc flips to the MRU-second window with nothing rendered;
-      repeated presses ping-pong between the top two
+- [ ] `airlock quick-toggle`, run by hand, flips to the MRU-second window
+      with nothing rendered; repeated runs ping-pong between the top two
+      (the command keeps working with no key bound to it)
 - [ ] Regression: Alt+Tab still lists every window in scope, not only the
       current application's
+
+### All windows (Alt+Esc)
+
+- [ ] On a workspace whose rules isolate it, Alt+Esc opens the card over
+      every non-minimized window on every workspace, MRU order — the
+      rules cannot veto this invoke; Tab and the arrows walk it
+- [ ] Alt release commits to a window parked on another workspace: the
+      switch lands there
+- [ ] Alt+Shift+Esc opens the same list stepping backwards
+- [ ] Escape mid-gesture dismisses without switching; Alt+grave and plain
+      Alt+Tab behave exactly as before on the same workspace
+- [ ] With `all_windows_key = "Tab"`
+      ([settings](settings.md)) and `airlock install` re-run, the family
+      follows the configured key (Alt+Tab / Alt+Shift+Tab here)
 
 ### Workspace label
 
@@ -429,18 +444,22 @@ binary.
 - [ ] `airlock install --uninstall` brings the previous switcher back
       exactly (diff `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/system_actions`
       before install and after uninstall: byte-identical)
-- [ ] `airlock install` also adds three marked custom bindings — Alt+grave,
-      Alt+Shift+grave, Alt+Esc — to the sibling `custom` file; a key
-      already bound by one of your shortcuts is skipped with a diagnostic,
-      never clobbered
+- [ ] `airlock install` also adds four marked custom bindings — Alt+grave,
+      Alt+Shift+grave, the all-windows pair Alt+Esc / Alt+Shift+Esc — to
+      the sibling `custom` file; a key already bound by one of your
+      shortcuts is skipped with a diagnostic, never clobbered
+- [ ] A machine upgraded from 0.4: the re-run of `airlock install` that
+      applies this release reports the old `Escape → airlock
+      quick-toggle` entry as a **migration**, and the file holds no
+      quick-toggle spawn afterward; quick-toggle is bound nowhere
 - [ ] **Every pre-existing shortcut still fires right after install** —
       before anything else, press a custom shortcut you already had; the
       0.1.0 regression here made cosmic-comp discard the whole `custom`
       file (factory-default session) because one emitted keysym didn't
       parse. Confirm `journalctl --user -b | grep "custom config error"`
       shows nothing new
-- [ ] Alt+grave and Alt+Esc actually fire (not just appear in the file);
-      Esc's keysym name is `Escape`
+- [ ] Alt+grave, Alt+Esc, and Alt+Shift+Esc actually fire (not just
+      appear in the file); Esc's keysym name is `Escape`
 - [ ] `--uninstall` restores the `custom` file byte-exactly too (same
       diff), or deletes it when install created it; unmarked entries
       survive

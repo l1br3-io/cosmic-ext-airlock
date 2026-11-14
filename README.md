@@ -87,6 +87,11 @@ pipeline the COSMIC launcher uses) beside its title.
   vertical card and bottom-center on the horizontal one. The anchor for
   workspaces opted out of isolation, where the list crosses workspaces — see
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#show-workspace)
+- **Every window, for one press** — `Alt+Esc` opens the same card over
+  every workspace's windows, MRU order, the isolation rules aside;
+  `Alt+Shift+Esc` steps it backwards. The key under the fixed Alt
+  modifier is the `all_windows_key` setting (`Escape` by default) — see
+  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#all-windows-key)
 - **Close windows from the card**: Alt+minus closes the selected row's
   window and the card stays up for the next; hovering a window row or
   horizontal window tile reveals a small × badge on its icon's top-right
@@ -114,14 +119,19 @@ cargo run --example overlay-preview -- preview.png
 
 Scope and extra keys:
 
-- Sticky windows appear on every workspace; minimized windows nowhere; a
-  window on another workspace can never be reached through Airlock. A
-  workspace can opt into the global list — see
+- Sticky windows appear on every workspace; minimized windows nowhere;
+  plain Alt+Tab never reaches a window on another workspace — a
+  workspace can opt into the global list, or one **Alt+Esc** press
+  reaches it regardless of the rules. See
   [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md).
 - **Alt+grave** (the key above Tab) cycles the current application's
   windows;
-  **Alt+Shift+grave** starts it stepping backwards; **Alt+Esc** jumps to the
-  second-most-recent window with no overlay.
+  **Alt+Shift+grave** starts it stepping backwards; **Alt+Esc** opens the
+  switcher over every workspace's windows with **Alt+Shift+Esc** stepping
+  it backwards. Quick-toggle — the no-overlay flip to the
+  second-most-recent window — keeps its `airlock quick-toggle` command
+  but no default key; bind it by hand in Settings → Input → Keyboard →
+  Shortcuts → Custom if you want it back.
 - A small daemon keeps a live compositor snapshot; the keybind stubs
   auto-start it on first press. The overlay is software-rendered.
 
@@ -175,7 +185,9 @@ The takeover touches only user-level files in
 
 - `WindowSwitcher` / `WindowSwitcherPrevious` point at `airlock alt-tab` /
   `airlock shift-alt-tab`
-- Three marked custom bindings are added for the extra keys
+- Four marked custom bindings are added for the extra keys; a 0.4-era
+  `Alt+Esc` quick-toggle entry is migrated to the new command, never
+  skipped
 - A key already bound to one of your own shortcuts is skipped and named in
   the output
 - Everything survives re-login; the first key press starts the daemon

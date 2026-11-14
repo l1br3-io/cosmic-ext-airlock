@@ -162,13 +162,14 @@ content-sized), `"100%"` for the whole output, or a pixel count. See
 Only windows whose workspace set includes the current workspace are
 listed: sticky windows appear everywhere, minimized windows nowhere,
 and a window parked on another workspace can never be focused through
-Airlock. The isolation is per-workspace configurable: a workspace can
-opt into the global switcher through a config file. See
-[settings.md](settings.md).
+plain Alt+Tab. The isolation is per-workspace configurable: a workspace
+can opt into the global switcher through a config file, and the
+**Alt+Esc** family below reaches every window for one press whatever
+the rules say. See [settings.md](settings.md).
 
 ## The extra keys
 
-`airlock install` also claims three more keys.
+`airlock install` also claims four more keys.
 
 - Hold **Alt** and tap **grave** (the key above **Tab**): the overlay
   lists only the current application's windows in MRU order. The same
@@ -176,8 +177,15 @@ opt into the global switcher through a config file. See
   to that application's windows everywhere. An application with fewer
   than two windows in scope does nothing.
 - **Alt+Shift+grave** opens it stepping backwards.
-- **Alt+Esc** switches to the MRU-second window under the same scope:
-  the window a fast Alt+Tab tap reaches, with no overlay.
+- **Alt+Esc** opens the card over every workspace's windows, MRU order
+  — the `[[workspace]]` isolation rules aside, this one invoke bypasses
+  them. **Alt+Shift+Esc** opens it stepping backwards. The key is the
+  `all_windows_key` setting, `Escape` by default; see
+  [settings.md](settings.md#all-windows-key).
+- Quick-toggle — the old no-overlay flip to the MRU-second window —
+  keeps its `airlock quick-toggle` command but no default key; bind it
+  by hand in Settings → Input → Keyboard → Shortcuts → Custom if you
+  want it back.
 
 ## The daemon
 
