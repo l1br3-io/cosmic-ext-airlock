@@ -4330,6 +4330,53 @@ mod tests {
     }
 
     #[test]
+    fn grouped_open_under_all_builds_the_tree_on_the_grouped_order() {
+        // The grouped open path must thread the snapshot's workspace list
+        // into Grouping::new, not only the flat ring's eligible call: on
+        // the interleaved fixture the tree's rows list in the grouped
+        // order (every window its own app here — app.{handle} — so all
+        // rows are leaves).
+        let snap = grouped_all_snapshot();
+        let mut open = None;
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::All,
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            true,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Vertical,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut HashSet::new(),
+        );
+        let session = open.expect("grouped all-windows session opened");
+        let rows: Vec<Handle> = session
+            .tree
+            .expect("grouped session carries a tree")
+            .rows()
+            .iter()
+            .map(|row| row.handle)
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                Handle(1),
+                Handle(3),
+                Handle(6),
+                Handle(4),
+                Handle(2),
+                Handle(5),
+                Handle(7)
+            ]
+        );
+    }
+
+    #[test]
     fn quick_toggle_matches_the_all_open_press_on_a_grouped_snapshot() {
         // Quick-tap parity rides the shared ordering by construction: the
         // toggle's target is the eligible list's second entry and the

@@ -6375,6 +6375,92 @@ mod tests {
         assert!(!model.viewport.bottom);
     }
 
+    /// A two-workspace snapshot whose recency crosses the workspace
+    /// boundary, invoked from workspace 1, with a workspace-less window
+    /// between the recencies — flat MRU order (1, 4, 2, 3) and the
+    /// grouped order (1, 3, 2, 4) disagree, and so does the empty-list
+    /// degenerate (1, 3, 4, 2), which is what a model builder that
+    /// drops the workspace list would produce.
+    fn all_scope_grouped_snapshot() -> Snapshot {
+        Snapshot {
+            toplevels: vec![
+                toplevel(1, "a", "app.a", &[1], switcher::State::ACTIVATED, 30),
+                toplevel(2, "b", "app.b", &[2], switcher::State::default(), 25),
+                toplevel(3, "c", "app.c", &[1], switcher::State::default(), 20),
+                toplevel(4, "d", "app.d", &[], switcher::State::default(), 28),
+            ],
+            workspaces: vec![
+                switcher::Workspace {
+                    id: switcher::WorkspaceId(1),
+                    name: "code".to_string(),
+                    coordinates: vec![1],
+                },
+                switcher::Workspace {
+                    id: switcher::WorkspaceId(2),
+                    name: "web".to_string(),
+                    coordinates: vec![2],
+                },
+            ],
+            active: Some(switcher::WorkspaceId(1)),
+        }
+    }
+
+    #[test]
+    fn a_vertical_model_under_all_lists_the_grouped_order() {
+        // The overlay must thread the snapshot's workspace list into
+        // eligible: under All the rows list workspace-major — the
+        // invoking workspace's windows first, the other workspace after,
+        // the workspace-less window last — not by global recency
+        // (workspace-order, 2026-11-14).
+        let snap = all_scope_grouped_snapshot();
+        let model = build(&snap, Handle(3), Scope::All).expect("eligible windows exist");
+        let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
+        assert_eq!(
+            handles,
+            vec![
+                Some(Handle(1)),
+                Some(Handle(3)),
+                Some(Handle(2)),
+                Some(Handle(4))
+            ]
+        );
+        let selected: Vec<bool> = model.rows.iter().map(|row| row.selected).collect();
+        assert_eq!(selected, vec![false, true, false, false]);
+    }
+
+    #[test]
+    fn a_horizontal_model_under_all_lists_the_grouped_order() {
+        // The Alt+Esc band over the same pin — build_band hardcodes the
+        // v1 scope, so this calls the model builder directly with All.
+        let snap = all_scope_grouped_snapshot();
+        let model = overlay_model_horizontal(
+            &snap,
+            Handle(3),
+            Scope::All,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            StyleProfile::default(),
+            Banding {
+                tiles: 4,
+                width_floor: None,
+                prev: None,
+            },
+            TextBackend::Bitmap,
+        )
+        .expect("eligible windows exist");
+        let handles: Vec<Option<Handle>> = model.rows.iter().map(|row| row.handle).collect();
+        assert_eq!(
+            handles,
+            vec![
+                Some(Handle(1)),
+                Some(Handle(3)),
+                Some(Handle(2)),
+                Some(Handle(4))
+            ]
+        );
+    }
+
     #[test]
     fn a_truncated_band_appends_one_continuation_tile() {
         // Six windows, four tiles: four content tiles then one wordless

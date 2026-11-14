@@ -79,9 +79,10 @@ pub enum Scope {
 
 /// Positions of `workspaces` in workspace order — coordinates sorted
 /// lexicographically, workspace id breaking ties — the order
-/// `format_snapshot` lists by and `settings::active_workspace` counts
-/// positions in. The workspace-order module's one implementation of the
-/// convention, owned here; callers hand it `&snapshot.workspaces`.
+/// `format_snapshot` lists by. (`settings::active_workspace` counts
+/// positions in a coordinates-only sort; the two agree while coordinates
+/// are distinct.) The grouping's comparator for this module; callers
+/// hand it `&snapshot.workspaces`.
 fn workspace_positions(workspaces: &[Workspace]) -> HashMap<WorkspaceId, usize> {
     let mut sorted: Vec<&Workspace> = workspaces.iter().collect();
     sorted.sort_by(|a, b| {
