@@ -21,7 +21,7 @@
 - **Another tool fights over WindowSwitcher.** The user-level override is
   one slot; last writer wins. Re-run `airlock install` to take it back;
   `--uninstall` then restores whatever Airlock itself backed up.
-- **Alt+grave (the key above Tab) or Alt+Esc dead after install.** The key
+- **Alt+` (the key above Tab) or Alt+Esc dead after install.** The key
   was already bound;
   install skipped it and said so in its output. Free it in Settings →
   Input → Keyboard → Shortcuts → Custom, then re-run `airlock install`.

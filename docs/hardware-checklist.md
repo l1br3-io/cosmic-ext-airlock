@@ -90,7 +90,7 @@ binary.
 - [ ] Ctrl+9 with fewer than nine windows listed changes nothing — the
       overlay stays up and Tab still steps
 - [ ] A number key without Ctrl does nothing mid-hold
-- [ ] In an Alt+grave overlay, Ctrl+N addresses the Nth row of that
+- [ ] In an Alt+\` overlay, Ctrl+N addresses the Nth row of that
       application's list
 - [ ] Rows one to nine show their digits `1` … `9` at the right edge,
       legible on both themes at 100% and 200% scale over a light and a
@@ -103,11 +103,11 @@ binary.
 
 ### Same-app and quick toggle
 
-- [ ] Alt+grave opens the overlay listing only the current application's
+- [ ] Alt+\` opens the overlay listing only the current application's
       windows — MRU order on an isolated workspace, the app's windows
       grouped by workspace under `isolated = false`; Tab walks them;
       Alt release commits
-- [ ] Alt+Shift+grave opens the same list stepping backwards
+- [ ] Alt+Shift+\` opens the same list stepping backwards
 - [ ] An application with a single window in scope is a silent no-op — no
       overlay, no switch
 - [ ] On a default isolated workspace the list holds that application's
@@ -129,7 +129,7 @@ binary.
 - [ ] Alt release commits to a window parked on another workspace: the
       switch lands there
 - [ ] Alt+Shift+Esc opens the same list stepping backwards
-- [ ] Escape mid-gesture dismisses without switching; Alt+grave and plain
+- [ ] Escape mid-gesture dismisses without switching; Alt+\` and plain
       Alt+Tab behave exactly as before on the same workspace
 - [ ] With `all_windows_key = "Tab"`
       ([settings](settings.md)) and `airlock install` re-run, the family
@@ -194,7 +194,7 @@ binary.
       `…` rows read at a glance (screenshot each)
 - [ ] A list of ten or fewer at the default — any list within `rows` —
       matches the card before windowing: same height, no `…` rows
-- [ ] Same-app cycling (Alt+grave) on one app with more than `rows`
+- [ ] Same-app cycling (Alt+\`) on one app with more than `rows`
       windows open windows the same way
 
 ### Layout (the horizontal card)
@@ -386,7 +386,7 @@ binary.
 - [ ] With `grouping = true`: typing flattens the card to matching
       windows — collapsed groups' windows match all the same; clearing
       the query restores the tree with the kept window selected
-- [ ] Alt+grave (same-app): typing filters within that app's windows
+- [ ] Alt+\` (same-app): typing filters within that app's windows
 - [ ] Tab / arrows / wheel step the matches only; Enter and Alt-release
       commit the selected match
 - [ ] Ctrl+N still instant-commits over the filtered rows; plain digits
@@ -448,8 +448,8 @@ binary.
 - [ ] `airlock install --uninstall` brings the previous switcher back
       exactly (diff `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/system_actions`
       before install and after uninstall: byte-identical)
-- [ ] `airlock install` also adds four marked custom bindings — Alt+grave,
-      Alt+Shift+grave, the all-windows pair Alt+Esc / Alt+Shift+Esc — to
+- [ ] `airlock install` also adds four marked custom bindings — Alt+\`,
+      Alt+Shift+\`, the all-windows pair Alt+Esc / Alt+Shift+Esc — to
       the sibling `custom` file; a key already bound by one of your
       shortcuts is skipped with a diagnostic, never clobbered
 - [ ] A machine upgraded from 0.4: the re-run of `airlock install` that
@@ -462,7 +462,7 @@ binary.
       file (factory-default session) because one emitted keysym didn't
       parse. Confirm `journalctl --user -b | grep "custom config error"`
       shows nothing new
-- [ ] Alt+grave, Alt+Esc, and Alt+Shift+Esc actually fire (not just
+- [ ] Alt+\`, Alt+Esc, and Alt+Shift+Esc actually fire (not just
       appear in the file); Esc's keysym name is `Escape`
 - [ ] `--uninstall` restores the `custom` file byte-exactly too (same
       diff), or deletes it when install created it; unmarked entries

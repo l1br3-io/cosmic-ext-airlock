@@ -24,95 +24,60 @@ solid; same-app cycling and pointer input are newer.
 - The switcher path it replaces (cosmic-launcher's cosmic-switch-less)
   measured ≈ 170 MB RSS. Airlock's daemon: 8.0 MB ([Performance](#performance)).
 
-## How it works
+## Features
 
-Hold **Alt**, tap **Tab**: an overlay lists the current workspace's windows,
-most recently used first. Rows are the application's themed icon (the same
-pipeline the COSMIC launcher uses) beside its title.
+Hold **Alt**, tap **Tab**: an overlay lists the current workspace's
+windows, most recently used first — each row its application's themed
+icon beside its title. Release **Alt** to switch; **Enter** confirms
+without releasing; **Escape** dismisses; a tap released before the
+overlay appears still switches.
 
-- **Tab** / **Shift+Tab** step forward / back; arrow keys work too
-- Release **Alt** to switch and dismiss; **Enter** confirms without
-  releasing; **Escape** dismisses without switching
-- A quick tap, released before the overlay appears, still switches
-- Pointer: hover moves the selection, click switches, the wheel steps the
-  list
-- **Ctrl+N** (1–9, keypad too) switches to the Nth window at once, like a
-  click; each row shows its digit
-- A long list never grows the card: `rows` windows stay in view (8 by
-  default) with `…` rows marking the truncated edges, and stepping
-  walks the whole list — see
-  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#rows)
-- **A horizontal card** (`layout = "horizontal"`) lays the same list
-  out as a wide strip of compact icon-only tiles, one caption at the
-  top naming the window the release would activate; stepped with
-  Left/Right and addressed by Ctrl+N (a bare digit on each tile) and
-  the pointer per tile; apps with several windows show up to three
-  count dots under their icon, and `columns` fits the strip to
-  two-thirds of the screen (`"auto"`, the default) or pins 3–12
-  tiles — see
-  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#layout)
-- **Card width** — `width` and `min-width` hold either card at a floor:
-  `"auto"` (the default) sizes from content, `"100%"` fills the
-  screen, or set a pixel count. A value below what the card needs
-  changes nothing — see
-  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#width)
-- **App grouping** (`grouping = true`) turns the list into a per-app tree:
-  collapsed app entries that commit their most recently used window, with
-  window-count pips below the app name and an inline caret; → to
-  expand one (remembered across gestures) and ← to collapse; Tab, arrows,
-  and the wheel walk the visible rows linearly — see
-  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#grouping)
-- **Grouping on the band** (`grouping = true` with
-  `layout = "horizontal"`) lays the tree out as one strip: the selected
-  app's tile is replaced, in place, by its window run. ↓ opens the run
-  and ↑ closes it — the card keeps its width across the two, and an app
-  holds a run only while it has two live windows (the caption names the
-  app's most recently used window while its tile is selected). Tab
-  steps apps from a tile and, inside an open run, steps the run's
-  windows with Left/Right — the run staying open until the walk leaves
-  it, as the vertical tree's Tab walks an expanded group;
-  **`** (the key above Tab) works
-  the selected app's group — a tile press opens the app's windows on
-  their most recently used one (**Shift+`** on the last), and from
-  inside the run the key cycles those windows, wrapping within the
-  app. The vertical tree behaves the same from its entries, where an
-  expanded entry collapses in place. In every other session the key
-  types into the filter
-- **Type to filter**: while the card is up, typing narrows it — title or
-  app name, case-insensitive, first match selected; Backspace edits,
-  Escape clears before it dismisses. Works in every mode
-- **Workspace label** (`show_workspace = true`): the card names the
-  workspace you pressed on — its name verbatim, or "# Workspace N"
-  when the name is just a number or absent, small, top-left on the
-  vertical card and bottom-center on the horizontal one. The anchor for
-  workspaces opted out of isolation, where the list crosses workspaces — see
-  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#show-workspace)
-- **Every window, for one press** — `Alt+Esc` opens the same card over
-  every workspace's windows, grouped by workspace — the invoking
-  workspace's windows first, the other workspaces in workspace order,
-  workspace-less windows last, most recent within each group — the
-  isolation rules aside; `Alt+Shift+Esc` steps it backwards. The key
-  under the fixed Alt modifier is the `all_windows_key` setting
-  (`Escape` by default) — see
-  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#all-windows-key)
-- **Close windows from the card**: Alt+minus closes the selected row's
-  window and the card stays up for the next; hovering a window row or
-  horizontal window tile reveals a small × badge on its icon's top-right
-  corner that closes on click. A group entry
-  closes its app's front window — every row closes what it activates
-- **The pointing-hand cursor over the card**: from the moment the
-  pointer enters, the cursor turns into the hand — everything on the
-  card is a click target
-- Titles render in the desktop's own interface font — real glyphs,
-  real accents, fallback chains for CJK and emoji — at 12 logical px by
-  default; a `font` key overrides the family and `font_size` (8–24)
-  the size (see
-  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md#font-size)).
-  Before 2026-11-07 every title painted in a built-in ASCII pixel font
-  that folded punctuation and accents and showed `?` for anything
-  without an ASCII form; that fold survives only as the zero-fonts
-  floor — the deterministic paint of last resort on a system with no
-  loadable fonts.
+### What the list shows
+
+- **Workspace isolation** — plain Alt+Tab reaches only the current
+  workspace's windows; a workspace can opt into the global list
+  ([Settings](docs/settings.md))
+- **All-windows mode** — **Alt+Esc** opens the same card over every
+  workspace's windows, grouped by workspace with yours first;
+  **Alt+Shift+Esc** steps it backwards
+- **Type to filter** — while the card is up, typing narrows it by
+  title or app name, case-insensitive; works in every mode
+- **Workspace label** — `show_workspace = true` names the workspace
+  you pressed on, the anchor for workspaces opted out of isolation
+
+Sticky windows appear on every workspace; minimized windows nowhere;
+one **Alt+Esc** press reaches any window regardless of the rules.
+
+### Choosing and closing
+
+- **Direct access** — **Ctrl+N** (1–9, keypad included) switches to
+  the Nth window at once, like a click; each row shows its digit
+- **App cycling** — **Alt+`** (the key above Tab) cycles the current
+  application's windows; **Alt+Shift+`** steps backwards
+- **Quick-toggle** — `airlock quick-toggle` flips to the
+  second-most-recent window without an overlay; no default key —
+  bind it in Settings → Input → Keyboard → Shortcuts → Custom
+- **Close from the card** — **Alt+minus** closes the selected row's
+  window and the card stays up; hovering a row reveals a × badge
+  that closes on click
+- **Pointer input** — hover moves the selection, click switches, the
+  wheel steps; the pointing-hand cursor marks every click target
+
+### Layout and appearance
+
+- **App grouping** — the list becomes a per-app tree: collapsed app
+  entries commit their most recently used window, → expands one and
+  ← collapses it; on the horizontal band the selected tile opens its
+  run in place
+- **Horizontal layout** — `layout = "horizontal"` lays the same list
+  out as a wide strip of icon-only tiles under one caption naming
+  what release would activate
+- **Card sizing** — a long list never grows the card (`rows` stay in
+  view, 8 by default, `…` marking the truncated edges); `columns` and
+  `width`/`min-width` fit the strip to the screen
+- **Fonts** — titles render in the desktop's interface font, accents,
+  CJK and emoji included, at 12 logical px by default; `font` and
+  `font_size` override
 
 Preview the card without a COSMIC session:
 
@@ -120,26 +85,9 @@ Preview the card without a COSMIC session:
 cargo run --example overlay-preview -- preview.png
 ```
 
-Scope and extra keys:
-
-- Sticky windows appear on every workspace; minimized windows nowhere;
-  plain Alt+Tab never reaches a window on another workspace — a
-  workspace can opt into the global list, or one **Alt+Esc** press
-  reaches it regardless of the rules. See
-  [Settings](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/settings.md).
-- **Alt+grave** (the key above Tab) cycles the current application's
-  windows;
-  **Alt+Shift+grave** starts it stepping backwards; **Alt+Esc** opens the
-  switcher over every workspace's windows with **Alt+Shift+Esc** stepping
-  it backwards. Quick-toggle — the no-overlay flip to the
-  second-most-recent window — keeps its `airlock quick-toggle` command
-  but no default key; bind it by hand in Settings → Input → Keyboard →
-  Shortcuts → Custom if you want it back.
-- A small daemon keeps a live compositor snapshot; the keybind stubs
-  auto-start it on first press. The overlay is software-rendered.
-
-Every key, pointer rule, the frozen-list rule, and the card's measurements:
-[how the switcher behaves](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/how-it-works.md).
+Every key, pointer rule, the frozen-list rule, and the card's
+measurements:
+[how the switcher behaves](docs/how-it-works.md).
 
 ## Install
 

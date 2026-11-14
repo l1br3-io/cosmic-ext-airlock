@@ -88,10 +88,10 @@ lands on the first match.
 It works in every mode: the flat list, the grouped tree, which
 flattens to its matching windows while a query stands, and the
 same-app view. **Ctrl+N** keeps its chord; every other printable key,
-digits included, types. One carve-out: **grave** in a grouped card —
-the vertical tree or the horizontal strip — toggles the selected app's
-group from its entry and cycles that app's windows from inside it
-instead, and types only while a query stands. See
+digits included, types. One carve-out: **`** (the key above Tab) in a
+grouped card — the vertical tree or the horizontal strip — toggles the
+selected app's group from its entry and cycles that app's windows from
+inside it instead, and types only while a query stands. See
 [Grouping](settings.md#grouping).
 
 Clearing the query restores the card you had, keeping the window you
@@ -171,12 +171,12 @@ the rules say. See [settings.md](settings.md).
 
 `airlock install` also claims four more keys.
 
-- Hold **Alt** and tap **grave** (the key above **Tab**): the overlay
+- Hold **Alt** and tap **`** (the key above **Tab**): the overlay
   lists only the current application's windows — MRU order on an
   isolated workspace; under `isolated = false`, that application's
   windows everywhere in the grouped order of the Alt+Esc card below. An
   application with fewer than two windows in scope does nothing.
-- **Alt+Shift+grave** opens it stepping backwards.
+- **Alt+Shift+`** opens it stepping backwards.
 - **Alt+Esc** opens the card over every workspace's windows, grouped by
   workspace — the invoking workspace's windows first, the other
   workspaces in workspace order, workspace-less windows last, most
