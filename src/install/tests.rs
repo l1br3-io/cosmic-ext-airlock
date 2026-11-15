@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Faithful test replica of cosmic's `custom` shortcuts schema
 /// (cosmic-settings-daemon `config/src/shortcuts/{binding.rs,sym.rs,
 /// action.rs}`): `Binding` denies unknown fields and its `key` field uses a
-/// custom keysym deserializer that accepts only a **bare string** —
+/// custom keysym deserializer that accepts only a **bare string**:
 /// `key: Some("grave")` is a hard deserialization error, and because a
 /// Binding is the map key, one bad entry poisons the whole file. That is
 /// the 0.1.0 incident: cosmic-comp watched the file, failed to load it,
@@ -111,7 +111,7 @@ const USER_BACKSLASH_CR: &str = concat!(
 
 /// A `custom` file as cosmic-settings writes it: one user Spawn shortcut,
 /// multi-line binding keys, bare modifier names, a **bare-string keysym**
-/// (`key: "A"` — cosmic's custom deserializer rejects `Some(..)`), trailing
+/// (`key: "A"`; cosmic's custom deserializer rejects `Some(..)`), trailing
 /// commas, no final newline.
 const CUSTOM_USER_FILE: &str = concat!(
     "{\n",
@@ -145,7 +145,7 @@ const CUSTOM_HELD_GRAVE: &str = concat!(
 
 /// cosmic-settings rewrote the file after an airlock install: our entry
 /// re-serialized in cosmic's multi-line shape (the in-file marker comment
-/// did not survive the rewrite). Uninstall must still find and remove it —
+/// did not survive the rewrite). Uninstall must still find and remove it,
 /// and leave the user entry exactly as cosmic wrote it.
 const CUSTOM_REWRITTEN: &str = concat!(
     "{\n",
@@ -165,7 +165,7 @@ const CUSTOM_REWRITTEN: &str = concat!(
 );
 
 /// A `custom` file exactly as 0.1.0 wrote it: airlock's three entries with
-/// the schema-invalid `key: Some(..)` form — the bytes that made cosmic-comp
+/// the schema-invalid `key: Some(..)` form: the bytes that made cosmic-comp
 /// fall back to factory defaults. Reinstall must heal the file to the valid
 /// shape and uninstall must still recognize and remove the entries.
 const CUSTOM_LEGACY_0_1_0: &str = concat!(
@@ -340,7 +340,7 @@ fn markerless_one_key_takeover_leaves_third_party_sibling_untouched() {
 fn uninstall_after_marker_strip_restores_builtin_switcher() {
     let installed = install_content(Some(USER_EXISTING), SYSTEM_DEFAULT).expect("install");
     // A cosmic-settings rewrite keeps the body but drops the leading
-    // marker comments — the realistic degradation while installed.
+    // marker comments: the realistic degradation while installed.
     let stripped: String = installed.split_inclusive('\n').skip(2).collect();
 
     match uninstall_content(&stripped, SYSTEM_DEFAULT).expect("uninstall") {
@@ -472,7 +472,7 @@ fn custom_install_output_parses_as_cosmic_shortcut_map() {
     // THE 0.1.0 regression guard: whatever install emits must deserialize
     // as cosmic's Binding→Action map. A malformed map key (0.1.0's
     // `key: Some(..)`) makes cosmic-comp discard the whole file and run
-    // factory defaults for the live session — every user shortcut appears
+    // factory defaults for the live session: every user shortcut appears
     // reset. Fails loudly with the file content if this ever regresses.
     for (label, expected, content) in [
         (
@@ -526,7 +526,7 @@ fn emitted_bindings_use_bare_keysyms_and_canonical_names() {
 #[test]
 fn legacy_0_1_0_file_is_healed_by_reinstall() {
     // Re-running install over 0.1.0's malformed file replaces the
-    // Some-form entries with valid ones — a repair path for bitten users.
+    // Some-form entries with valid ones: a repair path for bitten users.
     // The 0.1.0 quick-toggle entry on "Esc" is retired-ours: dropped and
     // counted as a migration, not left as a duplicate or a skip.
     let healed = custom_install_content(Some(CUSTOM_LEGACY_0_1_0), "Escape").expect("reinstall");
@@ -656,7 +656,7 @@ fn custom_disable_action_on_our_key_is_held_not_clobbered() {
 #[test]
 fn custom_modifier_order_and_compact_forms_are_recognized() {
     // Reordered modifiers on compact single-line entries: still held
-    // bindings — in cosmic's bare-keysym form and in 0.1.0's Some-form.
+    // bindings: in cosmic's bare-keysym form and in 0.1.0's Some-form.
     let bare = concat!(
         "{\n",
         "    (modifiers: [Shift, Alt], key: \"grave\"): Spawn(\"other\"),\n",
@@ -771,7 +771,7 @@ fn custom_install_binds_the_esc_family_with_the_configured_key() {
 #[test]
 fn custom_install_migrates_a_retired_quick_toggle_entry() {
     // The 0.4-era default binding, in cosmic's real serialization and in
-    // 0.1.0's legacy `Some("Esc")` form: both are airlock-owned — removed
+    // 0.1.0's legacy `Some("Esc")` form: both are airlock-owned, removed
     // and rebound to the new command, one migration line, no duplicate.
     for (label, entry) in [
         (
@@ -826,7 +826,7 @@ fn custom_install_migrates_a_retired_quick_toggle_entry() {
 
 #[test]
 fn custom_install_skips_a_foreign_entry_on_the_esc_key() {
-    // A genuinely user-held Escape binding — different command — is
+    // A genuinely user-held Escape binding (different command) is
     // never taken: skipped with the diagnostic, entry untouched. The
     // Shift twin still installs.
     let held = concat!(
@@ -861,7 +861,7 @@ fn a_previous_all_windows_keys_family_is_dropped_not_orphaned() {
     // install): the file holds exactly what a previous install wrote
     // under Escape; the config now names Tab. The stale family spawns
     // airlock's own show-all-windows commands while holding none of
-    // today's bindings — airlock-owned, dropped by the rebuild, and
+    // this install's bindings: airlock-owned, dropped by the rebuild, and
     // named in the report. Before the fix it survived forever and
     // uninstall could never remove it.
     let previous = custom_install_content(None, "Escape").expect("previous install");
@@ -907,8 +907,8 @@ fn uninstall_removes_a_previous_keys_stale_family() {
     // the bare previous install the marker plus no user entries means
     // RemoveFile, exactly as an unchanged-key uninstall; over a file
     // with user entries the stale family goes, while entries airlock
-    // cannot own — a foreign command, and a hand-bound quick-toggle on
-    // a foreign key (README documents the recipe) — survive untouched.
+    // cannot own, a foreign command, and a hand-bound quick-toggle on
+    // a foreign key (README documents the recipe), survive untouched.
     let previous = custom_install_content(None, "Escape").expect("previous install");
 
     match custom_uninstall_content(&previous.content, "Tab").expect("uninstall bare") {

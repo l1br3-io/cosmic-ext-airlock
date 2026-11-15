@@ -259,7 +259,7 @@ pub(crate) struct App {
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
     /// The cursor-shape manager (`wp_cursor_shape_v1`), when the
-    /// compositor offers it — an optional protocol, so a compositor
+    /// compositor offers it: an optional protocol, so a compositor
     /// without it keeps whatever cursor it was showing (`None`, no
     /// request, no failure).
     cursor_shapes: Option<CursorShapeManager>,
@@ -271,7 +271,7 @@ pub(crate) struct App {
     shift_held: bool,
     /// Last Ctrl state the seat reported, for classifying digit presses.
     ctrl_held: bool,
-    /// Last Alt state the seat reported, for classifying W presses —
+    /// Last Alt state the seat reported, for classifying W presses:
     /// Alt+W is the grouped mode's → twin, so the letter only counts
     /// while the gesture's own modifier is held.
     alt_held: bool,
@@ -279,7 +279,7 @@ pub(crate) struct App {
     first_output: Option<wl_output::WlOutput>,
     overlay: Option<Overlay>,
     /// The daemon's text system, installed right after connect (one
-    /// font scan at startup, OQ 1; `airlock list` never pays it — the
+    /// font scan at startup, OQ 1; `airlock list` never pays it: the
     /// connection starts [`TextSystem::empty`], which is also the
     /// zero-fonts floor's marker).
     text: crate::text::TextSystem,
@@ -294,8 +294,8 @@ pub(crate) struct App {
     /// exactly once (see [`ui::wheel_notches`]).
     wheel_residual: i32,
     /// The last accepted wheel notch's direction and axis-event time, so
-    /// a machine-made echo of it — same direction within
-    /// [`ui::ECHO_WINDOW_MS`], as virtualized mouse relays deliver — can
+    /// a machine-made echo of it (same direction within
+    /// [`ui::ECHO_WINDOW_MS`], as virtualized mouse relays deliver) can
     /// be dropped instead of double-stepping (see [`ui::notch_is_echo`]).
     last_notch: Option<(Direction, u32)>,
     /// Identity maps so plain ids stay stable across snapshots for the
@@ -460,8 +460,8 @@ impl SeatHandler for App {
         capability: Capability,
     ) {
         if capability == Capability::Keyboard {
-            // Pre-existing seats never trigger new_seat — the initial
-            // registry burst is consumed before handlers exist — so the
+            // Pre-existing seats never trigger new_seat (the initial
+            // registry burst is consumed before handlers exist), so the
             // seat is captured here, from its capability event.
             if self.seat.is_none() {
                 eprintln!("airlock daemon: seat arrived (with keyboard)");
@@ -573,11 +573,11 @@ impl KeyboardHandler for App {
             );
             // The Select twins: `key_input` stays pure (a keysym →
             // address translation), and every address resolves to its
-            // window here, at event receipt against the live model —
+            // window here, at event receipt against the live model:
             // the keyboard twin of the pointer boundary's capture. A
             // row (flat Ctrl+N), a level-1 entry (vertical grouped
             // Ctrl+N), or the Nth content tile in reading order
-            // (combined Ctrl+N — the card's rows interleave band 1's
+            // (combined Ctrl+N: the card's rows interleave band 1's
             // `…`, so the ordinal skips affordances exactly as the
             // hints do); everything else queues unchanged.
             let input = match input {
@@ -670,8 +670,8 @@ impl PointerHandler for App {
             }
             match event.kind {
                 // The pointing hand on entry (`pointer-cursor`): every
-                // pixel of the card is a click target — rows and tiles
-                // activate, the × closes — so the hand tells the truth
+                // pixel of the card is a click target (rows and tiles
+                // activate, the × closes), so the hand tells the truth
                 // from the moment the pointer crosses in, set with the
                 // enter's own serial as the shape protocol intends. A
                 // compositor without the protocol keeps its cursor.
@@ -720,9 +720,9 @@ impl PointerHandler for App {
                     // the legacy discrete step applies only when the
                     // compositor sends no v120 and is whole notches
                     // already. A whole notch that only echoes the last
-                    // accepted one — same direction inside the echo
+                    // accepted one (same direction inside the echo
                     // window, as virtualized mouse relays deliver a
-                    // detent twice — steps nothing: it is machine-made,
+                    // detent twice) steps nothing: it is machine-made,
                     // not a second detent.
                     let (notches, residual) = ui::wheel_notches(
                         vertical.value120,
@@ -885,11 +885,11 @@ impl App {
 
     /// The overlay row under a surface-local logical `position` and the
     /// window that row shows, resolved together against the live model
-    /// at event receipt — the only place the live model is reachable, so
+    /// at event receipt: the only place the live model is reachable, so
     /// the handle crossing the queue is the one the user saw, whatever a
     /// same-batch drain does to the model afterwards. `(None, None)` is
     /// off-card, in a gap, or with no overlay mapped; a continuation row
-    /// yields `(Some(row), None)` — addressable for the crossing policy,
+    /// yields `(Some(row), None)`: addressable for the crossing policy,
     /// inert as a selection target. Positions are logical; hit-testing
     /// takes device pixels (logical × scale).
     fn overlay_row_handle_at(&self, position: (f64, f64)) -> (Option<usize>, Option<Handle>) {
@@ -899,7 +899,7 @@ impl App {
         let (x, y) = position;
         let scale = overlay.scale as f64;
         // The axis rides the shown model: a horizontal card addresses
-        // cells, a vertical one rows — the geometry the user saw.
+        // cells, a vertical one rows: the geometry the user saw.
         let cell = if overlay.model().horizontal {
             overlay.model().cell_at(x * scale, y * scale, overlay.scale)
         } else {
@@ -908,11 +908,11 @@ impl App {
         (cell, cell.and_then(|row| self.overlay_row_handle(row)))
     }
 
-    /// The window the live model's `row` shows — the event-time
-    /// resolution a Ctrl+N digit press or a pointer press addresses —
+    /// The window the live model's `row` shows (the event-time
+    /// resolution a Ctrl+N digit press or a pointer press addresses),
     /// or `None` when no overlay is mapped, `row` is past the model's
     /// end, or the row is a continuation affordance. Rev 5: headers
-    /// resolve like every row — the divider rule is gone.
+    /// resolve like every row: the divider rule is gone.
     fn overlay_row_handle(&self, row: usize) -> Option<Handle> {
         self.overlay
             .as_ref()
@@ -921,11 +921,11 @@ impl App {
 
     /// The window a press at `position` closes (`close-window`): the
     /// ×-zone hit-test evaluated against the live model at event
-    /// receipt — the same (x, y, scale) the row hit-test uses, so the
+    /// receipt, the same (x, y, scale) the row hit-test uses, so the
     /// zone is exactly what the user saw (a vertical row's hint band, a
-    /// horizontal tile's top-right corner) — resolved to the row's own
+    /// horizontal tile's top-right corner), resolved to the row's own
     /// handle. `None` off the zone, on a header or continuation row, or
-    /// with no overlay mapped: the press activates as today.
+    /// with no overlay mapped: the press falls through to ordinary activation.
     fn overlay_close_target_at(&self, position: (f64, f64)) -> Option<Handle> {
         let overlay = self.overlay.as_ref()?;
         let (x, y) = position;
@@ -937,7 +937,7 @@ impl App {
     }
 
     /// The window the live model's Nth *level-1* entry (0-based)
-    /// resolves to — the event-time resolution a grouped Ctrl+N digit
+    /// resolves to, the event-time resolution a grouped Ctrl+N digit
     /// press addresses: an app entry carries its implied window (the
     /// app's MRU-front), a leaf itself. `None` past the ninth entry or
     /// with no overlay mapped.
@@ -974,7 +974,7 @@ pub const SETTLE_TIMEOUT: Duration = Duration::from_secs(5);
 /// All polling is non-blocking: [`Session::poll`] reads whatever is ready
 /// and dispatches it, so one thread can multiplex the compositor socket
 /// with the daemon's IPC socket by interleaving polls. This is the same
-/// read path `blocking_dispatch` performs internally — cosmic-comp only
+/// read path `blocking_dispatch` performs internally: cosmic-comp only
 /// delivers its initial toplevel batch through a socket read, never
 /// through a `roundtrip` spin.
 pub struct Session {
@@ -984,7 +984,7 @@ pub struct Session {
     /// Set whenever dispatched events may have changed tracked state; the
     /// next [`Session::snapshot`] rebuilds and clears it.
     dirty: bool,
-    /// Handles that can currently be passed to [`Session::activate`],
+    /// Handles that can be passed to [`Session::activate`],
     /// refreshed with each snapshot.
     activatable: HashMap<Handle, ZcosmicToplevelHandleV1>,
 }
@@ -1025,12 +1025,12 @@ pub struct Overlay {
     /// redraw never mixes a new model with the previous palette.
     palette: ui::Palette,
     /// The text decision `model` renders with, frozen at open beside
-    /// the palette — the floor or the system stack in its resolved
+    /// the palette: the floor or the system stack in its resolved
     /// family; swapped with the model so a redraw never repaints a card
     /// under a mid-gesture font edit.
     text: crate::text::TextDecision,
-    /// The card's key-map mode — flat, vertical grouped, or the
-    /// grouped-horizontal combination — swapped with the model so every
+    /// The card's key-map mode (flat, vertical grouped, or the
+    /// grouped-horizontal combination), swapped with the model so every
     /// key always means what the visible list shows.
     mode: ui::KeyMode,
     /// Device pixels per logical pixel this overlay renders at.
@@ -1094,7 +1094,7 @@ impl Overlay {
 
         // With shortcuts inhibited, the compositor forwards Alt (and every
         // other key) to the grabbed surface instead of acting on its own
-        // bindings — the release that commits the gesture arrives as a
+        // bindings: the release that commits the gesture arrives as a
         // modifiers event.
         let inhibitor = shortcuts.inhibit_shortcuts(layer.wl_surface(), seat, qh, ());
 
@@ -1174,7 +1174,7 @@ impl Overlay {
         self.close_at = Instant::now() + ui::CLOSE_AFTER;
     }
 
-    /// The model currently shown.
+    /// The model being shown.
     pub fn model(&self) -> &OverlayModel {
         &self.model
     }
@@ -1186,7 +1186,7 @@ impl Overlay {
 
     /// Renders the model into a fresh buffer and commits it, text
     /// through the decision frozen at open. A no-op before the first
-    /// configure; draw failures are logged and leave the surface as-is —
+    /// configure; draw failures are logged and leave the surface as-is:
     /// the next press retries with a fresh pool slot.
     fn draw(&mut self, system: &mut crate::text::TextSystem) {
         let Some((width, height)) = self.size else {
@@ -1538,12 +1538,12 @@ impl Session {
         Ok(true)
     }
 
-    /// Asks the compositor to close `handle` — the polite `close`
+    /// Asks the compositor to close `handle`: the polite `close`
     /// request on the toplevel manager (the window decides whether and
     /// how it closes; a refused close leaves the card as it was).
     ///
     /// Returns `false` when `handle` is not in the current snapshot (a
-    /// window that already closed) — nothing to ask.
+    /// window that already closed): nothing to ask.
     ///
     /// # Errors
     ///
@@ -1559,15 +1559,15 @@ impl Session {
     }
 
     /// The render scale for overlays hosted on the first output:
-    /// `max(2, output scale)` — HiDPI outputs get native pixels
+    /// `max(2, output scale)`, so HiDPI outputs get native pixels
     /// instead of an upscaled blur. The floor comes from the 12-px
     /// era, when the 3/2 font scale needed scale ≥ 2 to keep every
     /// font pixel a whole number of device pixels; the re-pinned 1×
     /// font scale is whole-pixel exact at every scale, so nothing the
-    /// font needs still pins it — kept unchanged pending the scale-1
+    /// font needs still pins it, kept unchanged pending the scale-1
     /// hardware pass. Re-read on every overlay build, so a
     /// display-scale change applies from the next gesture session.
-    /// The invoking output's logical width — what `columns = "auto"`
+    /// The invoking output's logical width: what `columns = "auto"`
     /// resolves its tile budget against (read once at open, frozen for
     /// the session). A pure pass-through over the first output's
     /// reported logical size; `None` when no output has reported one
@@ -1666,7 +1666,7 @@ impl Session {
 
     /// Installs the daemon's font scan (OQ 1: one scan at startup, paid
     /// at login). The connection starts with an empty system so
-    /// `airlock list` never scans — and an empty system is itself the
+    /// `airlock list` never scans, and an empty system is itself the
     /// zero-fonts floor's marker.
     pub fn set_text_system(&mut self, system: crate::text::TextSystem) {
         self.app.text = system;

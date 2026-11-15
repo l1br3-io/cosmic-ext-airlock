@@ -136,9 +136,9 @@ body > header nav a[aria-current="page"] { color: var(--text); }
 
 .hero-copy { padding: 32px 24px; }
 
-.gesture { margin: 0; color: var(--muted); font-size: 1rem; }
+.gesture { margin: 0; color: var(--muted); font-size: 1.125rem; }
 
-.hero .gesture kbd { font-size: 1rem; padding: 0.16em 0.5em; }
+.hero .gesture kbd { font-size: 1.125rem; padding: 0.16em 0.5em; }
 
 .hero h1 {
   font-size: clamp(2rem, 3vw, 2.5rem);

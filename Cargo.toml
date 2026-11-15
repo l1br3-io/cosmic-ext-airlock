@@ -34,7 +34,7 @@ path = "src/main.rs"
 # GitHub Release with the binary at the archive root; this table and
 # that recipe change together (archive name, format, root layout).
 # The runtime Wayland/xkbcommon libraries ship with every COSMIC
-# system, so the downloaded binary needs no -dev packages — this is
+# system, so the downloaded binary needs no -dev packages: this is
 # the install path that sidesteps the from-source prerequisites
 # entirely.
 [package.metadata.binstall]
@@ -46,15 +46,15 @@ pkg-fmt = "tgz"
 cosmic-client-toolkit = "0.2.0"
 # The card's typeface, per docs/research/cosmic-appearance-stores.md and
 # the typography spec: fontdb discovery, harfrust/skrifa shaping, swash
-# rasterization — the platform text stack, pure Rust. Features pinned to
+# rasterization: the platform text stack, pure Rust. Features pinned to
 # `std` + `swash`: the default set would link the C fontconfig through
 # fontdb; without it fontdb scans the standard font directories itself
 # (stated limitation: fontconfig-customized paths are unseen). No C in
-# the tree — the PPA vendored-crate constraint (pinned per commit via
+# the tree: the PPA vendored-crate constraint (pinned per commit via
 # `cargo tree -i cosmic-text`).
 cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
 # App icons, per docs/research/switcher-ux-and-icons.md §3.4: pop-launcher's
-# pipeline. Entries: app_id → icon name (gettext off — no C binding, icon()
+# pipeline. Entries: app_id → icon name (gettext off: no C binding, icon()
 # is locale-independent). Icons: name → themed file (SVG or PNG path).
 # resvg rasterizes the SVGs the Pop/Cosmic themes ship (no-text build drops
 # the font stack; embedded raster <image> elements degrade to dropped).

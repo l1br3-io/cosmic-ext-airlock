@@ -1,9 +1,9 @@
 //! User-level shortcut takeover: `airlock install` points COSMIC's
 //! `WindowSwitcher`/`WindowSwitcherPrevious` system actions at this binary
-//! and claims four bindings in the sibling `custom` shortcuts file —
+//! and claims four bindings in the sibling `custom` shortcuts file:
 //! `Alt+grave`, `Alt+Shift+grave`, and the all-windows family under the
 //! configured `all_windows_key` (`Alt+Escape` / `Alt+Shift+Escape` by
-//! default) — spawning the same-app and all-windows stubs;
+//! default), spawning the same-app and all-windows stubs;
 //! `airlock install --uninstall` puts the pre-install state back
 //! byte-exactly. The 0.4-era `Alt+Esc` quick-toggle binding is retired:
 //! a re-run of install migrates it to the new command (all-windows
@@ -12,18 +12,18 @@
 //!
 //! Boundary (spec): the only files this module may ever write are the
 //! user's `system_actions` and `custom` shortcuts files, exactly
-//! two asset files under the user's data dir — the embedded app icon
-//! and desktop entry — and the starter config under the user's config
+//! two asset files under the user's data dir (the embedded app icon
+//! and desktop entry) and the starter config under the user's config
 //! dir, written only when no config exists yet. The pre-install
 //! state is therefore recorded *inside* those files as leading
-//! `// airlock-v1` comment markers — one per switcher key, plus one
-//! `custom=absent-file` marker when install creates the `custom` file —
+//! `// airlock-v1` comment markers (one per switcher key, plus one
+//! `custom=absent-file` marker when install creates the `custom` file)
 //! so no second file is needed and the backup can never be orphaned.
 //! `/usr/share` is only ever read, as the source for first installs.
 //! Unmarked user entries are never modified: a binding a user already
 //! holds is skipped with a diagnostic naming the key and the way out.
 //! Assets are removed on uninstall only while their bytes still match
-//! what install wrote — a hand-edited file is the user's now, kept and
+//! what install wrote: a hand-edited file is the user's now, kept and
 //! named in the report. The config is stricter still: install never
 //! rewrites it (a file that exists is the user's, however it got
 //! there), and uninstall removes it under the same bytes-still-match
@@ -46,7 +46,7 @@ const SAME_APP_CMD: &str = "airlock same-app";
 const SAME_APP_PREV_CMD: &str = "airlock same-app-previous";
 /// Command the Alt+Esc custom binding spawns. Retired from the default
 /// bindings (all-windows, 2026-11-14): the CLI stub remains, bound
-/// nowhere by default — README documents binding it by hand.
+/// nowhere by default: README documents binding it by hand.
 const QUICK_TOGGLE_CMD: &str = "airlock quick-toggle";
 /// Command the Alt+`all_windows_key` custom binding spawns.
 const SHOW_ALL_CMD: &str = "airlock show-all-windows";
@@ -58,7 +58,7 @@ const MARKER_PREFIX: &str = "// airlock-v1 ";
 const MARKER_ABSENT_FILE: &str = "absent-file";
 /// Marker value when the file existed but had no entry for the key.
 const MARKER_ABSENT_KEY: &str = "absent-key";
-/// The app icon, embedded so a crates.io install needs no checkout —
+/// The app icon, embedded so a crates.io install needs no checkout;
 /// `airlock install` is the complete setup.
 const ICON_SVG: &[u8] =
     include_bytes!("../res/icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg");
@@ -213,8 +213,8 @@ fn manage_system_actions(uninstall: bool, locations: &Locations) -> Result<Strin
 
 /// The `all_windows_key` the Esc-family bindings hold (all-windows A3.1):
 /// the user's config value via [`crate::settings::Settings::parse`]. A
-/// missing or malformed config never fails the install — the default key
-/// stands — and a malformed one is flagged so the report says so:
+/// missing or malformed config never fails the install (the default key
+/// stands) and a malformed one is flagged so the report says so:
 /// settings can never break switching, and cannot break installing
 /// either.
 fn all_windows_key_at(locations: &Locations) -> (String, bool) {
@@ -317,7 +317,7 @@ fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, Strin
 /// [`Locations::icon`] and [`Locations::desktop`]. Install rewrites
 /// them with the embedded bytes (the app-ID namespaced filenames are
 /// airlock's own, like any package's owned files); uninstall removes
-/// each only while its bytes still match — a hand-edited file is kept
+/// each only while its bytes still match: a hand-edited file is kept
 /// and named in the report instead of deleted.
 ///
 /// # Errors
@@ -371,7 +371,7 @@ fn manage_assets(uninstall: bool, locations: &Locations) -> Result<String, Strin
 ///
 /// Unlike the assets, install never rewrites it: a config that exists is
 /// the user's, however it got there, and is only named in the report.
-/// Uninstall mirrors the asset rule — removed only while the bytes still
+/// Uninstall mirrors the asset rule: removed only while the bytes still
 /// match [`DEFAULT_CONFIG`]; a hand-edited file is kept and named.
 ///
 /// # Errors
@@ -478,7 +478,7 @@ fn xdg_dir(var: &str, fallback: &str) -> Result<PathBuf, String> {
 ///
 /// # Errors
 ///
-/// Propagates any other I/O error, including non-UTF-8 content — only files
+/// Propagates any other I/O error, including non-UTF-8 content: only files
 /// that round-trip as text are ever rewritten.
 fn read_optional(path: &Path) -> Result<Option<String>, String> {
     match fs::read_to_string(path) {
@@ -505,8 +505,8 @@ fn read_system_default(locations: &Locations) -> Result<String, String> {
 /// Produces the installed user-file content.
 ///
 /// `user` is `None` when no user file exists yet; the file is then seeded
-/// from `system_default`. Existing unrelated lines — including their exact
-/// spacing and comments — are preserved byte-for-byte; only the two
+/// from `system_default`. Existing unrelated lines (including their exact
+/// spacing and comments) are preserved byte-for-byte; only the two
 /// switcher lines change (or get appended before the closing brace). Any
 /// existing airlock markers are kept as-is, which makes a second install a
 /// byte-identical no-op.
@@ -633,8 +633,8 @@ fn uninstall_content(user: &str, system_default: &str) -> Result<UninstallOutcom
 /// Markerless file: either airlock owns nothing here, or the takeover was
 /// written by hand (or a cosmic-settings rewrite stripped the markers) and
 /// only the system default can put the built-in switcher back. Only entries
-/// actually running an airlock command are rewritten; any other entry — a
-/// third-party switcher on the sibling key — survives byte-exact.
+/// actually running an airlock command are rewritten; any other entry (a
+/// third-party switcher on the sibling key) survives byte-exact.
 fn restore_without_markers(
     lines: &[&str],
     system_default: &str,
@@ -819,7 +819,7 @@ fn write_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 // `custom` shortcuts file: the same-app / quick-toggle bindings.
 //
-// COSMIC binds actions it does not define only through custom shortcuts —
+// COSMIC binds actions it does not define only through custom shortcuts:
 // a RON map from `Binding` keys to `Action` values in the sibling `custom`
 // file of the shortcuts v1 directory. cosmic-config writes it with RON's
 // default pretty printer: multi-line binding keys (`modifiers: [\n Alt,\n]`,
@@ -827,20 +827,20 @@ fn write_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
 // final newline, entries in HashMap order. Two schema facts are load-
 // bearing (0.1.0 got the first wrong and reset users' live shortcuts):
 //
-// * `key` is a **bare string** — `key: "grave"`. cosmic's keysym
+// * `key` is a **bare string**: `key: "grave"`. cosmic's keysym
 //   deserializer (cosmic-settings-daemon `config/src/shortcuts/sym.rs`)
 //   rejects `key: Some("grave")`, and because a Binding is the map key,
 //   one bad entry fails the whole file's load: cosmic-comp then falls
-//   back to factory defaults *in memory* — every user shortcut appears
+//   back to factory defaults *in memory*: every user shortcut appears
 //   reset while their bytes sit untouched on disk. Recognition below
 //   still understands 0.1.0's `Some(..)` form so those installs can be
 //   uninstalled or healed by a re-run.
 // * cosmic-comp matches a press against the level-0 keysym of the
 //   physical key (layout- and shift-level-agnostic), so `Alt+Shift+grave`
-//   binds `key: "grave"` — and keysyms carry their canonical X names:
+//   binds `key: "grave"` and keysyms carry their canonical X names:
 //   Escape, never "Esc".
 //
-// cosmic's re-serialization strips comment lines — so airlock's marker can
+// cosmic's re-serialization strips comment lines, so airlock's marker can
 // vanish while its entries live on; recognition below is therefore semantic
 // (binding + spawned command), never byte- or marker-only.
 
@@ -851,11 +851,11 @@ struct CustomBinding {
     /// Modifier names in the order COSMIC serializes them.
     modifiers: &'static [&'static str],
     /// Keysym name of the key (level-0, per cosmic-comp matching), as a
-    /// bare string in the emitted file — canonical X names ("Escape",
+    /// bare string in the emitted file: canonical X names ("Escape",
     /// "grave"), never abbreviations.
     key: String,
     /// Keysym names earlier releases emitted for this binding (empty when
-    /// none). 0.1.0 bound the quick toggle as `"Esc"` — not a keysym —
+    /// none). 0.1.0 bound the quick toggle as `"Esc"` (not a keysym),
     /// so its entries must be matched by the legacy name to uninstall or
     /// heal a 0.1.0 machine.
     legacy_keys: Vec<&'static str>,
@@ -915,8 +915,8 @@ fn custom_bindings(all_windows_key: &str) -> Vec<CustomBinding> {
 /// A binding an earlier release installed that this one no longer does
 /// (all-windows A3.1, 2026-11-14): the 0.4-era `Alt+Esc` quick-toggle,
 /// retired when the Esc family moved to `show-all-windows`. Under
-/// today's ownership rules a leftover entry would look user-held — it
-/// holds the new binding's key while spawning a different command — so
+/// this release's ownership rules a leftover entry would look user-held (it
+/// holds the new binding's key while spawning a different command), so
 /// it is recognized here instead: an entry matching a retired binding's
 /// key+modifiers *and* spawning its command is airlock-owned, removed
 /// by the rebuild and reported as a migration, never a skip.
@@ -925,7 +925,7 @@ struct RetiredBinding {
     display: &'static str,
     /// Modifier names of the retired binding.
     modifiers: &'static [&'static str],
-    /// Keysym names the retired entries carry — canonical and legacy
+    /// Keysym names the retired entries carry: canonical and legacy
     /// alike, matching the existing legacy-key mechanism.
     keys: &'static [&'static str],
     /// Command the retired binding spawned.
@@ -974,7 +974,7 @@ enum CustomUninstall {
 }
 
 /// Airlock's canonical one-line serialization of one binding. The keysym
-/// is a bare string — cosmic's `Binding.key` deserializer rejects
+/// is a bare string: cosmic's `Binding.key` deserializer rejects
 /// `Some(..)`, and a malformed map key makes cosmic-comp discard the whole
 /// `custom` file and run factory defaults (the 0.1.0 incident).
 fn custom_entry_line(binding: &CustomBinding) -> String {
@@ -1004,7 +1004,7 @@ struct CustomEntry {
 }
 
 impl CustomEntry {
-    /// Whether this entry binds exactly `binding`'s modifier set and key —
+    /// Whether this entry binds exactly `binding`'s modifier set and key:
     /// order and quoting differences aside. A legacy keysym name counts as
     /// the same key, so 0.1.0-era entries are still recognized as airlock's.
     fn holds(&self, binding: &CustomBinding) -> bool {
@@ -1019,8 +1019,8 @@ impl CustomEntry {
             })
     }
 
-    /// Whether this entry binds a retired binding's modifier set and key
-    /// — the twin of [`CustomEntry::holds`] over [`RetiredBinding`]'s
+    /// Whether this entry binds a retired binding's modifier set and key:
+    /// the twin of [`CustomEntry::holds`] over [`RetiredBinding`]'s
     /// key list, legacy names included.
     fn holds_retired(&self, retired: &RetiredBinding) -> bool {
         self.key
@@ -1034,7 +1034,7 @@ impl CustomEntry {
             })
     }
 
-    /// Whether this entry is a stale retired binding airlock once wrote —
+    /// Whether this entry is a stale retired binding airlock once wrote:
     /// the key held and the retired command spawned.
     fn is_retired_ours(&self) -> bool {
         RETIRED_BINDINGS
@@ -1045,19 +1045,19 @@ impl CustomEntry {
     /// Whether this entry is an airlock-written orphan of a previous
     /// `all_windows_key` (the ship-review follow-up to all-windows A3.1):
     /// it spawns one of the two commands whose key the setting names but
-    /// holds none of today's bindings — the fingerprint of an install
+    /// holds none of the bindings this release installs: the fingerprint of an install
     /// made under a different key. Claimed as airlock's own: dropped by
     /// the rebuild, named in the report, removed by uninstall. Scoped to
     /// the show-all-windows commands, the only ones whose key the setting
-    /// moves — a hand-bound `airlock quick-toggle` on some other key
+    /// moves: a hand-bound `airlock quick-toggle` on some other key
     /// (README documents the recipe) survives untouched.
     fn is_orphaned_ours(&self, bindings: &[CustomBinding]) -> bool {
         (self.spawns(SHOW_ALL_CMD) || self.spawns(SHOW_ALL_PREV_CMD))
             && !bindings.iter().any(|binding| self.holds(binding))
     }
 
-    /// The entry's own display name — "Alt+Shift+Escape", modifiers
-    /// capitalized, key verbatim — for the orphan report.
+    /// The entry's own display name ("Alt+Shift+Escape", modifiers
+    /// capitalized, key verbatim) for the orphan report.
     fn display(&self) -> String {
         let mut name = self
             .modifiers
@@ -1074,7 +1074,7 @@ impl CustomEntry {
         name
     }
 
-    /// Whether this entry spawns `command` — airlock's own entry, however
+    /// Whether this entry spawns `command`: airlock's own entry, however
     /// it got serialized.
     fn spawns(&self, command: &str) -> bool {
         self.action
@@ -1085,8 +1085,8 @@ impl CustomEntry {
 }
 
 /// Parses the map entries of a `custom` shortcuts file. Both shapes that
-/// occur in practice are recognized — cosmic-config's multi-line blocks and
-/// airlock's canonical one-liners — by tracking paren depth: an entry starts
+/// occur in practice are recognized (cosmic-config's multi-line blocks and
+/// airlock's canonical one-liners) by tracking paren depth: an entry starts
 /// at a line whose first non-space character is `(` and ends where the key's
 /// depth returns to zero right before a `:` on the same line (a `):` inside
 /// a string sits at inner depth and cannot end the key). Entries share no
@@ -1123,7 +1123,7 @@ fn parse_custom_entries(lines: &[&str]) -> Vec<CustomEntry> {
                 }
             }
             if complete.is_none() && depth <= 0 {
-                // The block closed without a `):` — not a binding entry we
+                // The block closed without a `):`, not a binding entry we
                 // understand; leave it unowned.
                 break;
             }
@@ -1159,7 +1159,7 @@ fn modifiers_of(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The keysym string inside `key: "…"` — or `key: Some("…")`, the form
+/// The keysym string inside `key: "…"`, or `key: Some("…")`, the form
 /// 0.1.0 emitted; both must be recognized so legacy installs uninstall
 /// cleanly. `keycode:` never matches because its `key` is followed by `c`,
 /// not `:`.
@@ -1194,8 +1194,8 @@ fn opening_brace_index(lines: &[&str]) -> Option<usize> {
         .position(|line| line.trim_start().starts_with('{'))
 }
 
-/// Whether an entry is airlock's own for some binding — a current one, a
-/// retired one, or an orphan a previous `all_windows_key` left behind —
+/// Whether an entry is airlock's own for some binding (a current one, a
+/// retired one, or an orphan a previous `all_windows_key` left behind)
 /// so stale entries never survive a rebuild or an uninstall.
 fn entry_is_ours(entry: &CustomEntry, bindings: &[CustomBinding]) -> bool {
     bindings
@@ -1210,7 +1210,7 @@ fn entry_is_ours(entry: &CustomEntry, bindings: &[CustomBinding]) -> bool {
 /// inserted right after the opening brace; every other byte of the file is
 /// preserved. A binding a user entry already holds is never taken: it is
 /// reported skipped. A stale retired entry on a new binding's key is
-/// airlock's own — dropped by the rebuild and reported as a migration,
+/// airlock's own: dropped by the rebuild and reported as a migration,
 /// never a skip (all-windows A3.1).
 ///
 /// # Errors
@@ -1270,7 +1270,7 @@ fn custom_install_content(
         .map(|retired| retired.display)
         .collect();
     // Stale families from a previous key, named by their own entries:
-    // the display is the old binding's name, not today's.
+    // the display is the old binding's name, not this release's.
     let orphaned: Vec<String> = entries
         .iter()
         .filter(|entry| entry.is_orphaned_ours(&bindings))

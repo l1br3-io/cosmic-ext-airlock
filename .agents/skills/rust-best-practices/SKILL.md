@@ -90,7 +90,9 @@ impl Connection<Connected> {
 ```
 
 ### Documentation
-- `//` comments explain *why* (safety, workarounds, design rationale)
+- The default is **no comment**. Before writing one, ask: *what does this tell a future reader that the code itself doesn't?* If it restates the code, rename or extract a function instead. A comment earns its place only as a *why* the code can't show, a warning about a non-local consequence, or a pointer to context the repo can't reconstruct
+- `//` comments explain *why* (safety, workarounds, design rationale). Length follows the content: say what needs saying and stop, no em-dashes
+- Change history never goes in source: bug archaeology, dated notes, and "previously did X" narratives belong in commit messages and `docs/research/` records
 - `///` doc comments explain *what* and *how* for public APIs; document `# Panics`, `# Errors`, `# Safety` sections
 - `// SAFETY:` comment is mandatory before every `unsafe` operation
 - Every `TODO` needs a linked issue: `// TODO(#42): ...`
@@ -99,6 +101,6 @@ impl Connection<Connected> {
 ## Project gates
 
 Per `AGENTS.md`: `cargo clippy` and `cargo fmt --check` must pass before a
-change counts as done; `cargo test` is the verification gate. Runtime behavior
+change counts as done; `cargo test` is the verification gate, use "recipe" if available i.e "just test" or similar. Runtime behavior
 is only testable on real COSMIC hardware — unit tests cover what can be tested
 headless.

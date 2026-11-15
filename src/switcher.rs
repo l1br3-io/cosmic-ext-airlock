@@ -68,27 +68,27 @@ pub struct Snapshot {
 /// Which windows the switcher lists when invoked on a workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Scope {
-    /// Only windows visible on the invoking workspace (sticky included) —
+    /// Only windows visible on the invoking workspace (sticky included):
     /// the v1 behavior and the default for workspaces without a setting.
     #[default]
     CurrentWorkspace,
     /// Every workspace's windows, workspace-major order (see
-    /// [`eligible`]). Which windows a listing admits — minimized
-    /// included or not — is [`Listing`]'s call, not the scope's.
+    /// [`eligible`]). Which windows a listing admits (minimized
+    /// included or not) is [`Listing`]'s call, not the scope's.
     All,
 }
 
 /// The one listing decision every consumer inherits
 /// (minimized-listing, 2026-11-15): the scope plus the minimized flag,
 /// one argument instead of a growing pair, so a future listing key
-/// threads as a field. [`From<Scope>`] is the flag-off listing — the
+/// threads as a field. [`From<Scope>`] is the flag-off listing: the
 /// degenerate conversion every pre-flag caller inherits, so a bare
 /// scope keeps excluding minimized windows exactly as it always did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Listing {
     /// Which workspace's windows the listing covers.
     pub scope: Scope,
-    /// Whether minimized (parked) windows list too — after each group's
+    /// Whether minimized (parked) windows list too: after each group's
     /// live ones, MRU within each part, no visual marking. `false`:
     /// they are excluded before they reach the sort key, so the
     /// listing is byte-identical to the flag's absence.
@@ -104,8 +104,8 @@ impl From<Scope> for Listing {
     }
 }
 
-/// Positions of `workspaces` in workspace order — coordinates sorted
-/// lexicographically, workspace id breaking ties — the order
+/// Positions of `workspaces` in workspace order (coordinates sorted
+/// lexicographically, workspace id breaking ties), the order
 /// `format_snapshot` lists by. (`settings::active_workspace` counts
 /// positions in a coordinates-only sort; the two agree while coordinates
 /// are distinct.) The grouping's comparator for this module; callers
@@ -127,20 +127,20 @@ fn workspace_positions(workspaces: &[Workspace]) -> HashMap<WorkspaceId, usize> 
 /// The workspace-major sort key of one toplevel: `(tier, workspace
 /// position, minimized rank, Reverse(last_activated))`, ascending.
 ///
-/// Tier 0 is the invoking workspace — members and sticky alike (sticky is
+/// Tier 0 is the invoking workspace: members and sticky alike (sticky is
 /// visible on every workspace, so it is part of this one by the same rule
 /// `Scope::CurrentWorkspace` applies). Tier 1 is membership in some listed
 /// workspace, keyed by the earliest such workspace's position (2026-11-14
 /// decision 5: a window on several workspaces groups by the invoking
 /// workspace if it is a member, else by its earliest member in workspace
-/// order). Tier 2 is membership empty or entirely unlisted — not part of
+/// order). Tier 2 is membership empty or entirely unlisted: not part of
 /// the workspace, always at the bottom. The minimized rank
 /// (minimized-listing, 2026-11-15) is 0 live / 1 parked, one rank
 /// between workspace position and MRU: each group runs its live windows'
 /// MRU, then that group's parked MRU. MRU is the tiebreak everywhere, so
-/// under `Scope::CurrentWorkspace` — where every eligible window is
-/// tier 0 — and a flag-off listing — where every listed window is
-/// rank 0 — the key degenerates to pure MRU and the default view's
+/// under `Scope::CurrentWorkspace` (where every eligible window is
+/// tier 0) and a flag-off listing (where every listed window is
+/// rank 0) the key degenerates to pure MRU and the default view's
 /// output is byte-identical (the degenerate case is the safety).
 fn group_key(
     toplevel: &Toplevel,
@@ -171,19 +171,19 @@ fn group_key(
 }
 
 /// Windows eligible for switching on `active` under `listing`'s scope:
-/// visible there for [`Scope::CurrentWorkspace`] (sticky counts — it is
+/// visible there for [`Scope::CurrentWorkspace`] (sticky counts; it is
 /// visible on every workspace per zcosmic_toplevel_info_v1), or anywhere
 /// at all for [`Scope::All`]. Minimized (parked) windows list only when
-/// `listing.minimized` — after each group's live ones, never instead of
+/// `listing.minimized`: after each group's live ones, never instead of
 /// them.
 ///
-/// Returns handles in the switcher's listing order, and every consumer —
-/// ring, overlay, commit paths — treats it like any other. Under
+/// Returns handles in the switcher's listing order, and every consumer (
+/// ring, overlay, commit paths) treats it like any other. Under
 /// [`Scope::CurrentWorkspace`] that order is plain MRU (most recently
 /// activated first; ties keep snapshot order). Under [`Scope::All`] it is
 /// workspace-major (2026-11-14): the invoking workspace's windows first
 /// (sticky among them), the other workspaces in workspace order
-/// (coordinates sorted, id breaking ties — the `format_snapshot`
+/// (coordinates sorted, id breaking ties: the `format_snapshot`
 /// convention), workspace-less windows last; MRU within each group's
 /// live-then-parked run, ties keep snapshot order.
 pub fn eligible(
@@ -208,8 +208,8 @@ pub fn eligible(
 }
 
 /// Whether one toplevel can be switched to on `active` under `listing`:
-/// not minimized unless `listing.minimized` admits parked windows, and —
-/// for [`Scope::CurrentWorkspace`] — visible there, directly or by being
+/// not minimized unless `listing.minimized` admits parked windows, and (
+/// for [`Scope::CurrentWorkspace`]) visible there, directly or by being
 /// sticky. The per-window half of [`eligible`], reused by the daemon to
 /// re-validate a selection against live state mid-gesture.
 pub fn is_switchable(
@@ -243,11 +243,11 @@ pub fn switchable(snapshot: &Snapshot, handle: Handle, listing: impl Into<Listin
 }
 
 /// The app a same-app session on `active` under `listing` anchors to: the
-/// app_id of the frontmost window of [`eligible`]'s order — the invoking
+/// app_id of the frontmost window of [`eligible`]'s order: the invoking
 /// workspace's front under [`Scope::All`] (2026-11-14: here outranks
 /// recent), the MRU front under [`Scope::CurrentWorkspace`]. An empty
-/// app_id never anchors — windows the compositor cannot attribute never
-/// group — so anchoring walks down the eligible list to the first
+/// app_id never anchors (windows the compositor cannot attribute never
+/// group), so anchoring walks down the eligible list to the first
 /// attributable window.
 pub fn app_anchor(
     toplevels: &[Toplevel],
@@ -271,8 +271,8 @@ pub fn app_anchor(
 ///
 /// The result is an ordinary snapshot, so the ring, overlay, and commit
 /// paths treat it like any other. Order follows [`eligible`] exactly
-/// (workspace-major under [`Scope::All`], MRU otherwise); an empty `app` —
-/// like an empty app_id — groups nothing.
+/// (workspace-major under [`Scope::All`], MRU otherwise); an empty `app`,
+/// like an empty app_id, groups nothing.
 pub fn app_view(snapshot: &Snapshot, app: &str, listing: impl Into<Listing>) -> Snapshot {
     let listing = listing.into();
     let Some(active) = snapshot.active else {
@@ -300,14 +300,14 @@ pub fn app_view(snapshot: &Snapshot, app: &str, listing: impl Into<Listing>) -> 
 }
 
 /// Windows of `handles` whose title or app_id contains `query`
-/// (case-insensitive substring), in `handles`' order — the type-to-filter
+/// (case-insensitive substring), in `handles`' order: the type-to-filter
 /// narrow (`type-filter`).
 ///
-/// The input is a *frozen* handle list — the session's ring, or the
-/// grouped tree's windows — and the query only narrows it: the matcher
+/// The input is a *frozen* handle list (the session's ring, or the
+/// grouped tree's windows) and the query only narrows it: the matcher
 /// never re-derives the window set, honoring the freeze philosophy. A
 /// handle the snapshot no longer carries (a window that closed
-/// mid-gesture) never matches — liveness rides the snapshot, exactly as
+/// mid-gesture) never matches: liveness rides the snapshot, exactly as
 /// every rebuild's does. The empty query is the identity: an empty
 /// filter filters nothing.
 pub fn matches(toplevels: &[Toplevel], handles: &[Handle], query: &str) -> Vec<Handle> {
@@ -348,7 +348,7 @@ impl Ring {
         Self { handles, index: 0 }
     }
 
-    /// The currently selected handle, or `None` when the ring is empty.
+    /// The selected handle, or `None` when the ring is empty.
     pub fn selected(&self) -> Option<Handle> {
         self.handles.get(self.index).copied()
     }
@@ -368,15 +368,15 @@ impl Ring {
         self.selected()
     }
 
-    /// The frozen handle list the ring walks, in ring order — the
+    /// The frozen handle list the ring walks, in ring order: the
     /// type-to-filter matcher's input (`matches`).
     pub fn handles(&self) -> &[Handle] {
         &self.handles
     }
 
     /// Moves the selection to `handle` when the ring holds it, returning
-    /// it. A handle the frozen ring does not hold — a window opened after
-    /// the session froze its list — selects nothing and leaves the ring
+    /// it. A handle the frozen ring does not hold (a window opened after
+    /// the session froze its list) selects nothing and leaves the ring
     /// exactly as it was; an empty ring selects nothing.
     pub fn select(&mut self, handle: Handle) -> Option<Handle> {
         let index = self.handles.iter().position(|&held| held == handle)?;
@@ -401,21 +401,21 @@ impl Ring {
 //
 // The grouped-mode API lands unconsumed, the LV1/S1 precedent: dead in
 // the binary until the grouped overlay consumes it, exercised by the
-// tests here and public in the dev lib target — an `allow`, not an
+// tests here and public in the dev lib target: an `allow`, not an
 // `expect`, for exactly that reason (see `ui::Gesture::showing`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
     /// A top-level row nothing nests under: a single-window app (the W3C
-    /// end-node rule — no chevron, no count) or an un-attributable
+    /// end-node rule: no chevron, no count) or an un-attributable
     /// window, which never groups. Always visible whatever the
     /// expansion state.
     #[default]
     Leaf,
-    /// A multi-window app's top-level row — the level-1 "layer" entry.
+    /// A multi-window app's top-level row: the level-1 "layer" entry.
     /// Its children sit contiguously after it in [`Grouping::rows`] and
     /// join the visible sequence only while the app is expanded.
     Parent,
-    /// A window nested under the nearest preceding parent of its app —
+    /// A window nested under the nearest preceding parent of its app:
     /// a level-2 row.
     Child,
 }
@@ -425,8 +425,8 @@ pub enum RowKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupedRow {
     /// The window this row resolves to at commit time. A parent carries
-    /// its app's front eligible window — the entry's implied
-    /// window, `[alt]+1` — so Alt-release on a parent row activates
+    /// its app's front eligible window (the entry's implied
+    /// window, `[alt]+1`) so Alt-release on a parent row activates
     /// that window.
     pub handle: Handle,
     /// The app the row belongs to: the grouping key for parents and
@@ -475,7 +475,7 @@ impl Grouping {
                     .map_or_else(String::new, |t| t.app_id.clone())
             })
             .collect();
-        // Windows per app, empty app_ids excluded — they never count
+        // Windows per app, empty app_ids excluded; they never count
         // toward parenthood.
         let mut windows_per_app: HashMap<&str, usize> = HashMap::new();
         for app in &apps {
@@ -495,8 +495,8 @@ impl Grouping {
                     kind: RowKind::Leaf,
                 });
             } else if emitted.insert(app.as_str()) {
-                // First appearance fronts its app's block as the parent
-                // — the level-1 layer entry, carrying the app's
+                // First appearance fronts its app's block as the parent:
+                // the level-1 layer entry, carrying the app's
                 // front window (the head of the eligible list) as its
                 // implied window. The app's *whole* window set follows as
                 // children in eligible order,
@@ -519,20 +519,20 @@ impl Grouping {
                 }
             }
             // Any other window of an already-emitted app went out with
-            // its parent — nothing to push here.
+            // its parent; nothing to push here.
         }
         Self { rows }
     }
 
-    /// The flattened row sequence — parents each followed by their
-    /// children, top-level leaves at their own positions — the frozen
+    /// The flattened row sequence (parents each followed by their
+    /// children, top-level leaves at their own positions), the frozen
     /// window set every walk addresses.
     pub fn rows(&self) -> &[GroupedRow] {
         &self.rows
     }
 
     /// The rows the card shows under `expanded`: every level-1 row,
-    /// plus the children of each expanded app in their frozen order —
+    /// plus the children of each expanded app in their frozen order:
     /// the sequence ↓/↑ stepping, the `rows` budget, and pointer rows
     /// apply over. A collapsed group contributes only its parent row.
     pub fn visible(&self, expanded: &std::collections::HashSet<String>) -> Vec<usize> {
@@ -560,7 +560,7 @@ impl Grouping {
     }
 
     /// The children of the parent at `parent`: the contiguous
-    /// [`RowKind::Child`] block after it, in its frozen eligible order —
+    /// [`RowKind::Child`] block after it, in its frozen eligible order;
     /// empty for leaves and out-of-range positions.
     pub fn children_of(&self, parent: usize) -> Vec<usize> {
         if self
@@ -583,7 +583,7 @@ impl Grouping {
         children
     }
 
-    /// Index of the parent row the child at `from` nests under — ←'s
+    /// Index of the parent row the child at `from` nests under: ←'s
     /// exit-to-parent. `None` for parents, leaves, and out-of-range
     /// positions: only a [`RowKind::Child`] has a parent, and children
     /// sit contiguously under theirs, so the nearest preceding parent
@@ -634,7 +634,7 @@ mod tests {
         }
     }
 
-    /// A workspace for the All-scope grouping pins — `id` and coordinates
+    /// A workspace for the All-scope grouping pins: `id` and coordinates
     /// under test's choosing.
     fn workspace(id: u64, coordinates: &[u32]) -> Workspace {
         Workspace {
@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn all_scope_lists_workspace_major_with_the_invoking_workspace_first() {
-        // Three workspaces in shuffled snapshot order — coordinates (then
+        // Three workspaces in shuffled snapshot order: coordinates (then
         // id) decide position, never snapshot order. Invoked from the
         // middle workspace (2).
         let workspaces = vec![
@@ -725,7 +725,7 @@ mod tests {
             // Invoking-workspace members (tier 0)...
             toplevel(1, &[2], State::default(), 10),
             toplevel(2, &[2], State::default(), 30),
-            // ...sticky among them — visible everywhere means visible
+            // ...sticky among them; visible everywhere means visible
             // here.
             toplevel(3, &[1], State::STICKY, 50),
             // A multi-workspace window that includes the invoking
@@ -739,7 +739,7 @@ mod tests {
             toplevel(7, &[1, 3], State::default(), 35),
             // Workspace 3's group (position 2) after workspace 1's.
             toplevel(6, &[3], State::default(), 25),
-            // Workspace-less tail (tier 2) in MRU — even the globally
+            // Workspace-less tail (tier 2) in MRU: even the globally
             // most recent window (11, membership unlisted) waits at the
             // bottom.
             toplevel(9, &[], State::default(), 15),
@@ -814,7 +814,7 @@ mod tests {
     fn current_workspace_with_minimized_listed_parks_members_after_live() {
         // Flag on: the invoking workspace's parked members list after all
         // its live ones, MRU within each part. Sticky parked counts as
-        // membership, as sticky does — and it lands in the parked part,
+        // membership, as sticky does, and it lands in the parked part,
         // never among the live.
         let toplevels = vec![
             toplevel(1, &[1], State::default(), 10),
@@ -841,7 +841,7 @@ mod tests {
     #[test]
     fn all_scope_with_minimized_listed_keeps_workspace_major_live_first() {
         // Flag on under All: the groups keep coordinates order and each
-        // runs live MRU then parked MRU — the parked rank sits between
+        // runs live MRU then parked MRU; the parked rank sits between
         // workspace position and MRU, so parked windows never cross into
         // another workspace's group however recent they are.
         let workspaces = vec![workspace(1, &[0, 0]), workspace(2, &[1, 0])];
@@ -865,7 +865,7 @@ mod tests {
 
     #[test]
     fn all_scope_with_minimized_listed_parks_workspace_less_last() {
-        // The workspace-less tier: live MRU first, parked MRU after —
+        // The workspace-less tier: live MRU first, parked MRU after,
         // even when the parked one is globally the most recent.
         let toplevels = vec![
             toplevel(1, &[], State::default(), 10),
@@ -908,7 +908,7 @@ mod tests {
         // Membership is the listing's other half and stays untouched:
         // parked elsewhere never switches here, flag or not.
         assert!(!is_switchable(&parked_elsewhere, WorkspaceId(1), on));
-        // A bare scope is the flag-off listing — the conversion every
+        // A bare scope is the flag-off listing: the conversion every
         // existing Scope caller inherits keeps the rejection.
         assert!(!is_switchable(
             &parked_member,
@@ -973,8 +973,8 @@ mod tests {
     fn app_anchor_under_all_anchors_the_invoking_workspaces_front() {
         // The global MRU front (browser, 40) lives on workspace 2; the
         // invoking workspace is 1. Under All the eligible front is the
-        // invoking workspace's front — here outranks recent
-        // (workspace-order, 2026-11-14) — so editor anchors. The
+        // invoking workspace's front, here outranks recent
+        // (workspace-order, 2026-11-14), so editor anchors. The
         // CurrentWorkspace scope reaches the same anchor by confinement.
         let toplevels = vec![
             app_window(1, "browser", &[2], State::default(), 40),
@@ -1016,7 +1016,7 @@ mod tests {
         let snapshot = Snapshot {
             toplevels: vec![
                 app_window(1, "editor", &[1], State::ACTIVATED, 30),
-                // Sticky editor window parked on workspace 2 — visible
+                // Sticky editor window parked on workspace 2: visible
                 // everywhere, exactly like any other sticky window.
                 app_window(2, "editor", &[2], State::STICKY, 20),
             ],
@@ -1031,7 +1031,7 @@ mod tests {
     #[test]
     fn app_view_under_all_lists_the_apps_windows_grouped() {
         // Editor windows across three workspaces, invoked from the middle
-        // one (2): the app's run inside the grouped order — invoking
+        // one (2): the app's run inside the grouped order: invoking
         // workspace first, then the others in workspace order,
         // workspace-less last, MRU within each group. The app's old flat
         // MRU run (1, 2, 3, 4, 6 by recency) is what dies here.
@@ -1041,7 +1041,7 @@ mod tests {
                 app_window(2, "editor", &[1], State::default(), 25),
                 app_window(3, "editor", &[3], State::default(), 20),
                 app_window(4, "editor", &[2], State::default(), 15),
-                // Another app's window on the invoking workspace — never
+                // Another app's window on the invoking workspace: never
                 // in the view.
                 app_window(5, "browser", &[2], State::ACTIVATED, 40),
                 // Workspace-less editor window: the tail.
@@ -1186,7 +1186,7 @@ mod tests {
     fn matches_on_an_empty_app_id_uses_the_title_alone() {
         let toplevels = vec![window(1, "nowhere man", "")];
         assert_eq!(matches(&toplevels, &[Handle(1)], "where"), vec![Handle(1)]);
-        // And the empty app_id matches nothing as an app_id — an empty
+        // And the empty app_id matches nothing as an app_id: an empty
         // needle is the identity, handled above; an empty *haystack*
         // field simply never contains a non-empty needle.
         assert_eq!(
@@ -1352,7 +1352,7 @@ mod tests {
 
     // --- Grouping ---------------------------------------------------------
 
-    /// Handles+app_ids of a grouped row sequence, in row order — the
+    /// Handles+app_ids of a grouped row sequence, in row order: the
     /// shape contract asserted throughout the grouping tests.
     fn shape(grouping: &Grouping) -> Vec<(RowKind, Handle)> {
         grouping
@@ -1395,9 +1395,9 @@ mod tests {
     #[test]
     fn grouped_partitions_tuck_parked_windows_under_their_app_live_first() {
         // Flag-on (minimized-listing M2.2): the tree freezes the
-        // flag-on eligible list, so parked windows ride as children —
+        // flag-on eligible list, so parked windows ride as children,
         // after the app's live ones, the listing's visible-first order
-        // — and the parent's pip count reads them off the frozen rows
+        // and the parent's pip count reads them off the frozen rows
         // (a parked MRU never jumps a live front, whatever its
         // recency).
         let toplevels = vec![
@@ -1429,8 +1429,8 @@ mod tests {
 
     #[test]
     fn grouped_leaves_windows_the_compositor_cannot_attribute_top_level() {
-        // MRU: u1, a1, a2, u2. The empty app_ids never group — the
-        // `app_anchor` rule — so both stay top-level leaves at their own
+        // MRU: u1, a1, a2, u2. The empty app_ids never group (the
+        // `app_anchor` rule), so both stay top-level leaves at their own
         // first-appearance positions; only a nests.
         let toplevels = vec![
             app_window(1, "", &[1], State::ACTIVATED, 40),
@@ -1453,7 +1453,7 @@ mod tests {
 
     #[test]
     fn grouped_renders_single_window_apps_as_leaf_rows() {
-        // One window of `a`, one of `solo`: neither earns a parent row —
+        // One window of `a`, one of `solo`: neither earns a parent row;
         // the W3C end-node rule, no chevron and no count.
         let toplevels = vec![
             app_window(1, "a", &[1], State::ACTIVATED, 30),
@@ -1469,7 +1469,7 @@ mod tests {
     #[test]
     fn a_parent_row_carries_its_apps_mru_front_window() {
         // b's front window is handle 2 (MRU 25): committing the parent
-        // row activates it — GNOME's `cachedWindows[0]` semantics — not
+        // row activates it (GNOME's `cachedWindows[0]` semantics), not
         // a later child.
         let toplevels = vec![
             app_window(1, "a", &[1], State::ACTIVATED, 30),
@@ -1509,15 +1509,15 @@ mod tests {
         // Two multi-window apps spread over two workspaces plus a
         // single-window app on a third, invoked from workspace 2 (the
         // coordinates-middle one). Parent rows appear in grouped
-        // first-appearance order — a's invoking-workspace window fronts,
-        // b's follows — and each app's children follow in grouped order:
+        // first-appearance order (a's invoking-workspace window fronts,
+        // b's follows) and each app's children follow in grouped order:
         // the invoking workspace's windows before the other workspace's.
         // The flat MRU run (1, 7, 5, 3, 4, 6) is what dies here.
         let toplevels = vec![
             // a on workspace 1: handles 3 (25), 4 (10).
             app_window(3, "a", &[1], State::default(), 25),
             app_window(4, "a", &[1], State::default(), 10),
-            // a on the invoking workspace 2: handle 1 (40) — the front.
+            // a on the invoking workspace 2: handle 1 (40), the front.
             app_window(1, "a", &[2], State::ACTIVATED, 40),
             // b on the invoking workspace 2: handle 5 (30); on
             // workspace 1: handle 6 (5).
@@ -1534,7 +1534,7 @@ mod tests {
         ];
         let grouping = Grouping::new(&toplevels, &workspaces, WorkspaceId(2), Scope::All);
         // Grouped order: 1, 5 (workspace 2, MRU), 3, 4, 6 (workspace 1),
-        // 7 (workspace 3) — first appearances a, b, then c's leaf. Each
+        // 7 (workspace 3); first appearances a, b, then c's leaf. Each
         // app's children follow in that same order: a's run 1, 3, 4
         // (invoking workspace first), b's run 5, 6.
         assert_eq!(
@@ -1566,7 +1566,7 @@ mod tests {
         let confined = Grouping::new(&toplevels, &[], WorkspaceId(1), Scope::CurrentWorkspace);
         assert_eq!(shape(&confined), vec![(RowKind::Leaf, Handle(1))]);
         // All-scope grouped: a1 fronts from the invoking workspace, then
-        // workspace 2's pair MRU within (b before a2) — first appearance
+        // workspace 2's pair MRU within (b before a2); first appearance
         // a then b.
         let workspaces = vec![workspace(1, &[0, 0]), workspace(2, &[1, 0])];
         let everywhere = Grouping::new(&toplevels, &workspaces, WorkspaceId(1), Scope::All);
@@ -1605,7 +1605,7 @@ mod tests {
     #[test]
     fn parent_of_a_child_is_the_row_that_heads_its_block() {
         // The fixture's tree: P-a1, C-a1, C-a2, C-a3, P-b1, C-b1,
-        // C-b2, L-c1 — every child's parent is the row heading its
+        // C-b2, L-c1; every child's parent is the row heading its
         // contiguous block.
         let grouping = grouped_fixture();
         for child in 1..=3 {

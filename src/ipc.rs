@@ -2,7 +2,7 @@
 //!
 //! Wire protocol: the stub connects, writes one command byte (`n`, `p`, `s`,
 //! `b`, `q`, `w`, or `v`), and blocks for one ack byte (`a`). One byte each
-//! way is the whole frame — anything longer is a protocol error and the
+//! way is the whole frame; anything longer is a protocol error and the
 //! connection is dropped.
 
 use std::io::{self, Read, Write};
@@ -35,9 +35,9 @@ pub enum Invoke {
     /// Step the Alt+Tab gesture one window (`n` / `p`, byte-stable since
     /// the first release).
     Cycle(Direction),
-    /// Open — or step — the same-app session (`s` / `b`).
+    /// Open (or step) the same-app session (`s` / `b`).
     CycleApp(Direction),
-    /// Open the all-windows session — every workspace, ignoring the
+    /// Open the all-windows session: every workspace, ignoring the
     /// `isolated` rules (`w` / `v`, chosen 2026-11-14: outside the installed
     /// base and clear of the byte-stable `n`/`p`/`s`/`b`/`q`).
     CycleAll(Direction),
@@ -479,7 +479,7 @@ mod tests {
     fn send_retries_until_a_spawned_daemon_appears() {
         let dir = TempDir::new();
         let path = dir.socket();
-        // The "daemon" takes a moment to settle before owning the socket —
+        // The "daemon" takes a moment to settle before owning the socket:
         // the spawn itself is a no-op stub, standing in for the real detach.
         let server = thread::spawn(move || {
             thread::sleep(Duration::from_millis(150));

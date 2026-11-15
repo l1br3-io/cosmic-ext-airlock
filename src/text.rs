@@ -2,17 +2,17 @@
 //! rasterization, and the glyph cache behind the switcher's titles.
 //!
 //! The [`TextSystem`] owns one [`FontSystem`] for the daemon's whole
-//! life — created at daemon start (OQ 1: the font scan is tens-of-
+//! life, created at daemon start (OQ 1: the font scan is tens-of-
 //! milliseconds-class and is paid at login, never on the first gesture;
 //! fonts installed after startup stay unseen until the daemon restarts,
 //! a documented limitation). Shaping runs per title at the session's
 //! resolved `font_size` ([`TEXT_PX`] is the default, 12 logical px)
 //! through cosmic-text's fallback chains (`Shaping::Advanced`), so
-//! CJK, emoji, and accented runs resolve their real glyphs — folding is
+//! CJK, emoji, and accented runs resolve their real glyphs; folding is
 //! the bitmap floor's behavior, not this backend's.
 //!
 //! Every glyph rasterizes into an 8-bit coverage mask cached by
-//! `CacheKey` — cosmic-text's own (face, glyph, device size) identity —
+//! `CacheKey`, cosmic-text's own (face, glyph, device size) identity,
 //! whole-pixel by construction: positions are binned to
 //! [`SubpixelBin::Zero`] so a glyph's raster never depends on where the
 //! pen sits (grayscale AA on the outline edges, never subpixel RGB).
@@ -27,7 +27,7 @@ use cosmic_text::{
     SwashCache, SwashContent, SwashImage, Weight, Wrap,
 };
 
-/// The default face size this backend paints, logical px — the 11-07
+/// The default face size this backend paints, logical px, the 11-07
 /// 12-px pin, still the `font_size` key's default. A configured size
 /// arrives per shape call from the session's frozen
 /// [`crate::ui::TextProfile`]; the bitmap side pins the same default
@@ -40,7 +40,7 @@ const _: () = {
 };
 
 /// Upper bound on cached glyph masks (OQ 3's pinned number). A full
-/// card — ten rows of titles plus hint bands, fallback faces included —
+/// card (ten rows of titles plus hint bands, fallback faces included)
 /// paints a few hundred distinct glyphs at one size; 1024 holds a
 /// session's working set with slack. A cache at the bound clears whole
 /// and refills on demand: the cost is one re-rasterization pass over
@@ -49,7 +49,7 @@ pub const GLYPH_CACHE_CAP: usize = 1024;
 
 /// Which family a shape asks for: the generic sans query (the fixture
 /// db's Open Sans, the system db's real default) or a configured name.
-/// Resolution is paint-time by design — an unresolvable name never
+/// Resolution is paint-time by design: an unresolvable name never
 /// fails here, it shapes through cosmic-text's fallback and the caller
 /// logs the diagnostic (the `font` key's never-a-broken-switch rule).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +62,7 @@ pub enum FontQuery<'a> {
     Named(&'a str),
 }
 
-/// The family a [`TextSystem`] is currently shaping — the cache's
+/// The family a [`TextSystem`] is shaping: the cache's
 /// warm-for marker: a change clears the mask cache (OQ 3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResolvedFamily {
@@ -73,7 +73,7 @@ enum ResolvedFamily {
 /// Which family the card's titles paint in, as the `font` key carries
 /// it. `Default` follows the COSMIC interface font (family-only, the
 /// store carries no size); `Family` names an installed font. Any string
-/// is valid *syntax* — resolution happens at open, and an unresolvable
+/// is valid *syntax*: resolution happens at open, and an unresolvable
 /// name logs a diagnostic naming the key and paints the follow's answer
 /// instead: never a parse error, never a broken switch. Parsed by
 /// `settings` from the config's top-level `font` key (the
@@ -81,7 +81,7 @@ enum ResolvedFamily {
 /// stack, the parser reads into it).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum FontSetting {
-    /// The COSMIC interface font's family — Open Sans on a default
+    /// The COSMIC interface font's family: Open Sans on a default
     /// desktop, the user's own COSMIC Settings pick when set.
     #[default]
     Default,
@@ -91,15 +91,15 @@ pub enum FontSetting {
 
 /// The per-session text decision, resolved once at open and frozen for
 /// the gesture's life beside the palette (a font edit or a desktop
-/// flip mid-gesture never repaints the open card): the Bitmap floor —
-/// zero loadable fonts, the deterministic paint of last resort — or the
+/// flip mid-gesture never repaints the open card): the Bitmap floor (
+/// zero loadable fonts, the deterministic paint of last resort) or the
 /// System stack in one family string, already resolved (the follow's
 /// answer or the configured key; the diagnostics have already printed).
 /// Frozen owned data, not a borrow: the daemon maps it to a
 /// [`crate::ui::TextBackend`] at each build and draw.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextDecision {
-    /// The font8x8 floor: today's card, byte-identical.
+    /// The font8x8 floor: the card, byte-identical.
     Bitmap,
     /// The system stack in `family`.
     System { family: String },
@@ -116,7 +116,7 @@ pub struct PositionedGlyph {
 }
 
 /// One shaped title: its positioned glyphs (device px, relative to a
-/// pen at the origin on the baseline — the renderer adds the row's
+/// pen at the origin on the baseline; the renderer adds the row's
 /// title origin and baseline) plus the run's metrics in logical px the
 /// card's centering math reads.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -133,7 +133,7 @@ pub struct GlyphRun {
 /// How many leading units of `advances` (per-cluster measured widths,
 /// logical px) fit `budget_px` once the ellipsis's own width rides
 /// along: the largest `k` with `advances[..k] + ellipsis_px ≤ budget`.
-/// Pure over measured widths — no font present, testable with
+/// Pure over measured widths: no font present, testable with
 /// synthetic data. `0` when even the ellipsis alone cannot fit; the
 /// whole input when everything fits.
 pub fn truncate_to_budget(advances: &[f32], ellipsis_px: f32, budget_px: f32) -> usize {
@@ -152,7 +152,7 @@ pub fn truncate_to_budget(advances: &[f32], ellipsis_px: f32, budget_px: f32) ->
 /// The baseline's y position inside a row `row_h` logical px tall, for
 /// a run with these font metrics: the ink box (ascent + descent)
 /// centers in the row, the baseline sits `ascent` below the ink top,
-/// and the answer rounds to a whole logical pixel — the System path's
+/// and the answer rounds to a whole logical pixel; the System path's
 /// whole-pixel pin (the Bitmap path centers on its `TEXT_H` cells, its
 /// own rule). Clamped inside the row so degenerate metrics can never
 /// place ink outside it.
@@ -165,11 +165,11 @@ pub fn centering(ascent_px: f32, descent_px: f32, row_h: u32) -> u32 {
 /// One rasterized glyph: 8-bit coverage over a `width × height` block
 /// whose top-left sits `(left, top)` device px from the glyph's pen
 /// position at the baseline (`top` is ≤ 0 for ink above the baseline).
-/// Grayscale AA — the coverage value is the pixel's blend factor toward
+/// Grayscale AA: the coverage value is the pixel's blend factor toward
 /// the paint color, the same ramp the renderer's corners use. Color
 /// bitmaps (CBDT/COLR emoji, the fallback chains' pick) carry their own
 /// `colors` per pixel; their coverage is the pixel's alpha, so the
-/// glyph paints as the small image it is — the same color-glyph
+/// glyph paints as the small image it is, the same color-glyph
 /// honesty the card's themed icons already practice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlyphMask {
@@ -183,7 +183,7 @@ pub struct GlyphMask {
 }
 
 /// The bounded glyph-mask cache (OQ 3): one mask per `CacheKey`, whole
-/// clear when full, whole clear on family change. Masks are pure data —
+/// clear when full, whole clear on family change. Masks are pure data:
 /// rasterization populates them, the renderer composites them, and
 /// neither can grow the cache past its bound.
 #[derive(Debug, Default)]
@@ -197,7 +197,7 @@ impl GlyphCache {
         self.masks.get(key)
     }
 
-    /// Caches `mask` under `key`. A full cache clears whole first —
+    /// Caches `mask` under `key`. A full cache clears whole first:
     /// the bound is absolute, the refill is on demand.
     pub fn insert(&mut self, key: CacheKey, mask: GlyphMask) {
         if self.masks.len() >= GLYPH_CACHE_CAP && !self.masks.contains_key(&key) {
@@ -206,7 +206,7 @@ impl GlyphCache {
         self.masks.insert(key, mask);
     }
 
-    /// Distinct masks held — the bound's observable (a test surface;
+    /// Distinct masks held: the bound's observable (a test surface;
     /// the daemon's paints never read the count).
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
@@ -227,7 +227,7 @@ impl GlyphCache {
 
 /// The system-text backend: the daemon's one [`FontSystem`], the mask
 /// cache it rasterizes through, and the family that cache is warm for.
-/// Created once at daemon start and borrowed by every gesture — shaping
+/// Created once at daemon start and borrowed by every gesture: shaping
 /// and rasterization are µs-class warm, and nothing here ever fails a
 /// switch (an empty font database paints the bitmap card instead, the
 /// zero-fonts floor).
@@ -245,14 +245,14 @@ pub struct TextSystem {
 }
 
 impl TextSystem {
-    /// The daemon's system: one font scan at startup (OQ 1) — the
+    /// The daemon's system: one font scan at startup (OQ 1); the
     /// scan's cost lands at login, never on the first gesture.
     pub fn scan_system() -> Self {
         Self::with_fonts(FontSystem::new())
     }
 
     /// A deterministic system for tests and sheets: a fresh database
-    /// holding only the font files under `dir` — never the system scan
+    /// holding only the font files under `dir`, never the system scan
     /// (`FontSystem::new_with_fonts` would scan anyway; the empty db
     /// goes in through `new_with_locale_and_db`, and the unnameable
     /// `fontdb::Database` value comes from `Default` by inference). The
@@ -271,7 +271,7 @@ impl TextSystem {
         Self::with_fonts(fonts)
     }
 
-    /// A system holding no fonts at all — the pre-injection state (the
+    /// A system holding no fonts at all: the pre-injection state (the
     /// connection starts empty and the daemon installs its scan right
     /// after) and the zero-fonts floor's own marker. Cheap by
     /// construction: no directory is read.
@@ -286,7 +286,7 @@ impl TextSystem {
     }
 
     /// Whether the database carries a face whose family is `name`
-    /// (case-insensitive, matching how a font picker displays it) — the
+    /// (case-insensitive, matching how a font picker displays it), the
     /// `font` key's resolution check. A miss is not an error: the caller
     /// logs the diagnostic naming the key and paints the follow's
     /// family instead.
@@ -302,7 +302,7 @@ impl TextSystem {
     /// The rasterized mask for `key`, rasterizing through swash on the
     /// first ask and recalling it from the bounded cache after. `None`
     /// when swash cannot rasterize the glyph at all (no outline, no
-    /// bitmap) — the caller skips it, exactly the glyph cosmic-text's
+    /// bitmap); the caller skips it, exactly the glyph cosmic-text's
     /// own renderer would not paint.
     pub fn mask(&mut self, key: &CacheKey) -> Option<&GlyphMask> {
         if self.cache.get(key).is_none() {
@@ -319,7 +319,7 @@ impl TextSystem {
     /// cell; [`TEXT_PX`] is the default profile's value). Positions are
     /// whole device pixels relative to a pen at the origin on the
     /// baseline; a family or size change clears the mask cache first. An
-    /// empty or unshapable text yields an empty run — the caller's
+    /// empty or unshapable text yields an empty run; the caller's
     /// `(untitled)` path already owns that case.
     pub fn shape(&mut self, text: &str, query: FontQuery<'_>, scale: u32, px: f32) -> GlyphRun {
         self.shape_with_clusters(text, query, scale, px).0
@@ -329,7 +329,7 @@ impl TextSystem {
     /// cluster's end byte in `text` and the advance it consumed. A
     /// cluster is the byte range one user-perceived character shaped
     /// into (a base char, or a base with combining marks, or a
-    /// fallback-script run member) — the unit a budget cut keeps whole.
+    /// fallback-script run member), the unit a budget cut keeps whole.
     fn shape_with_clusters(
         &mut self,
         text: &str,
@@ -357,7 +357,7 @@ impl TextSystem {
         let attrs = Attrs::new().family(family).weight(Weight::NORMAL);
         // One line, no wrap, at the requested logical size: `physical`
         // scales to `scale` device px per glyph below. The line height
-        // never matters — titles are single-line and the card's math
+        // never matters: titles are single-line and the card's math
         // reads ascent/descent, not the line box.
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(px, px));
         buffer.set_wrap(Wrap::None);
@@ -372,7 +372,7 @@ impl TextSystem {
         let mut glyphs = Vec::with_capacity(run.glyphs.len());
         // Clusters accumulate over the glyphs their range covers; the
         // advance is the glyph hitbox width (`w`), the width cosmic's
-        // own hit-testing uses — for a budget cut, exact to well under
+        // own hit-testing uses; for a budget cut, exact to well under
         // a px where it differs from the pen advance at all.
         let mut clusters: Vec<Cluster> = Vec::new();
         for glyph in run.glyphs {
@@ -440,7 +440,7 @@ impl TextSystem {
     /// and the answer carries both the display string the card stores
     /// and the run its width came from. A title inside the budget
     /// passes through untouched. The budget is the title band's own
-    /// width — `MAX_COLS × TEXT_W` — never the full card (the hint
+    /// width, `MAX_COLS × TEXT_W`, never the full card (the hint
     /// band's territory is not the title's to spend).
     pub fn shape_budgeted(
         &mut self,
@@ -459,7 +459,7 @@ impl TextSystem {
         let kept = truncate_to_budget(&advances, ellipsis_px, budget_px);
         // The cut at zero clusters is the degenerate budget (an
         // ellipsis that cannot fit): show the ellipsis alone rather
-        // than nothing — a title row never paints empty.
+        // than nothing: a title row never paints empty.
         let cut = if kept == 0 {
             0
         } else {
@@ -484,7 +484,7 @@ impl TextSystem {
 
 /// Converts one swash image into a [`GlyphMask`]: mask content is the
 /// coverage bytes as rasterized; color bitmaps split into per-pixel
-/// straight RGB plus alpha-as-coverage (the byte order — R, G, B, A —
+/// straight RGB plus alpha-as-coverage (the byte order, R, G, B, A,
 /// is cosmic-text's own `with_pixels` read of the same image);
 /// subpixel-mask content (never requested from this design, grayscale
 /// AA only) degrades to its alpha byte so a face that answers with it
@@ -538,7 +538,7 @@ fn mask_from_image(image: &SwashImage) -> Option<GlyphMask> {
 /// One cluster's shaping facts, the unit a budget cut keeps whole.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Cluster {
-    /// End byte of the cluster in the shaped text (a UTF-8 boundary —
+    /// End byte of the cluster in the shaped text (a UTF-8 boundary,
     /// shaping's own cluster indices).
     end_byte: usize,
     /// Advance the cluster consumed, logical px.
@@ -571,7 +571,7 @@ mod tests {
         assert!(run_a.width_px > 0.0, "the run carries a width");
         assert!(run_a.ascent_px > 0.0, "the run carries an ascent");
         assert!(run_a.descent_px >= 0.0, "the run carries a descent");
-        // Same bytes in, same run out — across fresh systems, the
+        // Same bytes in, same run out: across fresh systems, the
         // determinism the tests and sheets rely on.
         assert_eq!(run_a, run_b);
     }
@@ -605,7 +605,7 @@ mod tests {
         let mut system = TextSystem::from_dir(Path::new("/nonexistent-airlock-test-fonts"));
         assert_eq!(system.face_count(), 0);
         // Shaping against an empty db still answers: an empty run, not
-        // a panic — switching never breaks on font I/O.
+        // a panic; switching never breaks on font I/O.
         let run = system.shape("", FontQuery::SansSerif, 2, TEXT_PX);
         assert!(run.glyphs.is_empty());
     }
@@ -615,7 +615,7 @@ mod tests {
         let mut cache = GlyphCache::default();
         // A seed key whose font id comes from inference (`fontdb::ID`
         // is Default but not nameable through cosmic-text's exports);
-        // no font is touched — the bound is pure cache behavior.
+        // no font is touched; the bound is pure cache behavior.
         // `CacheKey::new` also returns the binned position; the cache
         // identity is the key alone.
         let (seed, _, _) = CacheKey::new(
@@ -651,7 +651,7 @@ mod tests {
     // --- TY2: truncation, centering, budgeted shaping -------------------
 
     /// The title band's budget, straight from the constants the Bitmap
-    /// path sizes by — the System path spends the same territory.
+    /// path sizes by; the System path spends the same territory.
     fn band_px() -> f32 {
         (crate::ui::MAX_COLS * crate::ui::TEXT_W) as f32
     }
@@ -659,7 +659,7 @@ mod tests {
     #[test]
     fn truncation_keeps_the_longest_prefix_that_fits_with_its_ellipsis() {
         let widths = [10.0, 10.0, 10.0, 10.0, 10.0];
-        // 20 + 3 fits in 24; 30 + 3 does not — and one more unit past
+        // 20 + 3 fits in 24; 30 + 3 does not, and one more unit past
         // the cut must overflow (maximality).
         let kept = truncate_to_budget(&widths, 3.0, 24.0);
         assert_eq!(kept, 2);
@@ -677,7 +677,7 @@ mod tests {
     fn truncation_passes_the_whole_input_through_when_it_fits() {
         let widths = [10.0, 10.0, 10.0];
         assert_eq!(truncate_to_budget(&widths, 3.0, 100.0), 3);
-        // Exact fit counts as fitting — the budget is inclusive.
+        // Exact fit counts as fitting: the budget is inclusive.
         assert_eq!(truncate_to_budget(&widths, 3.0, 33.0), 3);
         // Nothing at all is the empty-input answer.
         assert_eq!(truncate_to_budget(&[], 3.0, 24.0), 0);
@@ -709,7 +709,7 @@ mod tests {
                 let kept = truncate_to_budget(&widths, ellipsis, budget);
                 let sum: f32 = widths[..kept].iter().sum();
                 // `kept == 0` is the degenerate budget where even the
-                // ellipsis cannot fit — the only state where the sum
+                // ellipsis cannot fit: the only state where the sum
                 // invariant has nothing to hold.
                 assert!(
                     kept == 0 || sum + ellipsis <= budget,
@@ -798,7 +798,7 @@ mod tests {
     fn empty_is_the_zero_face_floor_marker() {
         let system = TextSystem::empty();
         assert_eq!(system.face_count(), 0);
-        // No family is known against an empty database — the daemon
+        // No family is known against an empty database: the daemon
         // resolves the Bitmap floor before ever asking.
         assert!(!system.knows_family("Open Sans"));
     }

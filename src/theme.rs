@@ -1,9 +1,9 @@
-//! COSMIC appearance stores, read — the shared "follow the desktop"
+//! COSMIC appearance stores, read: the shared "follow the desktop"
 //! seam.
 //!
 //! COSMIC Settings persists its appearance values as one RON file per
 //! key under a user and a system store root; this module hand-reads
-//! the ones the switcher follows. Deliberately a hand read —
+//! the ones the switcher follows. Deliberately a hand read:
 //! `cosmic-config` is a git-only tree pulling `notify` +
 //! `atomicwrites` (a second git repo) + serde/ron/tracing, far too
 //! much for a handful of booleans and colors (the TH3 decision,
@@ -13,10 +13,10 @@
 //! default (`Palette::resolve` dark, the accent's caller the neutral
 //! lift).
 //!
-//! Four answers live here today: the ThemeMode dark/light bool (one
+//! Four answers live here: the ThemeMode dark/light bool (one
 //! bare RON bool per key, v1), the per-polarity theme accent (v2 hex
 //! strings with a v1 f32 fallback), the corner style (a `CornerRadii`
-//! classifier), and the interface density (a bare enum word) — the
+//! classifier), and the interface density (a bare enum word); the
 //! last two through the same version ladder `cosmic-config` itself
 //! chains. The ladder is the shared seam: every future follow reads
 //! through it too.
@@ -29,7 +29,7 @@ const SYSTEM_IS_DARK_PATH: &str = "/usr/share/cosmic/com.system76.CosmicTheme.Mo
 
 /// Whether the COSMIC desktop prefers a dark theme: the user's
 /// `ThemeMode` `is_dark` when it exists and parses, else the system
-/// default, else `None` (with one diagnostic — the caller paints dark).
+/// default, else `None` (with one diagnostic: the caller paints dark).
 pub fn system_prefers_dark() -> Option<bool> {
     let preference = preference_at(
         user_is_dark_path().as_deref(),
@@ -41,7 +41,7 @@ pub fn system_prefers_dark() -> Option<bool> {
     preference
 }
 
-/// The user's `ThemeMode` `is_dark` under COSMIC's config rule — the
+/// The user's `ThemeMode` `is_dark` under COSMIC's config rule: the
 /// user store root plus this key's path. `None` when the environment
 /// names neither root; the system default still serves.
 fn user_is_dark_path() -> Option<PathBuf> {
@@ -53,7 +53,7 @@ fn user_is_dark_path() -> Option<PathBuf> {
 }
 
 /// The user's COSMIC store root: `$XDG_CONFIG_HOME` (absolute) else
-/// `$HOME/.config`, plus `cosmic` — cosmic-config's `Config::new_inner`
+/// `$HOME/.config`, plus `cosmic`, cosmic-config's `Config::new_inner`
 /// rule, the same one the installer and `settings` use. `None` when
 /// the environment names neither.
 fn user_cosmic_root() -> Option<PathBuf> {
@@ -79,7 +79,7 @@ fn read_preference(path: &Path) -> Option<bool> {
 }
 
 /// A bare RON bool: `true` or `false`, whitespace-padded as files are.
-/// Anything else — garbage, empty, non-UTF-8 — is `None`, never a panic.
+/// Anything else (garbage, empty, non-UTF-8) is `None`, never a panic.
 fn parse_preference(bytes: &[u8]) -> Option<bool> {
     match std::str::from_utf8(bytes).ok()?.trim() {
         "true" => Some(true),
@@ -92,7 +92,7 @@ fn parse_preference(bytes: &[u8]) -> Option<bool> {
 //
 // The selection band's follow target: the COSMIC accent's `base` color,
 // per polarity, read through the same version ladder cosmic-config
-// chains. Everything here is a read — Airlock observes the stores
+// chains. Everything here is a read: Airlock observes the stores
 // cosmic-settings owns; it never writes them and never creates the
 // directories cosmic-config's `Config::new` does as a side effect.
 
@@ -100,23 +100,23 @@ fn parse_preference(bytes: &[u8]) -> Option<bool> {
 const SYSTEM_COSMIC_ROOT: &str = "/usr/share/cosmic";
 
 /// The per-polarity theme store ids (`cosmic-theme`'s `DARK_THEME_ID` /
-/// `LIGHT_THEME_ID`) — accents are real per-polarity values, not one
+/// `LIGHT_THEME_ID`): accents are real per-polarity values, not one
 /// color the theme recolors.
 const THEME_DARK_ID: &str = "com.system76.CosmicTheme.Dark";
 const THEME_LIGHT_ID: &str = "com.system76.CosmicTheme.Light";
 
 /// The accent key and its store version: `Theme` is a v2 store, with
-/// the v1 fallback below it — where this machine's live accent
+/// the v1 fallback below it, where this machine's live accent
 /// actually sits (the store record's §2 rule).
 const ACCENT_KEY: &str = "accent";
 const ACCENT_VERSION: u32 = 2;
 
 /// The COSMIC accent's `base` color for one polarity (`true` = dark),
-/// as straight `0xRRGGBB` — the selection band's follow target, the
+/// as straight `0xRRGGBB`: the selection band's follow target, the
 /// desktop's personality in the one place a glance tracks it. Read
 /// through the full version ladder over the per-polarity store, both
 /// serializations decoded, alpha discarded (followed colors are forced
-/// opaque). `None` on any miss — never a broken switch — with one
+/// opaque). `None` on any miss (never a broken switch) with one
 /// aggregated diagnostic naming every rung that missed; the caller
 /// falls back to the neutral lift.
 pub fn accent_base(dark: bool) -> Option<u32> {
@@ -134,7 +134,7 @@ pub fn accent_base(dark: bool) -> Option<u32> {
     value
 }
 
-/// The accent answer over explicit store roots — the testable core of
+/// The accent answer over explicit store roots: the testable core of
 /// [`accent_base`]: `(value, missed)`. `missed` is empty on a hit; on a
 /// total miss it labels every rung tried, `"{origin} {id}/v{v}/{key}"`,
 /// for the caller's one aggregated diagnostic line.
@@ -155,12 +155,12 @@ fn accent_base_at(
 
 /// Reads one key through the version ladder cosmic-config itself chains
 /// (store record §2): user v`version` → user v`version − 1` → system
-/// v`version` — a v2 config never consults system v1, and the middle
+/// v`version`: a v2 config never consults system v1, and the middle
 /// rung is load-bearing (a v1-era user tweak must outrank the system
 /// default). Each rung is one read-only `read_to_string`; nothing is
 /// ever created. A rung whose text does not parse is a miss and the
 /// ladder continues; the answer is the first value, or `None` with
-/// every rung labeled — never a panic.
+/// every rung labeled, never a panic.
 fn ladder_at<T>(
     user_root: Option<&Path>,
     system_root: &Path,
@@ -194,7 +194,7 @@ fn ladder_at<T>(
 
 /// The accent `base` from one `Component` file's text, whichever
 /// serialization it carries: v2 quotes a `#RRGGBBAA` hex string, v1
-/// writes a named f32 tuple. Alpha is parsed then discarded in both —
+/// writes a named f32 tuple. Alpha is parsed then discarded in both:
 /// followed colors are forced opaque, the store's translucency never
 /// reaches the card. Any miss (no `base` field, wrong shape, non-hex,
 /// non-finite) is `None`, never a panic.
@@ -258,8 +258,8 @@ fn f32_accent(group: &str) -> Option<u32> {
 // The card's geometry follows the desktop: COSMIC Appearance's style
 // choice (round / slightly-round / square) and interface density
 // (compact / comfortable / spacious), each one more read through the
-// shared ladder. Style is polarity-independent — cosmic-settings
-// writes both theme stores on every style change (record §1) — so the
+// shared ladder. Style is polarity-independent: cosmic-settings
+// writes both theme stores on every style change (record §1), so the
 // read takes one side, Dark, the record's quoted path; the accent's
 // polarity question does not arise. As everywhere here: read-only,
 // never fatal, misses carry one aggregated diagnostic and the caller
@@ -267,17 +267,17 @@ fn f32_accent(group: &str) -> Option<u32> {
 
 /// The desktop's corner style, classified from COSMIC Appearance's
 /// style choice (`v2/corner_radii`). The ladder values it feeds live
-/// in `ui` — this type is the store's vocabulary, not the card's.
+/// in `ui`; this type is the store's vocabulary, not the card's.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Style {
-    /// COSMIC's factory default (`radius_m ≈ 16`) — and the miss
+    /// COSMIC's factory default (`radius_m ≈ 16`), and the miss
     /// default: an unreadable store keeps the card Airlock has always
     /// painted.
     #[default]
     Round,
     /// `radius_m ≈ 8`.
     SlightlyRound,
-    /// The all-2s preset — this machine's desktop.
+    /// The all-2s preset: this machine's desktop.
     Square,
 }
 
@@ -288,7 +288,7 @@ pub enum Style {
 pub enum Density {
     Compact,
     /// COSMIC's default, and the miss default: an unreadable store
-    /// keeps today's rhythm.
+    /// keeps the Standard rhythm.
     #[default]
     Standard,
     Spacious,
@@ -298,13 +298,13 @@ pub enum Density {
 /// also reads.
 const CORNER_RADII_KEY: &str = "corner_radii";
 
-/// The toolkit config id and the density key — a v1 store, two rungs
+/// The toolkit config id and the density key: a v1 store, two rungs
 /// (user, system), no middle (record §3.3).
 const TK_ID: &str = "com.system76.CosmicTk";
 const DENSITY_KEY: &str = "interface_density";
 
 /// The desktop's corner style, or `None` on a total ladder miss (with
-/// one aggregated diagnostic naming every rung) — the caller keeps the
+/// one aggregated diagnostic naming every rung); the caller keeps the
 /// Round default.
 pub fn style() -> Option<Style> {
     let (value, missed) = style_at(user_cosmic_root().as_deref(), Path::new(SYSTEM_COSMIC_ROOT));
@@ -317,7 +317,7 @@ pub fn style() -> Option<Style> {
     value
 }
 
-/// The style answer over explicit store roots — the testable core of
+/// The style answer over explicit store roots: the testable core of
 /// [`style`], the accent ladder's shape.
 fn style_at(user_root: Option<&Path>, system_root: &Path) -> (Option<Style>, Vec<String>) {
     ladder_at(
@@ -331,7 +331,7 @@ fn style_at(user_root: Option<&Path>, system_root: &Path) -> (Option<Style>, Vec
 }
 
 /// The style from one `CornerRadii` file's text: six uniform f32
-/// 4-tuples, classified by `radius_m` — the reverse-classifier bands
+/// 4-tuples, classified by `radius_m`, the reverse-classifier bands
 /// of the three source presets (record §5: Round `radius_m = 16`,
 /// SlightlyRound `8`, Square `2`). The per-corner tuples are uniform
 /// in every COSMIC preset; a non-uniform file classifies by its TL
@@ -351,7 +351,7 @@ fn parse_style(text: &str) -> Option<Style> {
 }
 
 /// The reverse classifier (record §5): ≈16 rounds fully, ≈8 slightly,
-/// anything else reads as squared — the bands keep a future preset
+/// anything else reads as squared; the bands keep a future preset
 /// value honest instead of misfiring to Round.
 fn style_of_radius_m(radius_m: f32) -> Style {
     if (14.0..=18.0).contains(&radius_m) {
@@ -364,7 +364,7 @@ fn style_of_radius_m(radius_m: f32) -> Style {
 }
 
 /// The desktop's interface density, or `None` on a total ladder miss
-/// (with one aggregated diagnostic) — the caller keeps the Standard
+/// (with one aggregated diagnostic); the caller keeps the Standard
 /// default.
 pub fn density() -> Option<Density> {
     let (value, missed) = density_at(user_cosmic_root().as_deref(), Path::new(SYSTEM_COSMIC_ROOT));
@@ -377,7 +377,7 @@ pub fn density() -> Option<Density> {
     value
 }
 
-/// The density answer over explicit store roots — the testable core of
+/// The density answer over explicit store roots: the testable core of
 /// [`density`]. `CosmicTk` is a v1 store, so the ladder holds two
 /// rungs: user, system.
 fn density_at(user_root: Option<&Path>, system_root: &Path) -> (Option<Density>, Vec<String>) {
@@ -386,7 +386,7 @@ fn density_at(user_root: Option<&Path>, system_root: &Path) -> (Option<Density>,
 
 /// The density from one file's text: the bare RON enum variant
 /// (`Compact` / `Standard` / `Spacious`, whitespace-padded as files
-/// are — record §3.3). Anything else is `None`, never a panic.
+/// are, record §3.3). Anything else is `None`, never a panic.
 fn parse_density(text: &str) -> Option<Density> {
     match text.trim() {
         "Compact" => Some(Density::Compact),
@@ -399,11 +399,11 @@ fn parse_density(text: &str) -> Option<Density> {
 // --- The interface-font follow ---------------------------------------------
 //
 // The card's typeface follows the desktop's chosen interface font,
-// family-only (the store carries no size — record §7; the 12-px pin
+// family-only (the store carries no size, record §7; the 12-px pin
 // has nothing to follow and stands). The store moved two days after
 // this machine's cosmic-settings was built (record §3.4): the
 // installed vintage keeps `CosmicTk/v1/interface_font`, master reads
-// `Theme.<polarity>/v2/font` — Airlock reads the installed vintage
+// `Theme.<polarity>/v2/font`; Airlock reads the installed vintage
 // first, then master, each through the shared ladder, and both miss
 // onto the same default constant cosmic-settings itself embeds.
 
@@ -412,14 +412,14 @@ fn parse_density(text: &str) -> Option<Density> {
 const INTERFACE_FONT_KEY: &str = "interface_font";
 const THEME_FONT_KEY: &str = "font";
 
-/// The floor when both vintages miss — `cosmic-theme`'s own
+/// The floor when both vintages miss: `cosmic-theme`'s own
 /// `DEFAULT_FONT_FAMILY` (record §3.4), the family a default desktop
 /// shapes even with no font-store file.
 const DEFAULT_INTERFACE_FONT: &str = "Open Sans";
 
 /// The desktop's interface font family, or [`DEFAULT_INTERFACE_FONT`]
 /// on a total ladder miss (with one aggregated diagnostic naming every
-/// rung) — the `typography` follow's answer, family-only.
+/// rung), the `typography` follow's answer, family-only.
 pub fn interface_font(dark: bool) -> String {
     let (value, missed) = interface_font_at(
         user_cosmic_root().as_deref(),
@@ -435,7 +435,7 @@ pub fn interface_font(dark: bool) -> String {
     })
 }
 
-/// The interface-font answer over explicit store roots — the testable
+/// The interface-font answer over explicit store roots: the testable
 /// core of [`interface_font`], the accent ladder's shape twice: the
 /// installed vintage's `CosmicTk` rungs first, then the per-polarity
 /// theme store's (first-wins across the two, per the chunk's pinned
@@ -468,7 +468,7 @@ fn interface_font_at(
     (master, missed)
 }
 
-/// The family from one `FontConfig` file's `family:` line — the one
+/// The family from one `FontConfig` file's `family:` line: the one
 /// field the follow reads. The disk shape beyond the quoted string is
 /// source-verified, never seen on disk (record §3.4's honest silence):
 /// the parse takes the quoted RON string and nothing else, so an
@@ -509,7 +509,7 @@ mod tests {
         assert_eq!(parse_preference(b"TRUE"), None);
         assert_eq!(parse_preference(b"true false"), None);
         assert_eq!(parse_preference(b"1"), None);
-        // Non-UTF-8 bytes, like every other miss, are None — no panic.
+        // Non-UTF-8 bytes, like every other miss, are None, no panic.
         assert_eq!(parse_preference(&[0xFF, 0xFE]), None);
     }
 
@@ -606,7 +606,7 @@ mod tests {
 )"##;
 
     /// This machine's live accent: the user Dark v1 `base` line, quoted
-    /// by the record (§3.1) — the v1 serialization, named f32s. The
+    /// by the record (§3.1), the v1 serialization, named f32s. The
     /// values are 231/156/254 over 255: the purple this desktop has
     /// carried since v1, reachable only through the middle rung.
     const V1_ACCENT_PURPLE: &str =
@@ -634,7 +634,7 @@ mod tests {
     #[test]
     fn accent_decode_discards_alpha_in_both_encodings() {
         // Followed colors are forced opaque: the v2 hex's alpha byte and
-        // the v1 `alpha` field are parsed then dropped — the band never
+        // the v1 `alpha` field are parsed then dropped; the band never
         // inherits translucency from the store.
         assert_eq!(
             parse_accent_base("base: \"#63D0DF80\",\n"),
@@ -699,7 +699,7 @@ mod tests {
     #[test]
     fn user_v1_beats_system_v2() {
         // The live-purple rule (record §2): this machine's user v2 store
-        // has no accent, so the v1 purple is the answer — the middle
+        // has no accent, so the v1 purple is the answer; the middle
         // rung is load-bearing, never skipped for the simpler ladder.
         let user = TempDir::new("ladder-u1");
         let system = TempDir::new("ladder-u1-system");
@@ -766,7 +766,7 @@ mod tests {
 
     // --- style read (corner_radii) ----------------------------------------
 
-    /// The system Round preset — the record's §5 row `0 / 4 / 8 / 16 /
+    /// The system Round preset: the record's §5 row `0 / 4 / 8 / 16 /
     /// 32 / 160` in the store's own serialization (six uniform f32
     /// 4-tuples; only `radius_m` is read).
     const RADII_ROUND: &str = r#"(
@@ -778,7 +778,7 @@ mod tests {
     radius_xl: (160.0, 160.0, 160.0, 160.0),
 )"#;
 
-    /// The SlightlyRound preset — `0 / 2 / 8 / 8 / 8 / 8`, so
+    /// The SlightlyRound preset: `0 / 2 / 8 / 8 / 8 / 8`, so
     /// `radius_m ≈ 8` is the classifier's middle band.
     const RADII_SLIGHTLY_ROUND: &str = r#"(
     radius_0: (0.0, 0.0, 0.0, 0.0),
@@ -790,7 +790,7 @@ mod tests {
 )"#;
 
     /// This machine's real user file, quoted by the record (§3.2):
-    /// Square, every radius a 2 — the follow's visible-on-here value.
+    /// Square, every radius a 2, the follow's visible-on-here value.
     const RADII_SQUARE: &str = r#"(
     radius_0: (2.0, 2.0, 2.0, 2.0),
     radius_xs: (2.0, 2.0, 2.0, 2.0),
@@ -807,7 +807,7 @@ mod tests {
             parse_style(RADII_SLIGHTLY_ROUND),
             Some(Style::SlightlyRound)
         );
-        // This machine's live file — the Square desktop the follow was
+        // This machine's live file, the Square desktop the follow was
         // ratified against.
         assert_eq!(parse_style(RADII_SQUARE), Some(Style::Square));
     }
@@ -815,7 +815,7 @@ mod tests {
     #[test]
     fn a_non_uniform_radius_m_classifies_by_its_tl_corner() {
         // Every COSMIC preset is uniform (record §3.2); the assumption
-        // is stated, and a non-uniform file still answers — by TL.
+        // is stated, and a non-uniform file still answers, by TL.
         assert_eq!(
             parse_style("radius_m: (16.0, 2.0, 2.0, 2.0),\n"),
             Some(Style::Round)
@@ -862,8 +862,8 @@ mod tests {
     #[test]
     fn the_style_ladder_reads_user_v2_then_v1_then_system() {
         // cosmic-settings writes the style to both polarities' theme
-        // stores (record §1), so the read takes one side — Dark, the
-        // record's quoted path — through the same v2→v1→system ladder
+        // stores (record §1), so the read takes one side (Dark, the
+        // record's quoted path) through the same v2→v1→system ladder
         // the accent chains.
         let user = TempDir::new("style-u2");
         let system = TempDir::new("style-u2-system");
@@ -874,7 +874,7 @@ mod tests {
 
         // The middle rung is load-bearing here too: this machine's user
         // v1 file is a pre-Square Round leftover that the v2 Square
-        // shadows — and a v1-era tweak must outrank the system default.
+        // shadows, and a v1-era tweak must outrank the system default.
         let user = TempDir::new("style-u1");
         let system = TempDir::new("style-u1-system");
         user.rung(THEME_DARK_ID, 1, CORNER_RADII_KEY, RADII_SLIGHTLY_ROUND);
@@ -920,7 +920,7 @@ mod tests {
     fn density_reads_the_three_store_words() {
         // RON writes the bare enum variant (record §3.3), padded as
         // files are; the UI's "Comfortable" label is not the store's
-        // word — Standard is.
+        // word; Standard is.
         assert_eq!(parse_density("Compact\n"), Some(Density::Compact));
         assert_eq!(parse_density("  Standard\r\n"), Some(Density::Standard));
         assert_eq!(parse_density("\nSpacious \n"), Some(Density::Spacious));
@@ -1002,7 +1002,7 @@ mod tests {
             parse_font_family("FontConfig(\n    family: \"Fira Sans\",\n    weight: Normal,\n)"),
             Some("Fira Sans".to_owned())
         );
-        // An unquoted word is not the disk shape ever verified — a
+        // An unquoted word is not the disk shape ever verified: a
         // miss, never a guess (the record's honest silence).
         assert_eq!(parse_font_family("family: FiraSans"), None);
         assert_eq!(parse_font_family("weight: Normal"), None);
@@ -1021,7 +1021,7 @@ mod tests {
         assert_eq!(value.as_deref(), Some("Fira Sans"));
 
         // Without the Tk file, the theme store's side answers by
-        // polarity — per-polarity font stores are as real as the
+        // polarity: per-polarity font stores are as real as the
         // accent's (record §3.4's update_theme sync writes both).
         let user2 = TempDir::new("font-follow-polarity");
         let system2 = TempDir::new("font-follow-polarity-system");

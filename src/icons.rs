@@ -7,11 +7,11 @@
 //! enumerated once at daemon start (the `find_app_by_id` ladder is
 //! case-insensitive and understands `StartupWMClass`, file stems, and
 //! `code-url-handler`-style partial ids), then [`freedesktop_icons`]
-//! for name → themed path (rooted at the `Cosmic` theme chain —
+//! for name → themed path (rooted at the `Cosmic` theme chain:
 //! libcosmic's default; SVG-first because the Pop/Cosmic themes ship
 //! SVG-only app icons), then SVG rasterization via `resvg` or PNG
 //! decode via `png`. Benchmarked locally at 60 µs–1.2 ms per icon,
-//! always at daemon start or when a window first appears — never on
+//! always at daemon start or when a window first appears, never on
 //! the press path. A themed miss gets one extra ladder over the two
 //! Flatpak export icon roots, which the theme scan only sees when the
 //! session's `XDG_DATA_DIRS` carries them (see [`theme_lookup`]).
@@ -30,7 +30,7 @@ use freedesktop_desktop_entry as fde;
 use crate::ui::{self, IconBitmap};
 
 /// Icon name tried when the desktop-entry corpus has no match or the
-/// entry carries no `Icon=` — the freedesktop "unknown executable"
+/// entry carries no `Icon=`: the freedesktop "unknown executable"
 /// glyph, present in hicolor on normal installs. If even this misses,
 /// the row falls back to the generic window glyph.
 pub const FALLBACK_ICON_NAME: &str = "application-x-executable";
@@ -42,7 +42,7 @@ pub type NameLookup = Box<dyn Fn(&str, u16) -> Option<PathBuf>>;
 /// The daemon's icon state: the desktop-entry corpus plus rasterized
 /// icons keyed by (app_id, render scale, card polarity).
 ///
-/// Single-threaded by design — the daemon is one thread, and so is
+/// Single-threaded by design: the daemon is one thread, and so is
 /// every API here.
 pub struct Cache {
     /// Every parseable desktop entry under the applications dirs,
@@ -53,7 +53,7 @@ pub struct Cache {
     /// (app_id, scale, is_dark) → rasterized icon. `None` = resolved to
     /// nothing; the row draws the generic window glyph. The polarity key
     /// exists because symbolic icons are tinted to the palette's text
-    /// color at raster time — a tint cached for one card must never be
+    /// color at raster time: a tint cached for one card must never be
     /// served at the other.
     rasters: HashMap<(String, u32, u32, bool), Option<Rc<IconBitmap>>>,
 }
@@ -68,7 +68,7 @@ enum IconRef {
 }
 
 impl Default for Cache {
-    /// [`Cache::new`]: enumerates the desktop-entry corpus — not a cheap
+    /// [`Cache::new`]: enumerates the desktop-entry corpus, not a cheap
     /// default, but the only meaningful one for this type.
     fn default() -> Self {
         Self::new()
@@ -78,7 +78,7 @@ impl Default for Cache {
 impl Cache {
     /// Enumerates the desktop-entry corpus from the default application
     /// dirs plus the two Flatpak export locations (not always on
-    /// `XDG_DATA_DIRS`). Runs once per daemon, at session start — it
+    /// `XDG_DATA_DIRS`). Runs once per daemon, at session start: it
     /// reads every `.desktop` on the machine, which is far too slow for
     /// any press path and irrelevant after the first gesture.
     pub fn new() -> Self {
@@ -93,7 +93,7 @@ impl Cache {
         Self::with_entries(entries, Box::new(theme_lookup))
     }
 
-    /// Builds a cache over an explicit corpus and lookup function — the
+    /// Builds a cache over an explicit corpus and lookup function: the
     /// test door. Does no filesystem access of its own.
     pub fn with_entries(entries: Vec<fde::DesktopEntry>, lookup: NameLookup) -> Self {
         Self {
@@ -135,7 +135,7 @@ impl Cache {
     }
 
     /// The prepared icon for an (app_id, scale) at `palette`'s polarity,
-    /// if any. Unknown keys are a plain miss (the glyph) — resolution
+    /// if any. Unknown keys are a plain miss (the glyph): resolution
     /// happens only in [`Cache::prepare`], never on the render path.
     pub fn bitmap(
         &self,
@@ -206,7 +206,7 @@ impl Cache {
 ///
 /// A miss falls through to [`flatpak_export_lookup`]: flatpak-shipped
 /// icons land in the export roots below, which the crates.io theme scan
-/// sees only when the session's `XDG_DATA_DIRS` carries them — the same
+/// sees only when the session's `XDG_DATA_DIRS` carries them: the same
 /// not-always guarantee [`Cache::new`] already compensates for on the
 /// desktop-entry side. The entry corpus is flatpak-aware, so an entry
 /// can name an icon the theme scan cannot see; without the fallback
@@ -221,7 +221,7 @@ fn theme_lookup(name: &str, size: u16) -> Option<PathBuf> {
 }
 
 /// The icon-theme halves of the two Flatpak export locations
-/// [`Cache::new`] already walks for desktop entries — user installs
+/// [`Cache::new`] already walks for desktop entries: user installs
 /// first, system installs second, mirroring `XDG_DATA_DIRS` precedence.
 fn flatpak_icon_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
@@ -234,9 +234,9 @@ fn flatpak_icon_roots() -> Vec<PathBuf> {
 
 /// Resolves one icon name against Flatpak export icon roots, in
 /// standard theme layout: `<root>/<theme>/<size-dir>/apps/<name>.png`
-/// (or `.svg`, PNG first like the themed scan — the renderer note in
+/// (or `.svg`, PNG first like the themed scan: the renderer note in
 /// `docs/research/switcher-ux-and-icons.md` §3.3). Size ladder: the
-/// exact `WxH`, then `scalable` SVG, then the nearest size — a Flatpak
+/// exact `WxH`, then `scalable` SVG, then the nearest size, so a Flatpak
 /// that exports only its 512×512 master still resamples honestly.
 /// App-icon names only, so only the `apps` context is walked.
 fn flatpak_export_lookup(roots: &[PathBuf], name: &str, size: u16) -> Option<PathBuf> {
@@ -329,7 +329,7 @@ fn rasterize_png(path: &Path, side: u32) -> Option<IconBitmap> {
     // Flatpak exports ship their masters as 8-bit palette PNGs (Obsidian's
     // report): the raw payload is PLTE indices, which the RGB(A)-only
     // assembly below rejects, and the row degrades to the glyph. EXPAND
-    // resolves the indices — and the tRNS alpha Obsidian also carries —
+    // resolves the indices (and the tRNS alpha Obsidian also carries)
     // into truecolor RGBA before any bytes reach the reader.
     decoder.set_transformations(png::Transformations::EXPAND);
     let mut reader = decoder.read_info().ok()?;
@@ -337,7 +337,7 @@ fn rasterize_png(path: &Path, side: u32) -> Option<IconBitmap> {
     let mut bytes = vec![0; reader.output_buffer_size()];
     reader.next_frame(&mut bytes).ok()?;
     // With EXPAND the buffer layout is the output color type, which for a
-    // palette source is RGB or RGBA — not the header's Indexed.
+    // palette source is RGB or RGBA, not the header's Indexed.
     let (color, _) = reader.output_color_type();
     let argb = rgba_argb(&bytes, width, height, color)?;
     Some(IconBitmap {
@@ -348,7 +348,7 @@ fn rasterize_png(path: &Path, side: u32) -> Option<IconBitmap> {
 
 /// Assembles straight-alpha PNG bytes into premultiplied
 /// `0xAARRGGBB` pixels. RGB and RGBA pass through (alpha 255 for RGB);
-/// grayscale images are rejected honestly — palette sources arrive
+/// grayscale images are rejected honestly: palette sources arrive
 /// already expanded by the decoder's EXPAND transform, and the rest of
 /// the `png` crate's format surface is not worth carrying for the
 /// remainder.
@@ -385,7 +385,7 @@ fn premultiply(r: u8, g: u8, b: u8, a: u8) -> u32 {
 
 /// Area-averaged box resample of a premultiplied image to a square
 /// `side × side`. Downscaling averages exact source-area coverage
-/// (fractional window edges included — 96→64 averages honestly);
+/// (fractional window edges included, 96→64 averages honestly);
 /// upscaling is nearest-neighbor, which matches the renderer's
 /// crisp-pixel aesthetic instead of pretending at softness it cannot
 /// draw.
@@ -449,7 +449,7 @@ fn overlap(cell: f32, lo: f32, hi: f32) -> u32 {
 }
 
 /// Recolors a bitmap to the palette's text `color`, keeping per-pixel
-/// coverage — symbolic icons carry their shape in alpha only.
+/// coverage: symbolic icons carry their shape in alpha only.
 fn tint_text_color(bitmap: &mut IconBitmap, color: u32) {
     // 0xAARRGGBB → big-endian bytes are [A, R, G, B].
     let [_, tr, tg, tb] = color.to_be_bytes();
@@ -471,8 +471,8 @@ mod tests {
     /// A 10×10 SVG: the left half opaque red, the right half empty.
     const RED_HALF_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect x="0" y="0" width="5" height="10" fill="#ff0000"/></svg>"##;
 
-    /// Fixtures live under an `applications/` directory — the spec-shaped
-    /// path — so the crate derives the same desktop-file id from the file
+    /// Fixtures live under an `applications/` directory (the spec-shaped
+    /// path), so the crate derives the same desktop-file id from the file
     /// name that production derives under `/usr/share/applications`.
     fn temp_path(name: &str) -> PathBuf {
         let dir = std::env::temp_dir()
@@ -523,7 +523,7 @@ mod tests {
     /// An 8-bit palette (Indexed) PNG: `palette` carries RGB triples,
     /// `indices` carries one palette index per pixel, and `alphas` the
     /// optional tRNS alpha byte per palette entry (None omits the chunk).
-    /// The layout Flatpak exports actually ship app icons in — Obsidian's
+    /// The layout Flatpak exports actually ship app icons in: Obsidian's
     /// master is 8-bit colormap with transparency.
     fn write_indexed_png(
         path: &Path,
@@ -561,7 +561,7 @@ mod tests {
 
     /// A Flatpak export icon root in a temp dir: each `(theme, size-dir,
     /// ext)` row becomes `<root>/<theme>/<size-dir>/apps/<name>.<ext>`
-    /// with a red-half SVG or a solid PNG body — the standard layout a
+    /// with a red-half SVG or a solid PNG body, the standard layout a
     /// Flatpak export ships. An empty `rows` builds no directories at
     /// all, so the root reads as absent.
     fn flatpak_root(root_name: &str, icon_name: &str, rows: &[(&str, &str, &str)]) -> PathBuf {
@@ -737,7 +737,7 @@ mod tests {
 
     /// The tint symbolic icons wear is the palette's text color, not a
     /// module-global: a light card tints its icons near-black, a dark card
-    /// near-white. Proven with a same-polarity palette whose text is red —
+    /// near-white. Proven with a same-polarity palette whose text is red:
     /// the tint must follow the palette passed in, wherever it came from.
     #[test]
     fn symbolic_tint_follows_the_palette_text_color() {
@@ -823,7 +823,7 @@ mod tests {
     }
 
     /// Flatpak-shipped app icons (the Obsidian report) arrive as 8-bit
-    /// palette PNGs — the export's 512×512 master is Indexed. The raw
+    /// palette PNGs: the export's 512×512 master is Indexed. The raw
     /// payload is palette indices, so a decoder that only reads RGB(A)
     /// tuples rejects the icon and the row degrades to the glyph. Palette
     /// entries must expand to truecolor.
@@ -848,7 +848,7 @@ mod tests {
         let bitmap = cache
             .bitmap("org.test.palette", ui::ICON, 1, &ui::Palette::dark())
             .expect("palette icon rasterized");
-        // Pixels wear the palette's colors (premultiplied — both are fully
+        // Pixels wear the palette's colors (premultiplied: both are fully
         // opaque, so straight), not the raw indices. The 2×2 source upscales
         // nearest to the icon side, so the last pixel still samples the
         // source's bottom-right entry.
@@ -858,7 +858,7 @@ mod tests {
     }
 
     /// Obsidian's export carries a tRNS chunk (its corners are
-    /// transparent); expansion must honor it, keeping the alpha channel —
+    /// transparent); expansion must honor it, keeping the alpha channel:
     /// a lost tRNS paints every icon as a solid box.
     #[test]
     fn palette_png_transparency_survives_expansion() {
@@ -882,7 +882,7 @@ mod tests {
             .bitmap("org.test.palettealpha", ui::ICON, 1, &ui::Palette::dark())
             .expect("palette icon rasterized");
         // Palette entry 0 is fully transparent (premultiplied to zero);
-        // entry 1 keeps full coverage — again sampled at the last pixel.
+        // entry 1 keeps full coverage, again sampled at the last pixel.
         assert_eq!(bitmap.argb[0], 0);
         let last = bitmap.argb.len() - 1;
         assert_eq!(argb(bitmap.argb[last]), [255, 0x40, 0x50, 0x60]);
@@ -942,7 +942,7 @@ mod tests {
         // 3×3 column stripes red/green/blue → side 2: window edges fall at
         // 1.5 on both axes. Window (0,0) = full red with half coverage of
         // green on each axis → r=170, g=85; window (1,0) = half green +
-        // full blue → g=85, b=170 — the 1/256 fixed-point divisions come
+        // full blue → g=85, b=170: the 1/256 fixed-point divisions come
         // out exact.
         let row = [0xFF_FF_00_00, 0xFF_00_FF_00, 0xFF_00_00_FF];
         let src: Vec<u32> = row.iter().cycle().take(9).copied().collect();
@@ -963,7 +963,7 @@ mod tests {
 
     /// The seam every real icon traverses: `overlay_model` must attach the
     /// cache's prepared bitmap to the row, at the scale the daemon
-    /// prepared — and return the glyph (None) when the scale disagrees.
+    /// prepared, and return the glyph (None) when the scale disagrees.
     /// A regression here degrades every icon to the glyph silently; only
     /// a hardware pass would notice.
     #[test]
@@ -1038,7 +1038,7 @@ mod tests {
         assert!(model.rows[0].icon.is_none(), "unprepared scale must miss");
     }
 
-    /// `find_app_by_id` prefers StartupWMClass — the resolution path for
+    /// `find_app_by_id` prefers StartupWMClass: the resolution path for
     /// app_ids that share nothing with the desktop file's name.
     #[test]
     fn startup_wm_class_resolves_before_the_file_name() {
@@ -1063,7 +1063,7 @@ mod tests {
     /// Flatpak-shipped icons (the Obsidian report) sit outside the theme
     /// scan whenever the session's `XDG_DATA_DIRS` lacks the export
     /// roots; the fallback must serve them with the same size ladder the
-    /// themed scan would have — exact size first, PNG over SVG at one
+    /// themed scan would have: exact size first, PNG over SVG at one
     /// size, scalable next, nearest size last.
     #[test]
     fn flatpak_export_serves_the_exact_size_png() {
@@ -1182,7 +1182,7 @@ mod tests {
         );
     }
 
-    /// Integration against the host's real Flatpak exports — the Obsidian
+    /// Integration against the host's real Flatpak exports, the Obsidian
     /// shape: an icon that ships only through an export root, which the
     /// theme scan sees only when `XDG_DATA_DIRS` carries them. On a host
     /// without exported icons this is a silent no-op; run the suite with

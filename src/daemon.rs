@@ -76,12 +76,12 @@ impl Mru {
 
 /// One open gesture session: the selection ring plus the workspace and
 /// scope it was built for. Recording both lets a mid-gesture switch void
-/// the session — the simpler correct behavior chosen in T8: re-filtering
+/// the session; the simpler correct behavior chosen in T8: re-filtering
 /// would silently swap the list under the user's held Alt, so the session
 /// is dismissed and the next press starts fresh against real state. The
 /// frozen scope extends the same philosophy to settings: an edit landing
 /// mid-gesture changes nothing until the next press.
-/// The frozen session — the selection ring over a scope plus the settings
+/// The frozen session: the selection ring over a scope plus the settings
 /// frozen at open. See [`session_step`] for how sessions are built.
 ///
 /// For a grouped session, [`Self::visible`] and [`Self::viewport`] are
@@ -94,13 +94,13 @@ pub struct Switch {
     ring: switcher::Ring,
     workspace: WorkspaceId,
     /// The session's workspace label (workspace-label W4, 2026-11-09):
-    /// the invoking workspace's name — or "Workspace N" — derived once
+    /// the invoking workspace's name (or "Workspace N") derived once
     /// at open beside the scope and frozen for the session's life;
     /// empty whenever `show_workspace` is off. Written by the serve
     /// loop the moment the session opens, exactly the `width_floor`
     /// pattern: `ring_step` never sees the settings.
     workspace_label: String,
-    /// The listing this session froze at open — the workspace scope and
+    /// The listing this session froze at open: the workspace scope and
     /// the minimized flag (minimized-listing, 2026-11-15), resolved once
     /// from the same settings read and frozen beside the label: an edit
     /// landing mid-gesture changes nothing until the next press.
@@ -112,21 +112,21 @@ pub struct Switch {
     /// re-anchors.
     app: Option<String>,
     /// The card this session paints, resolved once at open beside the
-    /// scope and frozen for the session's life — a theme edit landing
+    /// scope and frozen for the session's life: a theme edit landing
     /// mid-gesture never repaints under held Alt (the scope philosophy).
     palette: crate::ui::Palette,
     /// Windows the card keeps in view, resolved once at open from the
-    /// `rows` setting — clamped to the density's 720-px fit
-    /// (`ui::effective_rows`, one diagnostic when it binds) — and frozen
+    /// `rows` setting, clamped to the density's 720-px fit
+    /// (`ui::effective_rows`, one diagnostic when it binds), and frozen
     /// like the palette: a config edit landing mid-gesture never
     /// re-windows the open session.
     rows: usize,
-    /// The card's shape — corner radius and row rhythm derived from the
+    /// The card's shape: corner radius and row rhythm derived from the
     /// desktop's style and density at open, frozen like the palette and
     /// rows: a desktop settings flip landing mid-gesture never
     /// re-rhythms the open card; the next press applies it.
     profile: crate::ui::StyleProfile,
-    /// The card's face — the Bitmap floor or the System stack in one
+    /// The card's face: the Bitmap floor or the System stack in one
     /// resolved family, resolved once at open from the `font` key, the
     /// interface-font follow, and the zero-fonts floor, frozen like the
     /// palette: a font edit landing mid-gesture never repaints the open
@@ -145,31 +145,31 @@ pub struct Switch {
     /// `layout = "horizontal"` only; the vertical card never reads it.
     columns: crate::ui::ColumnsSetting,
     /// The `columns` setting resolved against the invoking output's
-    /// logical width — computed by the serve loop at open (the one
+    /// logical width, computed by the serve loop at open (the one
     /// place that sees both) and frozen with everything else: an
     /// output change mid-gesture never re-windows the open band.
     tiles: usize,
     /// The `width`/`min-width` settings collapsed to one floor against
-    /// the invoking output's logical width — resolved by the serve loop
+    /// the invoking output's logical width, resolved by the serve loop
     /// at open (a pixel count past the output clamps back to it, one
     /// diagnostic) and written onto the freshly built session right
     /// after `session_step` opens it; frozen with everything else.
     /// `None` sizes the card from content. Both layouts read it, and it
-    /// only ever widens — never past the output, never below content.
+    /// only ever widens, never past the output, never below content.
     width_floor: Option<u32>,
     /// The frozen tree a grouped plain session walks: the partition of
-    /// the eligible list at open, kept so every grouped input — Tab's
-    /// linear steps, →/←'s level walks, the card's rows — addresses one
+    /// the eligible list at open, kept so every grouped input (Tab's
+    /// linear steps, →/←'s level walks, the card's rows) addresses one
     /// frozen window set. `None` for flat sessions and same-app sessions
-    /// (the exemption — already app-scoped, rendered flat).
+    /// (the exemption, already app-scoped, rendered flat).
     tree: Option<switcher::Grouping>,
-    /// The selected row of the frozen tree — a parent or leaf (level 1)
+    /// The selected row of the frozen tree: a parent or leaf (level 1)
     /// or a child (level 2). The level is the row's kind; the selection
     /// is the tree index, stable for the session's life. Meaningless
     /// whenever `tree` is `None` (those sessions select through `ring`).
     tree_sel: usize,
     /// The type-to-filter query (`type-filter`). Born empty, dies with
-    /// the session — never persisted. While non-empty,
+    /// the session, never persisted. While non-empty,
     /// [`Self::filtered`] holds the narrowed selection ring and the
     /// card renders flat.
     query: String,
@@ -178,13 +178,13 @@ pub struct Switch {
     /// exactly while `query` is non-empty; `None` is the unfiltered
     /// session. Stepping, committing, and the card all read this first.
     filtered: Option<switcher::Ring>,
-    /// The window set the session froze at open, in MRU order — the
+    /// The window set the session froze at open, in MRU order: the
     /// flat ring's own list, the grouped tree's eligible set, or the
     /// same-app view's. The query narrows exactly this list, never a
     /// re-derived one (the freeze philosophy).
     frozen: Vec<Handle>,
     /// The pointer's resting place (`close-window`'s × reveal): the row
-    /// and its window as the last hover observation carried them —
+    /// and its window as the last hover observation carried them:
     /// presence, not crossing intent, so the × reveals even on the
     /// seeding contact the crossing policy ignores. `None` on leave,
     /// gap, continuation rows, and after every close (the card
@@ -193,11 +193,11 @@ pub struct Switch {
     /// from ever offering a wrong window's close.
     hovered: Option<(usize, Handle)>,
     /// The tree rows the card is showing right now, recomputed on every
-    /// show from the frozen tree, the expansion state, and liveness —
+    /// show from the frozen tree, the expansion state, and liveness:
     /// the exact sequence the model rendered, so pointer rows map back
     /// to tree rows without handle guessing.
     visible: Vec<usize>,
-    /// The window the card is showing over the session's list — derived
+    /// The window the card is showing over the session's list: derived
     /// state carried between rebuilds so the sticky rule can continue
     /// it, never persisted across gestures: sessions are built fresh
     /// with `None`, and every open starts top-aligned on the MRU head.
@@ -207,7 +207,7 @@ pub struct Switch {
 impl Switch {
     /// The window the selection resolves to: the query-narrowed ring's
     /// while one stands, else the selected tree row's handle for a
-    /// grouped session (a parent carries its app's MRU-front window —
+    /// grouped session (a parent carries its app's MRU-front window,
     /// the entry's implied window), the ring's for every flat one.
     fn selected_handle(&self) -> Option<Handle> {
         if let Some(filtered) = &self.filtered {
@@ -219,12 +219,12 @@ impl Switch {
         }
     }
 
-    /// Selects `handle`'s row — the flow pointer clicks and number
+    /// Selects `handle`'s row: the flow pointer clicks and number
     /// chords share. A querying session selects its narrowed ring;
     /// otherwise flat sessions select their ring; a grouped session
     /// selects the first visible row carrying the handle (a parent
-    /// precedes its children, so an ambiguous handle — a group's front
-    /// window — lands on the parent row). A handle not on the card
+    /// precedes its children, so an ambiguous handle, a group's front
+    /// window, lands on the parent row). A handle not on the card
     /// selects nothing and leaves the session exactly as it was.
     fn select_handle(&mut self, handle: Handle) -> Option<Handle> {
         if let Some(filtered) = &mut self.filtered {
@@ -247,10 +247,10 @@ impl Switch {
     /// Content rows map through the stored visible sequence and the
     /// viewport the last model reported; continuation rows and rows
     /// past the window are `None`. The row index is exact where a
-    /// handle alone is ambiguous — a group's front window is both its
+    /// handle alone is ambiguous: a group's front window is both its
     /// parent row and its first child, and hovering the child must
     /// select the child. A combined session's stored sequence is its
-    /// derived strip (`inplace-strip`) — the same map, one sequence.
+    /// derived strip (`inplace-strip`): the same map, one sequence.
     fn tree_row_at(&self, row: usize) -> Option<usize> {
         let viewport = self.viewport?;
         let top = viewport.top as usize;
@@ -260,7 +260,7 @@ impl Switch {
         self.visible.get(viewport.start + row).copied()
     }
 
-    /// Lands the selection on the card's first row — the restore rule's
+    /// Lands the selection on the card's first row: the restore rule's
     /// fallback when the kept window left the card. A grouped session
     /// takes the first visible tree row; a flat one the frozen list's
     /// MRU head. An empty card leaves the selection exactly where it
@@ -283,9 +283,9 @@ impl Switch {
     }
 
     /// Applies a pointer hover crossing: flat sessions select by the
-    /// event-time handle; grouped sessions by the event-time row — both
+    /// event-time handle; grouped sessions by the event-time row: both
     /// captured against the model the user saw. Rev 5: every visible
-    /// row selects, headers included — the divider rule is gone. A
+    /// row selects, headers included; the divider rule is gone. A
     /// combined session selects through the same one-sequence map; the
     /// strip's shape follows the selection by derivation. Returns
     /// whether the selection moved.
@@ -312,7 +312,7 @@ impl Switch {
 /// The tree rows a grouped session can address right now: [`Grouping`'s
 /// visible sequence](switcher::Grouping::visible) under the daemon's
 /// persistent expansion state, minus windows that left the eligible set
-/// since the freeze — dead rows drop off the card instead of ghosting,
+/// since the freeze: dead rows drop off the card instead of ghosting,
 /// and a dead *selection* closes the session through `session_holds`
 /// before this ever runs.
 fn grouped_visible(
@@ -331,8 +331,8 @@ fn grouped_visible(
 
 /// Whether an open session still matches reality: the workspace it was
 /// built for is still active, and its selection is still switchable there
-/// under the session's scope (not closed, minimized, or — for a
-/// CurrentWorkspace session — moved or unstickied away).
+/// under the session's scope (not closed, minimized, or, for a
+/// CurrentWorkspace session, moved or unstickied away).
 pub fn session_holds(open: &Switch, snapshot: &Snapshot) -> bool {
     snapshot.active == Some(open.workspace)
         && open
@@ -351,8 +351,8 @@ pub fn commit_target(open: &Switch, snapshot: &Snapshot) -> Option<Handle> {
 }
 
 /// The window a quick toggle should activate: the second window of
-/// [`switcher::eligible`]'s order under `listing` — the same target one
-/// quick Alt+Tab tap reaches — or `None` when fewer than two windows are
+/// [`switcher::eligible`]'s order under `listing` (the same target one
+/// quick Alt+Tab tap reaches), or `None` when fewer than two windows are
 /// eligible, which makes the toggle a silent no-op. No session, no
 /// overlay: the caller activates the target immediately or does nothing
 /// at all.
@@ -365,10 +365,10 @@ pub fn quick_toggle_target(snapshot: &Snapshot, listing: impl Into<Listing>) -> 
 
 /// Starts or advances the gesture session's selection by one step.
 ///
-/// A session's first press builds it from the eligible front — the focused
-/// window's row — so the opening Alt+Tab (Alt+Shift+Tab) is the first
+/// A session's first press builds it from the eligible front (the focused
+/// window's row), so the opening Alt+Tab (Alt+Shift+Tab) is the first
 /// step of the session's linear walk in grouped mode: one visible row
-/// past the active window — the next app entry while the active group
+/// past the active window: the next app entry while the active group
 /// stands collapsed (a quick tap activates the MRU-second app's front
 /// window), the next window while it stands expanded (flat quick-tap
 /// parity). Later
@@ -400,11 +400,11 @@ pub fn ring_step(
         let active = snapshot.active?;
         let listing = listing.into();
         // A grouped session opens on the frozen tree with its selection
-        // on row 0 — the focused window's entry, its app's parent when
-        // the app is multi-window — and the opening press is the first
+        // on row 0 (the focused window's entry, its app's parent when
+        // the app is multi-window), and the opening press is the first
         // linear step past the active window's rows. Flat sessions keep
-        // the eligible-list ring, no tree. The frozen window set — the
-        // query's narrow domain — is the eligible list in both shapes.
+        // the eligible-list ring, no tree. The frozen window set (the
+        // query's narrow domain) is the eligible list in both shapes.
         let eligible =
             switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, listing);
         let (handles, tree) = if grouping {
@@ -424,7 +424,7 @@ pub fn ring_step(
             ring: switcher::Ring::new(handles),
             workspace: active,
             // Filled in by the serve loop beside the width floor the
-            // moment this session opens — see the field's note.
+            // moment this session opens: see the field's note.
             workspace_label: String::new(),
             listing,
             app: None,
@@ -437,7 +437,7 @@ pub fn ring_step(
             columns,
             tiles,
             // Filled in by the serve loop the moment this session opens
-            // (see the field's note) — ring_step itself never sees the
+            // (see the field's note); ring_step itself never sees the
             // invoking output.
             width_floor: None,
             tree,
@@ -453,7 +453,7 @@ pub fn ring_step(
             let session = open.as_mut()?;
             if session.is_combined() {
                 // Combined: the opening press steps apps (lands on the
-                // second app tile) — Tab's behavior, the quick-tap
+                // second app tile): Tab's behavior, the quick-tap
                 // criterion.
                 step_apps(session, snapshot, direction);
             } else {
@@ -471,21 +471,21 @@ pub fn ring_step(
 /// One step of the gesture session, plain or same-app: [`ring_step`] over
 /// the list the session was opened on.
 ///
-/// A first `same_app` press anchors on the current application — the app_id
-/// of the MRU-front eligible window; an empty app_id never anchors — and
+/// A first `same_app` press anchors on the current application: the app_id
+/// of the MRU-front eligible window; an empty app_id never anchors, and
 /// opens the ring on that app's eligible windows alone. Fewer than two of
 /// them makes the press a silent no-op: no session is stored, nothing is
 /// selected, and the next press starts fresh. An already-open session steps
-/// its frozen selection whatever key stepped it — a grouped session's ↓/↑
+/// its frozen selection whatever key stepped it: a grouped session's ↓/↑
 /// and wheel steps walk its visible rows ([`step_visible`]); a same-app
 /// session re-filters the fresh snapshot by its frozen anchor (see
-/// [`step_and_show`]), but the selection basis never rebuilds — the same
+/// [`step_and_show`]), but the selection basis never rebuilds: the same
 /// freeze philosophy as the scope and the palette, both consumed only when
 /// the session opens.
 // Fourteen open-path parameters: the frozen-at-open values (palette,
 // profile, rows, grouping, layout, columns + its
 // resolved tiles, text) each ride individually and the expansion state
-// is daemon memory the open may write — no bundle introduced (the GR3
+// is daemon memory the open may write: no bundle introduced (the GR3
 // note).
 #[expect(clippy::too_many_arguments)]
 pub fn session_step(
@@ -504,7 +504,7 @@ pub fn session_step(
     tiles: usize,
     expanded: &mut std::collections::HashSet<String>,
 ) -> Option<Handle> {
-    // An open querying session steps its narrowed ring — every step key
+    // An open querying session steps its narrowed ring: every step key
     // is the one linear walk, whatever the session's unfiltered shape.
     if let Some(session) = open.as_mut()
         && let Some(filtered) = session.filtered.as_mut()
@@ -537,7 +537,7 @@ pub fn session_step(
         );
     }
     // A new same-app session: anchor, narrow, and hold the two-window
-    // floor — one window of the app is nothing to cycle.
+    // floor: one window of the app is nothing to cycle.
     let active = snapshot.active?;
     let app = switcher::app_anchor(&snapshot.toplevels, &snapshot.workspaces, active, listing)?;
     let view = switcher::app_view(snapshot, &app, listing);
@@ -578,8 +578,8 @@ fn step_in(order: &[usize], current: usize, direction: Direction) -> usize {
 
 /// The opening press of a grouped session: one step of the linear walk
 /// past the active window's rows. The basis is the *last* visible row
-/// carrying the active window — its app's header while the group stands
-/// collapsed, its first child while expanded — so the opening Alt+Tab
+/// carrying the active window (its app's header while the group stands
+/// collapsed, its first child while expanded), so the opening Alt+Tab
 /// lands one window past the active one (flat quick-tap parity) when
 /// the group is expanded, and on the next app entry when it is
 /// collapsed. A lone collapsed entry wraps onto itself: rev 5 never
@@ -609,7 +609,7 @@ fn step_open(
 }
 
 /// → : expand the
-/// selected parent — the expansion persists across gestures — and land
+/// selected parent (the expansion persists across gestures), and land
 /// on its enter target: the group's most recently used window, one past
 /// the gesture's still-active window when that is the front (entering
 /// your own app never lands you back on the window you just left; the
@@ -635,7 +635,7 @@ fn enter_group(
     {
         return false; // a leaf's enter: the W3C no-op
     }
-    // The group's frozen children, liveness-filtered — not the visible
+    // The group's frozen children, liveness-filtered, not the visible
     // list, which still shows the group collapsed: entering is what
     // expands it.
     let children: Vec<usize> = tree
@@ -646,7 +646,7 @@ fn enter_group(
     let Some(front) = children.first().copied() else {
         return false; // every child died mid-gesture: nothing to enter
     };
-    // Expanding is part of entering — the card shows what was walked
+    // Expanding is part of entering: the card shows what was walked
     // into, and the state persists for the next gesture.
     expanded.insert(app);
     // The gesture's starting window: the frozen tree's MRU front (the
@@ -674,9 +674,9 @@ fn enter_group(
     true
 }
 
-/// ← : a child exits to its parent row (the group stays expanded — the
+/// ← : a child exits to its parent row (the group stays expanded: the
 /// header holds the selection under rev 5); an expanded parent
-/// collapses — the state persists across gestures; a collapsed
+/// collapses: the state persists across gestures; a collapsed
 /// top-level row is the W3C root no-op. Returns whether the selection
 /// or the visible list changed.
 fn exit_group(session: &mut Switch, expanded: &mut std::collections::HashSet<String>) -> bool {
@@ -696,14 +696,14 @@ fn exit_group(session: &mut Switch, expanded: &mut std::collections::HashSet<Str
         }
         switcher::RowKind::Parent => {
             // Collapsing changes the card even though the selection
-            // holds — the caller must refresh either way.
+            // holds: the caller must refresh either way.
             expanded.remove(&row.app_id)
         }
         switcher::RowKind::Leaf => false,
     }
 }
 
-/// Tab, ↓/↑, and the wheel: one row of the linear walk — everything
+/// Tab, ↓/↑, and the wheel: one row of the linear walk, everything
 /// the card shows, headers and expanded children alike, crossing group
 /// boundaries. It wraps, and a collapsed group's children are skipped
 /// exactly as they are not shown (rev 5: nothing ever descends into a
@@ -723,12 +723,12 @@ fn step_visible(
 // The strip's shape is a pure function of the tree selection, never
 // carried state: a child selection opens its parent's run at the
 // parent's slot, a level-1 selection closes every run. The ≥2 rule
-// keeps a single-window app's tile whole — no run ever grows below it,
+// keeps a single-window app's tile whole: no run ever grows below it,
 // so the same window never shows twice.
 
 /// An app's live windows: a parent's liveness-filtered children in
 /// frozen MRU order, a leaf's own single window. The shared domain of
-/// the run derivation and ↓'s ≥2 rule — the frozen window set decides
+/// the run derivation and ↓'s ≥2 rule: the frozen window set decides
 /// liveness, as it always has.
 fn strip_windows(
     tree: &switcher::Grouping,
@@ -748,7 +748,7 @@ fn strip_windows(
 }
 
 /// The strip's closed shape: the level-1 tree rows (parents and
-/// leaves), liveness-filtered — the plain app tiles every level-1
+/// leaves), liveness-filtered: the plain app tiles every level-1
 /// selection shows.
 fn strip_level1(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
     let Some(tree) = session.tree.as_ref() else {
@@ -760,13 +760,13 @@ fn strip_level1(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
         .collect()
 }
 
-/// The strip's visible sequence — the one derivation the
+/// The strip's visible sequence: the one derivation the
 /// grouped-horizontal card renders and walks: a pure function of the
 /// tree selection (tree indices, liveness-filtered). A child selection
-/// opens its parent's run at the parent's slot — the app's windows
+/// opens its parent's run at the parent's slot: the app's windows
 /// between the other apps' level-1 rows, the replaced tile gone; every
 /// level-1 selection closes all runs: the plain level-1 rows. A parent
-/// holding fewer than two live windows derives no run — the shrink
+/// holding fewer than two live windows derives no run: the shrink
 /// rule's derivation half ([`coerce_shrunk_run`] owns the selection
 /// half), so a single-window app never shows the same handle twice.
 fn strip_sequence(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
@@ -776,7 +776,7 @@ fn strip_sequence(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
     let level1 = strip_level1(session, snapshot);
     // The open run: the selected child's parent's live windows, but
     // only while the ≥2 rule holds. Tree order is strip order, so the
-    // run splices between the level-1 rows around the parent's slot —
+    // run splices between the level-1 rows around the parent's slot:
     // the parent's own tile drops out (replaced in place), and a dead
     // parent tile still finds its slot between its neighbors.
     let run = tree
@@ -822,7 +822,7 @@ fn coerce_shrunk_run(session: &mut Switch, snapshot: &Snapshot) -> bool {
     true
 }
 
-/// ↓'s ≥2 rule: whether the app tile at `app` opens its run — true iff
+/// ↓'s ≥2 rule: whether the app tile at `app` opens its run, true iff
 /// the app holds at least two live windows. A leaf (a single-window
 /// app) and a parent shrunk below two commit directly; the no-op below
 /// their tiles is what kills the duplicate-tile bug.
@@ -834,12 +834,12 @@ fn opens_run(session: &Switch, snapshot: &Snapshot, app: usize) -> bool {
 }
 
 /// The strip's render inputs: the derived sequence beside the width
-/// frozen against both of the selection's shapes — the closed shape's
+/// frozen against both of the selection's shapes: the closed shape's
 /// slots (the level-1 rows under the tile budget) and the open shape's
 /// (the selection's app's run spliced in), whichever the card shows
 /// now. ↓ and ↑ toggle between the two; the max never moves, so the
 /// card never resizes on either key. A leaf or a shrunk parent opens
-/// nothing — its open shape is the closed one.
+/// nothing: its open shape is the closed one.
 fn strip_render(session: &Switch, snapshot: &Snapshot) -> (Vec<usize>, usize) {
     let Some(tree) = session.tree.as_ref() else {
         return (Vec::new(), 0);
@@ -869,12 +869,12 @@ fn strip_render(session: &Switch, snapshot: &Snapshot) -> (Vec<usize>, usize) {
 //
 // The walks address the derived strip: the sequence is a pure function
 // of the selection, so every walk is "move the selection, let the
-// shape follow." No band state, no collapse state — the ≥2 rule guards
+// shape follow." No band state, no collapse state: the ≥2 rule guards
 // the only shape-changing key (↓), and every other movement closes or
 // keeps runs by derivation alone.
 
 /// The strip's linear walk (←/→, the wheel): one step along the
-/// visible sequence, wrapping — windows and app tiles alike. Stepping
+/// visible sequence, wrapping: windows and app tiles alike. Stepping
 /// off a run onto a neighboring tile closes the run (derived); a
 /// selection the sequence does not hold (a child under a shrunk
 /// parent, pre-coercion) stays put until the rebuild settles it.
@@ -886,7 +886,7 @@ fn step_band(session: &mut Switch, snapshot: &Snapshot, direction: Direction) {
     session.tree_sel = step_in(&sequence, session.tree_sel, direction);
 }
 
-/// Tab / Shift+Tab: step the **app tiles** — but from inside an open
+/// Tab / Shift+Tab: step the **app tiles**, but from inside an open
 /// run, join the linear walk instead: the run's windows step one at a
 /// time and the run stays open until the walk steps off its edge, the
 /// strip's twin of the vertical Tab, which walks an expanded group's
@@ -914,7 +914,7 @@ fn step_apps(session: &mut Switch, snapshot: &Snapshot, direction: Direction) {
     session.tree_sel = step_in(&apps, session.tree_sel, direction);
 }
 
-/// ↓: open the selected app tile's run on its MRU-front window — under
+/// ↓: open the selected app tile's run on its MRU-front window, under
 /// the ≥2 rule. A tile whose app holds fewer than two live windows
 /// opens nothing (a leaf commits directly, never growing a run below
 /// itself), and a window tile is the deepest level: the W3C no-op.
@@ -959,24 +959,24 @@ fn exit_band(session: &mut Switch) -> bool {
     true
 }
 
-/// The key above Tab (`` ` ``) in a grouped card — the strip and the
+/// The key above Tab (`` ` ``) in a grouped card: the strip and the
 /// vertical tree alike: the focused app's key. From the app's entry it
-/// toggles the group — the expanded flag decides: a collapsed entry
+/// toggles the group; the expanded flag decides: a collapsed entry
 /// opens the app's windows on the MRU-front window (Next) or the last
 /// (Previous), an expanded one collapses in place, the entry keeping
 /// the selection. The vertical tree's flag is the persistent expansion
 /// set (`→`'s state, kept across gestures) and its press writes it;
-/// the strip's run derives from the selection alone — its entries are
+/// the strip's run derives from the selection alone: its entries are
 /// always closed, and a horizontal gesture must never write the state
-/// a vertical card would read. From inside the group — a window row
-/// or tile — the press cycles the app's windows, wrapping at both
+/// a vertical card would read. From inside the group (a window row
+/// or tile), the press cycles the app's windows, wrapping at both
 /// ends, never crossing into another app (that walk is ←/→ and Tab);
 /// the group stays open while it cycles. A one-window app holds no
 /// dead end: entering from its tile selects it, cycling from it stays
-/// put. A flat session never reaches here — the key types into its
-/// query — and while a query stands anywhere the press types the key's
+/// put. A flat session never reaches here (the key types into its
+/// query), and while a query stands anywhere the press types the key's
 /// own char instead (the flatten-on-query rule): the backtick bare,
-/// `~` shifted — the level lives here, keeping `key_input` pure.
+/// `~` shifted: the level lives here, keeping `key_input` pure.
 /// Returns whether a session was touched.
 fn toggle_or_cycle(
     open: &mut Option<Switch>,
@@ -989,7 +989,7 @@ fn toggle_or_cycle(
         .is_some_and(|session| session.filtered.is_some())
     {
         // The char rides the direction: the shifted press (Previous)
-        // types `~`, the bare one the backtick — the query keeps
+        // types `~`, the bare one the backtick: the query keeps
         // receiving what the key prints, whichever keysym delivered it.
         let ch = match direction {
             Direction::Next => '`',
@@ -1016,7 +1016,7 @@ fn toggle_or_cycle(
     } else {
         session.tree_sel
     };
-    // The parent's app id when the selection sits on an entry — `None`
+    // The parent's app id when the selection sits on an entry: `None`
     // on a leaf (it never groups) and on out-of-range rows.
     let parent_app = tree
         .rows()
@@ -1029,11 +1029,11 @@ fn toggle_or_cycle(
             return false;
         }
         // Cycle within the app, wrapping (`step_in`'s len < 2 rule
-        // holds a one-window set put) — the group stays open.
+        // holds a one-window set put): the group stays open.
         session.tree_sel = step_in(&windows, session.tree_sel, direction);
         return true;
     }
-    // The entry press toggles — the flag decides. An expanded entry
+    // The entry press toggles: the flag decides. An expanded entry
     // collapses in place: the entry keeps the selection and its
     // children leave the card. The strip never writes the state.
     if !session.is_combined()
@@ -1062,11 +1062,11 @@ fn toggle_or_cycle(
     true
 }
 
-/// One character into the session's query (`type-filter`): append —
-/// the query caps at [`QUERY_MAX`], input past it ignored — then
+/// One character into the session's query (`type-filter`): append (
+/// the query caps at [`QUERY_MAX`], input past it ignored), then
 /// re-derive the narrowed ring over the frozen set and reselect its
 /// first match. Returns whether a session was touched (`false` with no
-/// session — structurally unreachable while showing).
+/// session: structurally unreachable while showing).
 fn type_into(open: &mut Option<Switch>, snapshot: &Snapshot, ch: char) -> bool {
     let Some(session) = open.as_mut() else {
         return false;
@@ -1079,7 +1079,7 @@ fn type_into(open: &mut Option<Switch>, snapshot: &Snapshot, ch: char) -> bool {
 }
 
 /// Backspace: erase the query's last character. An empty query is a
-/// no-op — Backspace never dismisses. Erasing to empty restores the
+/// no-op: Backspace never dismisses. Erasing to empty restores the
 /// unfiltered session (the shared restore rule).
 fn erase_query(
     open: &mut Option<Switch>,
@@ -1101,7 +1101,7 @@ fn erase_query(
 }
 
 /// Clears the query outright (Escape's first press). Returns whether a
-/// session stood with a query to clear — `false` means no session or an
+/// session stood with a query to clear: `false` means no session or an
 /// already-empty query, and the caller dismisses.
 fn clear_query(
     open: &mut Option<Switch>,
@@ -1134,7 +1134,7 @@ fn restore_unfiltered(
     }
 }
 
-/// Re-derives the narrowed ring from the standing query — the one
+/// Re-derives the narrowed ring from the standing query: the one
 /// recompute every query change shares. The empty query dissolves the
 /// ring (the unfiltered session); dead handles never match, and the
 /// empty ring selects nothing.
@@ -1148,7 +1148,7 @@ fn refilter(session: &mut Switch, snapshot: &Snapshot) {
 }
 
 /// Advance-then-close (`close-window`): move the selection off the
-/// doomed window *before* the compositor request — `session_holds`
+/// doomed window *before* the compositor request: `session_holds`
 /// must never observe a dead selection, and the card recomposes around
 /// a selection already past the closing row. The next *live* row of
 /// the card's current sequence (the querying ring, the tree's visible
@@ -1191,10 +1191,10 @@ fn advance_off_doomed(
     } else {
         session.ring.handles().to_vec()
     };
-    // The doomed row's own position — the scan starts one past it and
+    // The doomed row's own position: the scan starts one past it and
     // wraps, so the selection moves to the walk's NEXT live row, not
-    // the list's first (repeated handles — a header and its front
-    // child — sit before or on the position and never resurface).
+    // the list's first (repeated handles, a header and its front
+    // child, sit before or on the position and never resurface).
     let Some(position) = sequence.iter().position(|&handle| handle == doomed) else {
         return session.selected_handle().is_some();
     };
@@ -1211,7 +1211,7 @@ fn advance_off_doomed(
     false // nothing eligible remains: the caller dismisses
 }
 
-/// Selects `handle` against freshly computed sequences — the advance
+/// Selects `handle` against freshly computed sequences: the advance
 /// rule's twin of [`Switch::select_handle`], which addresses the stored
 /// `visible` the last show built. The advance must not trust stale
 /// geometry: it selects whatever the card would show now.
@@ -1254,7 +1254,7 @@ fn select_fresh(
 /// open session: forget the pointer's hovered row (the card
 /// recomposes; the × returns on the next motion), move the selection
 /// off the doomed window when it rests there, and report whether
-/// anything eligible remains — the caller dismisses a card that does
+/// anything eligible remains: the caller dismisses a card that does
 /// not.
 fn prepare_close(
     session: &mut Switch,
@@ -1266,7 +1266,7 @@ fn prepare_close(
     advance_off_doomed(session, snapshot, expanded, doomed)
 }
 
-/// Closes one window of the open card (`close-window`'s shared path —
+/// Closes one window of the open card (`close-window`'s shared path:
 /// the Alt+minus key and the pointer's ×): prepare the session
 /// (advance off the doomed selection, forget the hover), send the
 /// request, repaint what survives. The session survives for repeated
@@ -1317,7 +1317,7 @@ fn close_selected(
 
 /// The row a hover observation reveals the × on (`close-window`): the
 /// pointer's pair (row, handle), confirmed against the rows the model
-/// just built — a stale index (the card recomposed under a resting
+/// just built: a stale index (the card recomposed under a resting
 /// pointer) never offers a wrong window's close.
 fn hovered_row(
     model: &crate::ui::OverlayModel,
@@ -1341,7 +1341,7 @@ const QUERY_MAX: usize = 64;
 /// One step request into [`step_and_show`]: the direction, whether a
 /// *new* session should narrow to the current application, and the
 /// scope a *new* session must open under regardless of the workspace
-/// rules — `Some(Scope::All)` from the all-windows invoke, `None` from
+/// rules: `Some(Scope::All)` from the all-windows invoke, `None` from
 /// every path that resolves the scope from settings (all-windows
 /// A1.3, 2026-11-14). An already-open session replays its frozen scope
 /// either way; the override is an open-time input only.
@@ -1354,7 +1354,7 @@ struct Step {
 /// The cycle invokes' [`Step`] (all-windows A1.3, 2026-11-14): the
 /// direction rides the command, `CycleApp` alone narrows a fresh session
 /// to the current application, and `CycleAll` alone forces a fresh
-/// session's scope past the workspace rules — every other invoke leaves
+/// session's scope past the workspace rules: every other invoke leaves
 /// the scope to `resolve_scope`. `QuickToggle` owns no step; its arm
 /// never builds one.
 fn invoke_step(command: ipc::Invoke) -> Option<Step> {
@@ -1379,7 +1379,7 @@ fn invoke_step(command: ipc::Invoke) -> Option<Step> {
 }
 
 /// Live settings state: the parsed rules plus the source that watches
-/// them. Refreshed only at session open — one bounded read per
+/// them. Refreshed only at session open: one bounded read per
 /// invocation, so nothing on the gesture path blocks on file reads.
 struct LiveSettings {
     source: SettingsSource,
@@ -1406,7 +1406,7 @@ impl LiveSettings {
     }
 
     /// One-read reload check: adopt a changed file, fall back to defaults
-    /// when it is gone, and keep last-good settings on a malformed read —
+    /// when it is gone, and keep last-good settings on a malformed read:
     /// settings can never break switching. An adoption says so once per
     /// edit with the two shape-determining keys, so a config that seems
     /// ignored can be traced in the journal: no line, no change seen.
@@ -1432,11 +1432,11 @@ impl LiveSettings {
 }
 
 /// Listing for a session starting on this snapshot (minimized-listing,
-/// 2026-11-15): the active workspace's scope — name and
-/// coordinates-sorted position looked up in `settings` — beside the
+/// 2026-11-15): the active workspace's scope (name and
+/// coordinates-sorted position looked up in `settings`) beside the
 /// minimized flag from the same settings read, so one call resolves what
-/// the session freezes. Anything unresolvable — no active workspace, or
-/// one missing from the workspace list — keeps the v1 default scope.
+/// the session freezes. Anything unresolvable (no active workspace, or
+/// one missing from the workspace list) keeps the v1 default scope.
 fn resolve_scope(snapshot: &Snapshot, settings: &settings::Settings) -> Listing {
     Listing {
         scope: snapshot
@@ -1450,14 +1450,14 @@ fn resolve_scope(snapshot: &Snapshot, settings: &settings::Settings) -> Listing 
 }
 
 /// The label's mark for numbered workspaces (workspace-label W7,
-/// 2026-11-09): the `#` glyph — the one glyph vocabulary both text
+/// 2026-11-09): the `#` glyph: the one glyph vocabulary both text
 /// faces already paint. The emoji it replaced demanded a color-emoji
 /// face the desktop may not carry and read as tofu where it stood.
 const WORKSPACE_MARK: &str = "# ";
 
 /// The session's workspace label, derived once at open from the same
 /// lookup the scope resolves by (workspace-label W4, 2026-11-09): the
-/// invoking workspace's compositor name — verbatim when it is real
+/// invoking workspace's compositor name: verbatim when it is real
 /// words, the synthesized "# Workspace N" when the name is itself
 /// just digits (COSMIC's numeric default) or the workspace is unnamed
 /// (N the 1-based position `index` rules count). Empty whenever the
@@ -1544,7 +1544,7 @@ pub fn run() -> Result<(), RunError> {
         .wait_until_settled(wayland::SETTLE_TIMEOUT)
         .map_err(RunError::Session)?;
     // The card's text backend (`typography`): the one font scan paid
-    // here at daemon start — OQ 1 puts its tens-of-ms cost at login,
+    // here at daemon start: OQ 1 puts its tens-of-ms cost at login,
     // never on the first gesture. Fonts installed after startup stay
     // unseen until the daemon restarts (documented limitation).
     session.set_text_system(crate::text::TextSystem::scan_system());
@@ -1572,7 +1572,7 @@ pub fn run() -> Result<(), RunError> {
     // means, the session is the selection over the eligible list.
     let mut gesture = Gesture::default();
     let mut open: Option<Switch> = None;
-    // Which grouped apps stand expanded — daemon memory, deliberately
+    // Which grouped apps stand expanded: daemon memory, deliberately
     // not config: groups collapse by default at login, and every
     // expand/collapse a gesture makes persists into the next one.
     let mut expanded: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1591,7 +1591,7 @@ pub fn run() -> Result<(), RunError> {
         }
 
         // Live-state hardening: an open session is voided the moment its
-        // premise breaks — the workspace switched under it, or the
+        // premise breaks: the workspace switched under it, or the
         // selection closed, moved, was minimized, or lost its sticky flag.
         // Dismiss, not re-filter: swapping the list under a held Alt would
         // change what the user is about to commit to.
@@ -1606,7 +1606,7 @@ pub fn run() -> Result<(), RunError> {
         // A changed world recomposes the open card (`close-window`):
         // the poll that confirms a close drops the doomed row off the
         // card the moment the compositor reports it. Without this the
-        // row ghosts until the next input repaints — the pointer's ×
+        // row ghosts until the next input repaints: the pointer's ×
         // path hides behind the motion that follows a click, but
         // Alt+minus sends no event after the request.
         if world_changed && open.is_some() {
@@ -1674,7 +1674,7 @@ pub fn run() -> Result<(), RunError> {
                     // ← exits a child to its parent row; an expanded
                     // parent collapses; a collapsed top-level row is the
                     // W3C root no-op. ↑ in the combined card returns to
-                    // parent row — the run closes by derivation.
+                    // parent row: the run closes by derivation.
                     let exited = if open.as_ref().is_some_and(|session| session.is_combined()) {
                         open.as_mut().is_some_and(exit_band)
                     } else {
@@ -1712,7 +1712,7 @@ pub fn run() -> Result<(), RunError> {
                 }
                 GestureOutput::ToggleOrCycle(direction) => {
                     // The key above Tab: toggle the focused app's group
-                    // from its entry, cycle its windows from inside —
+                    // from its entry, cycle its windows from inside,
                     // or the type-into fallthrough while a query stands
                     // (the key fn owns that decision).
                     if toggle_or_cycle(&mut open, &snapshot, &mut expanded, direction) {
@@ -1729,7 +1729,7 @@ pub fn run() -> Result<(), RunError> {
                 GestureOutput::Type(ch) => {
                     // One character into the query: narrow the frozen
                     // set, reselect the first match, repaint. No open
-                    // session, no query (structurally unreachable —
+                    // session, no query (structurally unreachable:
                     // keys only arrive while showing).
                     if type_into(&mut open, &snapshot, ch) {
                         show_selection(
@@ -1756,7 +1756,7 @@ pub fn run() -> Result<(), RunError> {
                     }
                 }
                 GestureOutput::Escape => {
-                    // A standing query clears first — the session, the
+                    // A standing query clears first: the session, the
                     // gesture, and the card all keep going; only the
                     // empty query dismisses.
                     if clear_query(&mut open, &snapshot, &expanded) {
@@ -1791,7 +1791,7 @@ pub fn run() -> Result<(), RunError> {
                 GestureOutput::Commit => {
                     // The ring was built when the session opened; the
                     // window may have moved or closed since. Only a
-                    // still-eligible selection is activated — anything else
+                    // still-eligible selection is activated: anything else
                     // commits as a no-op rather than crossing workspaces.
                     commit_session(&mut session, &mut open, &snapshot)?;
                 }
@@ -1801,7 +1801,7 @@ pub fn run() -> Result<(), RunError> {
                 }
                 GestureOutput::Activate { handle } => {
                     // Ctrl+1..9 and clicks: select and commit
-                    // in one motion, the same flow each shares —
+                    // in one motion, the same flow each shares:
                     // addressing the handle the boundary captured at the
                     // key press or click. A `None` handle (a continuation
                     // or out-of-range row) no-ops with the session and
@@ -1819,7 +1819,7 @@ pub fn run() -> Result<(), RunError> {
         // motion; a hover crossing moves the selection; the wheel steps
         // it.
         //
-        // Every overlay end — commit, dismiss, timeout, stale — funnels
+        // Every overlay end (commit, dismiss, timeout, stale) funnels
         // through `open = None`, so one reset guard at the drain's top
         // covers all of them: each session's first pointer contact seeds
         // the hover baseline instead of selecting.
@@ -1836,7 +1836,7 @@ pub fn run() -> Result<(), RunError> {
                 PointerInput::Close { handle } => {
                     // The × (`close-window`): the press-time capture
                     // closes the hovered row's window through the
-                    // shared close path — the selection and query stay
+                    // shared close path: the selection and query stay
                     // wherever the gesture left them unless the doomed
                     // window sits under the selection.
                     close_window(
@@ -1851,8 +1851,8 @@ pub fn run() -> Result<(), RunError> {
                 }
                 PointerInput::Hover { row, handle } => {
                     // Presence tracking (`close-window`): the pointer's
-                    // pair rides the session beside the crossing policy
-                    // — the × reveals wherever the pointer rests, even
+                    // pair rides the session beside the crossing policy:
+                    // the × reveals wherever the pointer rests, even
                     // on the seeding contact the policy ignores, and
                     // hides the moment it leaves the row.
                     let hovered = row.zip(handle);
@@ -1860,16 +1860,16 @@ pub fn run() -> Result<(), RunError> {
                     if let Some(open) = open.as_mut() {
                         open.hovered = hovered;
                     }
-                    // A crossing selects by the event-time target — the
+                    // A crossing selects by the event-time target (the
                     // row and handle captured against the model the user
-                    // saw — and only a row the session still shows moves
+                    // saw), and only a row the session still shows moves
                     // the selection (a window opened mid-gesture is not
                     // hoverable into the session). A continuation-row
                     // crossing (handle `None`) still counts as a row
                     // observation for the crossing policy and selects
                     // nothing; rows the session refuses leave the
                     // overlay untouched. Grouped sessions resolve the
-                    // row through their stored visible sequence — the
+                    // row through their stored visible sequence: the
                     // row index is exact where a handle alone is
                     // ambiguous (a group's front window is both its
                     // parent row and its first child).
@@ -1963,9 +1963,9 @@ pub fn run() -> Result<(), RunError> {
                             // the gesture session and step the selection.
                             // Alt+Tab opens the full ring; Alt+grave
                             // (CycleApp) opens it narrowed to the current
-                            // application — and once a session is open, any
+                            // application, and once a session is open, any
                             // invoke steps its frozen ring. Activation waits
-                            // for the Alt release — or Escape, focus loss,
+                            // for the Alt release, or Escape, focus loss,
                             // or the timeouts to end the session instead.
                             // CycleAll rides the same arm but forces the
                             // scope at open: Scope::All unconditionally,
@@ -1993,7 +1993,7 @@ pub fn run() -> Result<(), RunError> {
                             ipc::Invoke::QuickToggle => {
                                 // No session, no overlay: refresh settings
                                 // like a session open would, then activate
-                                // the MRU-second window — or nothing, when
+                                // the MRU-second window, or nothing, when
                                 // there is nothing to toggle to.
                                 settings.refresh();
                                 // Fresh per press, as scope is: a reload
@@ -2023,10 +2023,10 @@ pub fn run() -> Result<(), RunError> {
     }
 }
 
-/// Commits the open session: activate its selection — but only a target
+/// Commits the open session: activate its selection, but only a target
 /// still switchable in `snapshot`, so a window that moved or closed since
-/// the ring was built commits as a no-op rather than crossing workspaces
-/// — then unmap the overlay and end the session. The keyboard Commit arm
+/// the ring was built commits as a no-op rather than crossing workspaces,
+/// then unmap the overlay and end the session. The keyboard Commit arm
 /// and the pointer click path share it.
 fn commit_session(
     session: &mut wayland::Session,
@@ -2041,15 +2041,15 @@ fn commit_session(
     Ok(())
 }
 
-/// Selects `handle`'s row and commits the session in one motion — the
+/// Selects `handle`'s row and commits the session in one motion: the
 /// flow a pointer click and the Ctrl+N / Alt+N chords share. The handle
 /// was captured at event receipt against the model the user saw; the
-/// frozen session must still hold it — a window opened mid-gesture is
+/// frozen session must still hold it: a window opened mid-gesture is
 /// not addressable into the session. Anything else leaves the session
 /// and overlay exactly as they are. On success the gesture session is
 /// closed explicitly: a click never reached the gesture machine, and a
 /// chord deliberately left it open (an unaddressable row must not spend
-/// it) — either way a later Alt-release cannot re-commit and a Tab
+/// it): either way a later Alt-release cannot re-commit and a Tab
 /// cannot reopen the spent session.
 fn activate_row(
     session: &mut wayland::Session,
@@ -2071,7 +2071,7 @@ fn activate_row(
 /// Applies one `Step`: advance the session ring and refresh the overlay.
 ///
 /// `same_app` decides which ring a *new* session opens (see
-/// [`session_step`]); `scope_override` — when set — decides its scope
+/// [`session_step`]); `scope_override` (when set) decides its scope
 /// outright, workspace rules aside. An already-open session is stepped
 /// as-is whatever key stepped it.
 ///
@@ -2083,16 +2083,16 @@ fn activate_row(
 ///
 /// Session open is the only moment settings matter: the config is
 /// stat-checked and re-resolved exactly when a session starts, and an
-/// already-open session keeps the scope and palette it was built with — a
+/// already-open session keeps the scope and palette it was built with: a
 /// mid-gesture edit must not swap the list or the card under the user's
 /// held Alt.
 ///
 /// Icons are prepared in [`show_selection`], at the session's render
 /// scale: every app already seen by the daemon is a cache hit, and a
-/// first-seen app rasterizes once (~1 ms, benchmarked in `src/icons.rs`)
-/// — icon I/O never lands on the warm-press path twice for the same app.
+/// first-seen app rasterizes once (~1 ms, benchmarked in `src/icons.rs`);
+/// icon I/O never lands on the warm-press path twice for the same app.
 // Nine parameters: the serve loop's own plumbing (settings, icons,
-// expansion memory) beside the step — see session_step's note.
+// expansion memory) beside the step: see session_step's note.
 #[expect(clippy::too_many_arguments)]
 fn step_and_show(
     session: &mut wayland::Session,
@@ -2106,7 +2106,7 @@ fn step_and_show(
 ) {
     // The card's width floor: an open session replays its frozen value
     // (rewritten below with the same one), a fresh open resolves it
-    // beside the tiles — the serve loop is the one place that sees the
+    // beside the tiles: the serve loop is the one place that sees the
     // invoking output. The workspace label freezes by the same rule:
     // replayed frozen, derived fresh only at open.
     let mut width_floor = open.as_ref().and_then(|session| session.width_floor);
@@ -2128,8 +2128,8 @@ fn step_and_show(
         ),
         None => {
             settings.refresh();
-            // `auto` asks the system once per open — two small file reads
-            // at most — and pinned values never touch the disk at all; a
+            // `auto` asks the system once per open (two small file reads
+            // at most), and pinned values never touch the disk at all; a
             // present `card`/`text` pair pins the card over every
             // `theme` value, so it skips the read too (its polarity is
             // its own, the constructor's luminance rule). `None`
@@ -2140,8 +2140,8 @@ fn step_and_show(
             .then(crate::theme::system_prefers_dark)
             .flatten();
             // The card first, then its band: the accent side follows the
-            // effective card's polarity — the resolved card's own
-            // `is_dark` — through the store ladder, read only when the
+            // effective card's polarity (the resolved card's own
+            // `is_dark`) through the store ladder, read only when the
             // band follows (`neutral` never touches the accent store).
             // A ladder miss is the neutral lift (with the one aggregated
             // diagnostic the reader prints), and the whole answer
@@ -2159,7 +2159,7 @@ fn step_and_show(
             // desktop's style and density derive the card's radius and
             // rhythm (a store miss is the Round + Standard default,
             // with the reader's one aggregated diagnostic), and the
-            // rows budget clamps to what that rhythm fits — the fit is
+            // rows budget clamps to what that rhythm fits: the fit is
             // by construction, the diagnostic names density, setting,
             // and clamp when it binds, and the setting keeps its value.
             let style = crate::theme::style().unwrap_or_default();
@@ -2206,7 +2206,7 @@ fn step_and_show(
             // The all-windows invoke bypasses the rules: its forced
             // scope stands, resolve_scope only answers for the paths
             // that consult it (all-windows A1.3, 2026-11-14). The
-            // minimized flag rides from the settings either way — the
+            // minimized flag rides from the settings either way: the
             // bypass widens the scope, not the listing.
             if let Some(scope) = step.scope_override {
                 listing.scope = scope;
@@ -2242,7 +2242,7 @@ fn step_and_show(
     );
     // The width floor freezes like the tiles: `ring_step` builds the
     // fresh session without it (it never sees the invoking output), so
-    // the serve loop — the one place that sees both — writes the
+    // the serve loop (the one place that sees both) writes the
     // resolved floor onto it here. A mid-gesture step replays the
     // frozen value above and this write is a no-op. The workspace
     // label rides the same write (W4): frozen at open, replayed as the
@@ -2256,8 +2256,8 @@ fn step_and_show(
 
 /// The session's card width floor: the `width`/`min-width` pair
 /// resolved against the invoking output's logical width, a pixel count
-/// past the output clamped back to it — one diagnostic naming the key;
-/// a percentage is parser-guaranteed 100 at most — and the pair
+/// past the output clamped back to it, one diagnostic naming the key;
+/// a percentage is parser-guaranteed 100 at most, and the pair
 /// collapsing to the wider floor. `None` (both `auto`) sizes the card
 /// from content. The floor only ever widens: the builders keep their
 /// own content floors beneath it.
@@ -2282,9 +2282,9 @@ fn card_width_floor(
 }
 
 /// The session's text decision, resolved once at open: the zero-fonts
-/// floor first (no loadable faces paints the bitmap card — SC 5), then
-/// the `font` key — a configured family the database knows, or a
-/// diagnostic naming the key and `follow`'s answer when it does not —
+/// floor first (no loadable faces paints the bitmap card: SC 5), then
+/// the `font` key (a configured family the database knows, or a
+/// diagnostic naming the key and `follow`'s answer when it does not),
 /// and `Default` is `follow` itself. The caller passes the interface-
 /// font follow as a closure so it is read only on the paths that need
 /// it (a configured, installed family never touches the store); tests
@@ -2317,7 +2317,7 @@ fn resolve_text(
 }
 
 /// Builds and shows the overlay for the open session's current selection
-/// — or closes the session when there is nothing eligible left to show.
+/// or closes the session when there is nothing eligible left to show.
 ///
 /// Shared by [`step_and_show`] (after a step moved the selection) and the
 /// pointer / tree-key arms (which move it without stepping): a same-app
@@ -2334,7 +2334,7 @@ fn show_selection(
     icons: &mut crate::icons::Cache,
 ) {
     // The card this session paints: the palette frozen at open. A closed
-    // session has nothing to paint — dark is the never-drawn default the
+    // session has nothing to paint: dark is the never-drawn default the
     // icon prepare below runs under.
     let palette = open
         .as_ref()
@@ -2342,7 +2342,7 @@ fn show_selection(
     let scale = session.render_scale();
     // Icons rasterize at the side the shown card paints: the row's own
     // 32 for every vertical card, the tile's 48 for any horizontal card
-    // (flat band or the grouped strip — both are tiles).
+    // (flat band or the grouped strip: both are tiles).
     let horizontal = open
         .as_ref()
         .is_some_and(|current| current.layout == crate::ui::LayoutSetting::Horizontal);
@@ -2360,8 +2360,8 @@ fn show_selection(
         scale,
         &palette,
     );
-    // A grouped session stores the visible sequence its card renders —
-    // the exact list the pointer's row indexes address — beside the
+    // A grouped session stores the visible sequence its card renders (
+    // the exact list the pointer's row indexes address) beside the
     // model that rendered it. The combined session's list is its
     // derived strip, stored in its own branch below.
     if let Some(current) = open.as_mut()
@@ -2379,7 +2379,7 @@ fn show_selection(
         // compose and render share one backend for the session's life.
         let text = current.text.clone();
         // A querying session (`type-filter`) renders flat over its
-        // narrowed set — the grouped tree, headers, and chevrons are
+        // narrowed set: the grouped tree, headers, and chevrons are
         // bypassed while the query stands (the same-app exemption's
         // precedent), and an empty match set keeps the card with the
         // inert no-matches row instead of closing the session.
@@ -2446,11 +2446,11 @@ fn show_selection(
                 .map(|model| crate::ui::with_query(model, &current.query.clone()));
         }
         // The combined session renders the derived strip
-        // (`inplace-strip`) — settled before the shared match, which
+        // (`inplace-strip`): settled before the shared match, which
         // borrows the tree immutably while this branch must mutate the
         // session: settle the shrink rule, derive the sequence and its
         // frozen width, render one band. The stored `visible` becomes
-        // the strip's sequence — the pointer's one-sequence map.
+        // the strip's sequence: the pointer's one-sequence map.
         if current.is_combined() {
             coerce_shrunk_run(current, snapshot);
             let (sequence, width_slots) = strip_render(current, snapshot);
@@ -2494,7 +2494,7 @@ fn show_selection(
             ),
             // Flat and same-app sessions (the exemption): the flat
             // card over the (possibly re-filtered) snapshot, selection
-            // by ring — the horizontal band for a horizontal session
+            // by ring: the horizontal band for a horizontal session
             // (the grouped tree above stays vertical whatever the
             // layout says; the combination is the grouped-horizontal
             // module's, not this card's).
@@ -2539,14 +2539,14 @@ fn show_selection(
     });
     match model {
         Some(model) => {
-            // Carry the window this model computed into the next rebuild
-            // — every path through this funnel (step, hover, same-app)
+            // Carry the window this model computed into the next rebuild:
+            // every path through this funnel (step, hover, same-app)
             // continues the sticky rule for free.
             if let Some(session) = open.as_mut() {
                 session.viewport = Some(model.viewport);
             }
             // The × reveal (`close-window`): the pointer's presence
-            // paints the close glyph on the hovered row — the pair the
+            // paints the close glyph on the hovered row: the pair the
             // last hover observation carried, validated against the
             // rows this model just built, so a stale index reveals
             // nothing.
@@ -2554,8 +2554,8 @@ fn show_selection(
             let mut model = model;
             model.hovered = hovered_row(&model, observed);
             // The workspace label rides the shown card from the frozen
-            // string (workspace-label W4): applied once here — the
-            // builders hand back fresh models every rebuild — through
+            // string (workspace-label W4): applied once here (the
+            // builders hand back fresh models every rebuild), through
             // the same backend decision that shaped the card.
             if let Some(current) = open.as_ref()
                 && !current.workspace_label.is_empty()
@@ -2570,7 +2570,7 @@ fn show_selection(
             }
             // The key map rides the shown card: flat, vertical grouped,
             // or the grouped-horizontal combination (tree × horizontal).
-            // The text decision rides it too — the overlay freezes what
+            // The text decision rides it too: the overlay freezes what
             // it draws under.
             let open_session = open.as_ref();
             let mode = match open_session {
@@ -2612,7 +2612,7 @@ mod tests {
     use crate::ui::{DEFAULT_ROWS, GestureKey, OverlayModel, Palette, RowModel, StyleProfile};
     use std::collections::HashSet;
 
-    /// The tile budget tests open sessions with — `auto` resolved at
+    /// The tile budget tests open sessions with: `auto` resolved at
     /// the 1080p fallback width (1920 → ⅔ × 1920 / 160 = 8).
     const TILES: usize = 8;
 
@@ -2635,7 +2635,7 @@ mod tests {
         }
     }
 
-    /// An overlay model whose rows carry `handles` in order — titles and
+    /// An overlay model whose rows carry `handles` in order: titles and
     /// geometry are default; only the row→window addressing matters at
     /// this seam.
     fn overlay_model(handles: &[u64]) -> OverlayModel {
@@ -3081,7 +3081,7 @@ mod tests {
         );
         let open = open.expect("session opened");
 
-        // Even a sticky selection — still switchable everywhere — is voided
+        // Even a sticky selection (still switchable everywhere) is voided
         // by the switch: the list it came from is no longer the right one.
         let switched = snapshot(
             vec![
@@ -3202,8 +3202,8 @@ mod tests {
     fn session_holds_when_the_selection_parks_under_a_minimized_listing() {
         // The flag-on twin of the void pin above (minimized-listing
         // M2.1): a session whose frozen listing admits parked windows
-        // holds when its selection parks mid-gesture — still there,
-        // still listed — and commits to it.
+        // holds when its selection parks mid-gesture (still there,
+        // still listed), and commits to it.
         let snap = snapshot(
             vec![
                 toplevel(1, &[1], State::ACTIVATED, 30),
@@ -3247,7 +3247,7 @@ mod tests {
     #[test]
     fn an_open_session_keeps_its_frozen_listing_across_a_settings_reload() {
         // Open with the flag off: the parked window is not on the card.
-        // A mid-gesture "reload" hands the next step a flag-on listing —
+        // A mid-gesture "reload" hands the next step a flag-on listing:
         // an already-open session keeps the one it froze at open (the
         // scope philosophy), and the next open picks the new value up.
         let snap = snapshot(
@@ -3436,7 +3436,7 @@ mod tests {
     fn a_click_selects_then_commits_the_clicked_row() {
         // The pure seam the pointer Click arm composes: the boundary's
         // captured handle → Ring::select, commit_target. Clicking the
-        // last row commits that window — not the selection the keyboard
+        // last row commits that window, not the selection the keyboard
         // left.
         let snap = snapshot(
             vec![
@@ -3472,7 +3472,7 @@ mod tests {
     fn a_click_on_a_window_the_ring_never_held_selects_nothing() {
         // The frozen ring is the session's truth: a handle it never held
         // (a window opened mid-gesture) cannot be clicked into the
-        // session, and the flow stops at select — the prior selection is
+        // session, and the flow stops at select: the prior selection is
         // never committed and the overlay stays.
         let snap = snapshot(
             vec![
@@ -3542,7 +3542,7 @@ mod tests {
         // The /ship NO-GO race, pinned at this seam. The press arrives
         // while the overlay shows model A; an input drained earlier in
         // the same batch (a Tab, a wheel notch) rebuilds the card as
-        // model B — the same eligible list, shifted one row — before the
+        // model B (the same eligible list, shifted one row), before the
         // click drains. The user clicked A's row 0, Handle(1); whatever
         // the model has become by drain time, Handle(1) is the window
         // that must activate. (Run red against the row-addressed drain:
@@ -3575,7 +3575,7 @@ mod tests {
         let mut open = open.expect("session opened");
 
         // Event receipt against model A: the boundary resolves the press
-        // to A's row 0 and captures its handle — Click { handle } — the
+        // to A's row 0 and captures its handle (Click { handle }), the
         // target fixed against the model the user saw.
         let model_a = overlay_model(&[1, 2, 3]);
         let click = model_a
@@ -3587,7 +3587,7 @@ mod tests {
 
         // The same-batch swap happened: B's row 0 is Handle(9), the
         // window the user never chose. The captured handle crosses the
-        // queue untouched — the drain never consults the model — and the
+        // queue untouched (the drain never consults the model), and the
         // ring takes Handle(1) wherever B put it.
         let model_b = overlay_model(&[9, 1, 2]);
         assert_eq!(
@@ -3608,7 +3608,7 @@ mod tests {
         // while the overlay shows model A, an earlier-drained input has
         // already shifted the model to B, and a later Alt release
         // commits. The selection target is the handle captured at the
-        // observation — A's row — never B's row under the cursor.
+        // observation (A's row), never B's row under the cursor.
         let snap = snapshot(
             vec![
                 toplevel(9, &[1], State::default(), 40),
@@ -3640,7 +3640,7 @@ mod tests {
         let model_b = overlay_model(&[9, 1, 2]);
         let mut hover = PointerHover::default();
         // Map-time contact seeds on A's row 2 without selecting; the
-        // crossing onto A's row 0 captures Handle(1) — the event-time
+        // crossing onto A's row 0 captures Handle(1): the event-time
         // input, exactly as the boundary queues it.
         assert_eq!(hover.observe(Some(2)), None, "map-time contact seeds");
         let PointerInput::Hover { row, handle } = (PointerInput::Hover {
@@ -3650,7 +3650,7 @@ mod tests {
             unreachable!("constructed as a Hover")
         };
         // Drain after the shift: the crossing fires, and the selection
-        // follows the captured handle — B's row 0 (Handle(9)) is
+        // follows the captured handle: B's row 0 (Handle(9)) is
         // irrelevant.
         assert_eq!(
             model_b.rows.first().and_then(|row| row.handle),
@@ -3669,8 +3669,8 @@ mod tests {
     #[test]
     fn a_hover_crossing_onto_a_continuation_row_observes_but_selects_nothing() {
         // A continuation row (handle `None`) is a real row for the
-        // crossing policy — last_row moves, so a later crossing onto a
-        // content row still selects — but it never selects itself.
+        // crossing policy (last_row moves, so a later crossing onto a
+        // content row still selects), but it never selects itself.
         let snap = snapshot(
             vec![
                 toplevel(1, &[1], State::ACTIVATED, 30),
@@ -3715,8 +3715,8 @@ mod tests {
         };
         let mut hover = PointerHover::default();
         assert_eq!(hover.observe(Some(2)), None, "map-time contact seeds");
-        // The crossing onto the continuation row is observed — the
-        // policy registers the row — but its missing handle selects
+        // The crossing onto the continuation row is observed (the
+        // policy registers the row), but its missing handle selects
         // nothing, exactly as the drain's guard runs.
         let PointerInput::Hover { row, handle } = (PointerInput::Hover {
             row: Some(1),
@@ -3785,8 +3785,8 @@ mod tests {
         let mut open = open.expect("session opened");
 
         // Event receipt against model A: the boundary resolves the
-        // digit's row to A's row 2 and captures its handle — the
-        // SelectHandle twin — the target fixed against the model the
+        // digit's row to A's row 2 and captures its handle (the
+        // SelectHandle twin), the target fixed against the model the
         // user saw.
         let model_a = overlay_model(&[1, 2, 3]);
         let captured = model_a.rows.get(2).and_then(|row| row.handle);
@@ -3805,8 +3805,8 @@ mod tests {
 
         // The same-batch swap happened: B's row 2 is Handle(2), the
         // window the user never chose. The captured handle crosses the
-        // machine and the queue untouched — the drain never consults
-        // the model — and the ring takes Handle(3) wherever B put it.
+        // machine and the queue untouched (the drain never consults
+        // the model), and the ring takes Handle(3) wherever B put it.
         let model_b = overlay_model(&[9, 1, 2]);
         assert_eq!(
             model_b.rows.get(2).and_then(|row| row.handle),
@@ -3825,7 +3825,7 @@ mod tests {
         // The seam the Ctrl+N `Activate` arm composes through the same
         // flow a pointer click takes: the boundary resolved row 2 to
         // Handle(3) at the press, the machine yields the handle,
-        // Ring::select takes it, commit_target honors it — and the
+        // Ring::select takes it, commit_target honors it, and the
         // daemon-side close() leaves a later Alt-release and Tab inert.
         let snap = snapshot(
             vec![
@@ -3888,7 +3888,7 @@ mod tests {
         // Ctrl+7 with two rows on screen: the boundary's event-time
         // resolution yields no handle (row 6 is past the model's end),
         // so the output's `None` no-ops at the daemon exactly as an
-        // off-model click stops — the selection and the session are
+        // off-model click stops: the selection and the session are
         // untouched, and a following Tab still steps.
         let snap = snapshot(
             vec![
@@ -3939,7 +3939,7 @@ mod tests {
 
     #[test]
     fn a_number_activation_on_a_continuation_row_no_ops_with_the_session_intact() {
-        // A continuation row exists on screen but carries no handle —
+        // A continuation row exists on screen but carries no handle:
         // not addressable by any input. The digit addressing it resolves
         // to `None` at the boundary, the `None` flows through the
         // machine, and the daemon's guard leaves the session and the
@@ -4010,7 +4010,7 @@ mod tests {
     fn a_number_activation_on_a_row_the_ring_never_held_selects_nothing() {
         // A window opened mid-gesture can render onto the model but
         // never enters the frozen ring: Ctrl+N addressing its row stops
-        // at Ring::select — the prior selection is never committed and
+        // at Ring::select: the prior selection is never committed and
         // the overlay stays (the session-freeze philosophy, shared with
         // the click path).
         let snap = snapshot(
@@ -4046,7 +4046,7 @@ mod tests {
         // The pure seam the pointer Hover arm composes: crossing →
         // Ring::select. The cursor seeds on row 2 at map (no steal of
         // the MRU step target), crosses to row 3, and the selection
-        // follows — a later commit targets the hovered window.
+        // follows: a later commit targets the hovered window.
         let snap = snapshot(
             vec![
                 toplevel(1, &[1], State::ACTIVATED, 30),
@@ -4145,7 +4145,7 @@ mod tests {
 
     #[test]
     fn quick_toggle_respects_the_workspace_scope() {
-        // Handle 2 lives on workspace 2 — outside the CurrentWorkspace
+        // Handle 2 lives on workspace 2: outside the CurrentWorkspace
         // list, and under All it follows the invoking workspace's group
         // (workspace-order, 2026-11-14): with two windows on workspace 1
         // the toggle target is that workspace's MRU-second (3), not the
@@ -4198,7 +4198,7 @@ mod tests {
     fn quick_toggle_targets_a_parked_window_when_the_listing_admits_it() {
         // The flag-on twin of the skip pin above (minimized-listing
         // M2.1): with one live window the parked MRU-second is the
-        // toggle target — and with a live second window the parked one
+        // toggle target, and with a live second window the parked one
         // never jumps the live run, whatever its recency.
         let lone_live = snapshot(
             vec![
@@ -4390,7 +4390,7 @@ mod tests {
     }
 
     /// A three-workspace snapshot whose recency interleaves the
-    /// workspaces — invoked from "code" (the coordinates-middle one:
+    /// workspaces: invoked from "code" (the coordinates-middle one:
     /// "chat" sorts first, "web" last) with a workspace-less window more
     /// recent than every non-invoking window, so flat MRU order
     /// (1, 7, 2, 3, 4, 5, 6) and the grouped order disagree.
@@ -4463,7 +4463,7 @@ mod tests {
     #[test]
     fn all_windows_open_lists_workspace_major() {
         let snap = isolated_snapshot();
-        // The isolation is on record and resolve_scope obeys it — the
+        // The isolation is on record and resolve_scope obeys it: the
         // rules the bypass ignores. The all-windows invoke forces
         // Scope::All into the open, so the ring widens anyway. On this
         // fixture recency and the grouped order agree ([1, 2, 3, 4]).
@@ -4549,7 +4549,7 @@ mod tests {
         // The grouped open path must thread the snapshot's workspace list
         // into Grouping::new, not only the flat ring's eligible call: on
         // the interleaved fixture the tree's rows list in the grouped
-        // order (every window its own app here — app.{handle} — so all
+        // order (every window its own app here, app.{handle}, so all
         // rows are leaves).
         let snap = grouped_all_snapshot();
         let mut open = None;
@@ -4595,7 +4595,7 @@ mod tests {
     fn quick_toggle_matches_the_all_open_press_on_a_grouped_snapshot() {
         // Quick-tap parity rides the shared ordering by construction: the
         // toggle's target is the eligible list's second entry and the
-        // opening press lands on the frozen ring's second entry — the
+        // opening press lands on the frozen ring's second entry: the
         // same list, so they agree wherever the orders disagree. The pin
         // keeps that true.
         let snap = grouped_all_snapshot();
@@ -4625,7 +4625,7 @@ mod tests {
         let snap = isolated_snapshot();
         let settings = isolated_settings();
         // The regression pin: the plain Alt+Tab path consults
-        // resolve_scope, and on the isolated workspace it stays narrow —
+        // resolve_scope, and on the isolated workspace it stays narrow:
         // the bypass widens only itself.
         let scope = resolve_scope(&snap, &settings);
         assert_eq!(scope.scope, Scope::CurrentWorkspace);
@@ -4659,7 +4659,7 @@ mod tests {
     fn commit_target_under_an_all_session_selects_a_cross_workspace_window() {
         let snap = isolated_snapshot();
         let mut open = None;
-        // Previous wraps to the MRU-last window — workspace 2's least
+        // Previous wraps to the MRU-last window: workspace 2's least
         // recent. Committing it needs nothing new: switchable under
         // Scope::All already crosses workspaces.
         assert_eq!(
@@ -4691,7 +4691,7 @@ mod tests {
         // (the loop itself needs a live Wayland session and stays
         // VM-gated): the direction rides the command, only CycleApp
         // narrows a fresh session to the current app, and only CycleAll
-        // forces a fresh session's scope past the workspace rules — the
+        // forces a fresh session's scope past the workspace rules: the
         // plain cycles leave the scope to resolve_scope, and QuickToggle
         // owns no step at all.
         for (command, direction, same_app, scope_override) in [
@@ -4858,7 +4858,7 @@ mod tests {
     #[test]
     fn plain_presses_step_an_open_same_app_ring() {
         // Once the same-app session is open, any invoke steps its frozen
-        // ring — including a plain Alt+Tab press.
+        // ring, including a plain Alt+Tab press.
         let snap = same_app_snapshot();
         let mut open = None;
         session_step(
@@ -5129,7 +5129,7 @@ mod tests {
         // The selection lives on workspace 2; under All that is commitable.
         assert_eq!(commit_target(&open, &snap), Some(Handle(2)));
 
-        // The same selection under the v1 scope is not switchable — and a
+        // The same selection under the v1 scope is not switchable, and a
         // CurrentWorkspace session could never hold it in the first place.
         let confined = Switch {
             ring: open.ring.clone(),
@@ -5284,7 +5284,7 @@ mod tests {
     // --- The workspace label's derivation (workspace-label W4) -----------
 
     /// Two workspaces in coordinates order: the named first, the
-    /// unnamed second — the label's whole vocabulary in one snapshot.
+    /// unnamed second: the label's whole vocabulary in one snapshot.
     fn labeled_snapshot() -> Snapshot {
         Snapshot {
             toplevels: Vec::new(),
@@ -5319,7 +5319,7 @@ mod tests {
     #[test]
     fn the_workspace_label_formats_a_numeric_name() {
         // COSMIC's numeric default name: the digits carry into the
-        // synthesized form — the `#` mark, the one glyph vocabulary
+        // synthesized form: the `#` mark, the one glyph vocabulary
         // both faces already paint.
         let mut snap = labeled_snapshot();
         snap.workspaces[0].name = "3".to_owned();
@@ -5445,7 +5445,7 @@ mod tests {
     #[test]
     fn refresh_adopts_a_theme_change() {
         // Live apply: editing `theme` takes effect on the refresh a next
-        // invocation performs — no daemon restart.
+        // invocation performs: no daemon restart.
         let dir = TempDir::new("theme-flip");
         let path = dir.path().join("config.toml");
         std::fs::write(&path, b"theme = \"dark\"\n").expect("write");
@@ -5461,8 +5461,8 @@ mod tests {
     #[test]
     fn refresh_adopts_a_pair_change_with_last_good() {
         // The custom-palette twin of the theme flip: a present pair
-        // lands on the refresh a next invocation performs — no daemon
-        // restart — and a below-floor rewrite keeps the last-good pair
+        // lands on the refresh a next invocation performs (no daemon
+        // restart), and a below-floor rewrite keeps the last-good pair
         // (the floor rejects the whole file).
         let dir = TempDir::new("pair-flip");
         let path = dir.path().join("config.toml");
@@ -5507,7 +5507,7 @@ mod tests {
     #[test]
     fn refresh_adopts_a_rows_change() {
         // Live apply, the rows twin: editing `rows` takes effect on the
-        // refresh a next invocation performs — no daemon restart.
+        // refresh a next invocation performs: no daemon restart.
         let dir = TempDir::new("rows-edit");
         let path = dir.path().join("config.toml");
         std::fs::write(&path, b"rows = 5\n").expect("write");
@@ -5528,7 +5528,7 @@ mod tests {
     #[test]
     fn refresh_adopts_a_grouping_change() {
         // Live apply, the grouping twin: editing `grouping` takes effect
-        // on the refresh a next invocation performs — no daemon restart.
+        // on the refresh a next invocation performs: no daemon restart.
         let dir = TempDir::new("grouping-edit");
         let path = dir.path().join("config.toml");
         std::fs::write(&path, b"grouping = false\n").expect("write");
@@ -5547,7 +5547,7 @@ mod tests {
     }
 
     /// The palette twin of the frozen-scope seam: the card is resolved
-    /// once at session open and frozen for the session's life — a theme
+    /// once at session open and frozen for the session's life: a theme
     /// edit landing mid-gesture (here: the palette the next invocation
     /// would resolve) changes nothing until the session closes and the
     /// next press starts fresh.
@@ -5631,7 +5631,7 @@ mod tests {
     }
 
     /// The rows twin of the frozen-palette seam: the budget is resolved
-    /// once at session open and frozen for the session's life — a `rows`
+    /// once at session open and frozen for the session's life: a `rows`
     /// edit landing mid-gesture (here: the value the next invocation
     /// would read) changes nothing until the session closes and the next
     /// press starts fresh.
@@ -5709,8 +5709,8 @@ mod tests {
     }
 
     /// The layout twin of the frozen-palette seam: the card's axis is
-    /// resolved once at session open and frozen for the session's life
-    /// — a `layout` edit landing mid-gesture (here: the value the next
+    /// resolved once at session open and frozen for the session's life:
+    /// a `layout` edit landing mid-gesture (here: the value the next
     /// invocation would read) never re-lays-out the open card; the next
     /// press starts fresh against it.
     #[test]
@@ -5794,7 +5794,7 @@ mod tests {
 
     /// The columns twin of the frozen-palette seam: the horizontal
     /// card's tile budget is resolved once at session open and frozen
-    /// for the session's life — a `columns` edit landing mid-gesture
+    /// for the session's life: a `columns` edit landing mid-gesture
     /// (here: the value the next invocation would read) never re-windows
     /// the open band; the next press starts fresh against it.
     #[test]
@@ -5879,7 +5879,7 @@ mod tests {
     /// The tiles twin of the frozen-palette seam: the resolved budget
     /// is computed by the serve loop at open (the `columns` setting
     /// against the invoking output's logical width) and frozen for the
-    /// session's life — an output change landing mid-gesture (here:
+    /// session's life: an output change landing mid-gesture (here:
     /// the budget the next invocation would resolve) never re-windows
     /// the open band; the next press starts fresh against it.
     #[test]
@@ -5958,7 +5958,7 @@ mod tests {
     #[test]
     fn refresh_adopts_a_layout_change() {
         // Live apply, the layout twin: editing `layout` takes effect on
-        // the refresh a next invocation performs — no daemon restart.
+        // the refresh a next invocation performs: no daemon restart.
         let dir = TempDir::new("layout-edit");
         let path = dir.path().join("config.toml");
         std::fs::write(&path, b"layout = \"vertical\"\n").expect("write");
@@ -5983,7 +5983,7 @@ mod tests {
     #[test]
     fn refresh_adopts_a_columns_change() {
         // Live apply, the columns twin: editing `columns` takes effect
-        // on the refresh a next invocation performs — no daemon restart.
+        // on the refresh a next invocation performs: no daemon restart.
         let dir = TempDir::new("columns-edit");
         let path = dir.path().join("config.toml");
         std::fs::write(&path, b"columns = \"auto\"\n").expect("write");
@@ -6007,7 +6007,7 @@ mod tests {
 
     /// The geometry twin of the frozen-palette seam: the style profile
     /// is resolved once at session open and frozen for the session's
-    /// life — a density (or style) flip landing mid-gesture (here: the
+    /// life: a density (or style) flip landing mid-gesture (here: the
     /// profile the next invocation would resolve) never re-rhythms the
     /// open card; the next press starts fresh against it.
     #[test]
@@ -6095,7 +6095,7 @@ mod tests {
     }
 
     /// The grouping twin of the frozen-rows seam: the mode is resolved
-    /// once at session open and frozen for the session's life — a
+    /// once at session open and frozen for the session's life: a
     /// `grouping` edit landing mid-gesture (here: the value the next
     /// invocation would read) changes nothing until the session closes
     /// and the next press starts fresh.
@@ -6174,7 +6174,7 @@ mod tests {
     // --- Grouped sessions --------------------------------------------------
 
     /// Two two-window apps, MRU a1, a2, b1, b2. The frozen tree reads
-    /// [P-a1, C-a1, C-a2, P-b1, C-b1, C-b2] — the last-active app
+    /// [P-a1, C-a1, C-a2, P-b1, C-b1, C-b2]: the last-active app
     /// fronts the list, each parent fronting its own group with its
     /// whole window set as children (front window first).
     fn grouped_two_apps() -> Snapshot {
@@ -6190,7 +6190,7 @@ mod tests {
     }
 
     /// One multi-window app beside one single-window app: MRU a1, a2,
-    /// c1. Tree: [P-a1, C-a1, C-a2, L-c1] — the lone-parent shape that
+    /// c1. Tree: [P-a1, C-a1, C-a2, L-c1]: the lone-parent shape that
     /// dead-keyed the first grouped Tab.
     fn grouped_lone_parent() -> Snapshot {
         snapshot(
@@ -6204,7 +6204,7 @@ mod tests {
     }
 
     /// Opens a flat session on `snap` (one opening Alt+Tab) and
-    /// returns it with empty expansion state — the `type-filter` pins'
+    /// returns it with empty expansion state: the `type-filter` pins'
     /// base.
     fn flat_session(snap: &Snapshot) -> (Option<Switch>, HashSet<String>) {
         let mut open = None;
@@ -6252,7 +6252,7 @@ mod tests {
         (open, expanded)
     }
 
-    /// The app_id of tree row `index` — the key the expansion state and
+    /// The app_id of tree row `index`: the key the expansion state and
     /// the grave walk address an app by.
     fn tree_app(open: &Option<Switch>, index: usize) -> &str {
         open.as_ref()
@@ -6270,7 +6270,7 @@ mod tests {
         // The active app's group stood expanded (the state persists), so
         // the header and its first child both carry the active window
         // a1: the opening press steps past *both* rows and lands on
-        // a2 — flat quick-tap parity — never resting on the window the
+        // a2 (flat quick-tap parity), never resting on the window the
         // gesture started from.
         let snap = grouped_two_apps();
         let mut expanded = HashSet::new();
@@ -6336,7 +6336,7 @@ mod tests {
 
     #[test]
     fn rev5_linear_steps_stop_on_expanded_headers() {
-        // Rev 5: headers are normal rows — the walk from a's last child
+        // Rev 5: headers are normal rows: the walk from a's last child
         // stops on b's entry, then its children, and the wrap from b's
         // last child lands on a's entry. Nothing is skipped, nothing is
         // unrestable.
@@ -6383,7 +6383,7 @@ mod tests {
 
     #[test]
     fn rev5_a_lone_collapsed_group_is_never_entered() {
-        // Rev 5: nothing descends into a collapsed group — a lone entry
+        // Rev 5: nothing descends into a collapsed group: a lone entry
         // keeps the selection, and the press is a stay, never an entry.
         let snap = snapshot(
             vec![
@@ -6420,7 +6420,7 @@ mod tests {
     #[test]
     fn rev5_left_on_a_child_exits_without_collapsing() {
         // Rev 5: the header can hold the selection, so ←'s exit no
-        // longer merges with a collapse — the group stays expanded.
+        // longer merges with a collapse: the group stays expanded.
         let snap = grouped_two_apps();
         let (mut open, mut expanded) = grouped_session(&snap);
         expanded.insert("app.a".to_string());
@@ -6436,7 +6436,7 @@ mod tests {
 
     #[test]
     fn rev5_the_pointer_selects_an_expanded_header() {
-        // Rev 5: the divider rule is gone — hovering the expanded
+        // Rev 5: the divider rule is gone: hovering the expanded
         // entry selects that row itself, exactly like any other row.
         let snap = grouped_two_apps();
         let (mut open, mut expanded) = grouped_session(&snap);
@@ -6445,7 +6445,7 @@ mod tests {
         session.visible = grouped_visible(session, &snap, &expanded);
         session.viewport = Some(crate::ui::Viewport {
             start: 0,
-            content: 4, // P-a1, C-a1, C-a2, P-b1 — b collapsed
+            content: 4, // P-a1, C-a1, C-a2, P-b1: b collapsed
             top: false,
             bottom: false,
         });
@@ -6475,7 +6475,7 @@ mod tests {
     fn typing_narrows_a_flat_session_and_selects_the_first_match() {
         // "fir" matches both Firefox windows in MRU order; the first
         // (most recent) is selected, and stepping stays inside the
-        // narrowed set — the editor never surfaces until the query
+        // narrowed set: the editor never surfaces until the query
         // clears.
         let snap = snapshot(
             vec![
@@ -6519,7 +6519,7 @@ mod tests {
     fn typing_flattens_a_grouped_session() {
         // The querying grouped card is the flat narrowed list: the tree,
         // headers, and expansion state are bypassed while the query
-        // stands — a window inside a collapsed group matches all the
+        // stands: a window inside a collapsed group matches all the
         // same.
         let snap = snapshot(
             vec![
@@ -6546,7 +6546,7 @@ mod tests {
     fn erasing_to_empty_restores_the_kept_selection() {
         // Type, step onto the second match, backspace it all away: the
         // unfiltered session returns with the same window still
-        // selected — the kept-window restore rule.
+        // selected: the kept-window restore rule.
         let snap = snapshot(
             vec![
                 titled(1, "invoice.xlsx", "office", 40),
@@ -6595,7 +6595,7 @@ mod tests {
     #[test]
     fn no_match_holds_the_session_with_nothing_selected() {
         // Nothing matches: the narrowed ring is empty, the selection is
-        // None (committing is a no-op), and the session stands — the
+        // None (committing is a no-op), and the session stands: the
         // card's no-matches row is the render's business.
         let snap = snapshot(vec![titled(1, "editor", "code", 1)], Some(1));
         let (mut open, _) = flat_session(&snap);
@@ -6612,7 +6612,7 @@ mod tests {
     #[test]
     fn clearing_the_query_reports_whether_it_cleared() {
         // Escape's decision rule: a standing query clears (true), an
-        // empty one reports false — the caller dismisses.
+        // empty one reports false: the caller dismisses.
         let snap = snapshot(vec![titled(1, "editor", "code", 1)], Some(1));
         let (mut open, expanded) = flat_session(&snap);
         assert!(
@@ -6630,8 +6630,8 @@ mod tests {
     #[test]
     fn closing_advances_to_the_next_live_row() {
         // Flat session over a, b, c (MRU): closing the selected b moves
-        // the selection to c — the walk's next live row, the doomed one
-        // excluded — and closing the last row wraps to the front.
+        // the selection to c (the walk's next live row, the doomed one
+        // excluded), and closing the last row wraps to the front.
         let snap = snapshot(
             vec![
                 titled(1, "a", "app.a", 30),
@@ -6703,7 +6703,7 @@ mod tests {
     #[test]
     fn the_query_finds_parked_windows_in_the_frozen_list() {
         // Flag-on (minimized-listing M2.2): the query narrows the
-        // frozen list, never re-derives it — and the frozen list
+        // frozen list, never re-derives it, and the frozen list
         // carries the parked window, so typing its title selects it.
         let snap = snapshot(
             vec![
@@ -6780,7 +6780,7 @@ mod tests {
     #[test]
     fn closing_a_window_the_selection_is_not_on_moves_nothing() {
         // The pointer path: the × closes the hovered row's window while
-        // the keyboard's selection rests elsewhere — a close that does
+        // the keyboard's selection rests elsewhere: a close that does
         // not sit under the selection never moves it.
         let snap = snapshot(
             vec![
@@ -6834,7 +6834,7 @@ mod tests {
         // The × paints only where the pointer's pair (row, handle)
         // still matches the rows the card just built: a row past the
         // end, or a row whose window is no longer there, reveals
-        // nothing — a stale index never offers a wrong window's close.
+        // nothing: a stale index never offers a wrong window's close.
         let model = OverlayModel {
             workspace: String::new(),
             rows: vec![RowModel {
@@ -6859,8 +6859,8 @@ mod tests {
 
     #[test]
     fn a_grouped_quick_tap_selects_the_second_apps_front_window() {
-        // The opening Alt+Tab steps to the next *app entry* — level 1,
-        // never descending — so a quick tap activates the MRU-second
+        // The opening Alt+Tab steps to the next *app entry* (level 1,
+        // never descending), so a quick tap activates the MRU-second
         // app's front window: here b1 (the implied [alt]+1 of the b
         // entry), where the flat ring would step to a2.
         let snap = grouped_two_apps();
@@ -6894,7 +6894,7 @@ mod tests {
     #[test]
     fn the_last_active_app_fronts_its_group_as_the_top_parent_row() {
         // The owner's stated contract: the most recently active app
-        // sits at the top of the list as its group's parent — a pure
+        // sits at the top of the list as its group's parent: a pure
         // layer entry whose implied window is the app's own most
         // recently active window, its first child.
         let snap = grouped_two_apps();
@@ -6908,7 +6908,7 @@ mod tests {
             Handle(1),
             "the entry carries its app's front window"
         );
-        // Expanded, the first child is that same window — [alt]+1.
+        // Expanded, the first child is that same window: [alt]+1.
         let mut expanded = expanded;
         expanded.insert("app.a".to_string());
         let visible = grouped_visible(session, &snap, &expanded);
@@ -6919,8 +6919,8 @@ mod tests {
 
     #[test]
     fn collapsed_tab_steps_entries_and_wraps() {
-        // Collapsed, the visible sequence is the entries — parents and
-        // leaves alike — and Tab steps it linearly, wrapping; a child
+        // Collapsed, the visible sequence is the entries (parents and
+        // leaves alike), and Tab steps it linearly, wrapping; a child
         // is never visible, so never landed on, while collapsed.
         let snap = grouped_lone_parent();
         let (mut open, expanded) = grouped_session(&snap);
@@ -6960,7 +6960,7 @@ mod tests {
         // the walk threads through them and across group boundaries.
         let snap = grouped_lone_parent();
         let (mut open, expanded) = grouped_session(&snap);
-        // Collapsed: [P-a1, L-c1] — the step from c1 wraps to a1.
+        // Collapsed: [P-a1, L-c1]: the step from c1 wraps to a1.
         step_visible(
             open.as_mut().expect("open"),
             &snap,
@@ -6968,7 +6968,7 @@ mod tests {
             Direction::Previous,
         );
         assert_eq!(open.as_ref().expect("open").tree_sel, 0);
-        // Expanded: [P-a1, C-a1, C-a2, L-c1] — the walk threads the
+        // Expanded: [P-a1, C-a1, C-a2, L-c1]: the walk threads the
         // children, one row per step.
         let mut expanded = expanded;
         expanded.insert("app.a".to_string());
@@ -7002,7 +7002,7 @@ mod tests {
     #[test]
     fn entering_owns_group_skips_the_active_window() {
         // The owner's Firefox trace: entering your own app's group
-        // never lands on the window the gesture started from — the
+        // never lands on the window the gesture started from: the
         // selection steps one past it (a2), exactly as the opening
         // Alt+Tab steps past the active window.
         let snap = grouped_two_apps();
@@ -7030,7 +7030,7 @@ mod tests {
     #[test]
     fn entering_another_group_lands_on_its_front_window() {
         // Any other app's group: → lands on its most recently used
-        // window — the implied [alt]+1 — and expands it too.
+        // window (the implied [alt]+1), and expands it too.
         let snap = grouped_two_apps();
         let (mut open, mut expanded) = grouped_session(&snap);
         // The opening press left the selection on b's entry.
@@ -7143,7 +7143,7 @@ mod tests {
     fn the_grouped_tree_freezes_at_open() {
         // A window of a new app activating mid-gesture changes nothing:
         // the frozen tree has no row for it, so it is neither visible
-        // on the card nor addressable into the session — regrouping
+        // on the card nor addressable into the session: regrouping
         // waits for the next session.
         let snap = grouped_two_apps();
         let (mut open, expanded) = grouped_session(&snap);
@@ -7170,7 +7170,7 @@ mod tests {
     fn a_group_front_window_selects_its_parent_row() {
         // The parent and its first child carry the same window; a
         // handle-only selection (a click, a Ctrl+N commit) resolves to
-        // the parent row — the entry — and commits the same window
+        // the parent row (the entry), and commits the same window
         // either way.
         let snap = grouped_two_apps();
         let (mut open, expanded) = grouped_session(&snap);
@@ -7219,7 +7219,7 @@ mod tests {
     #[test]
     fn same_app_sessions_stay_flat_under_grouping() {
         // The exemption: a same-app session is already app-scoped, so
-        // grouping never re-partitions it — no tree, the flat app ring.
+        // grouping never re-partitions it: no tree, the flat app ring.
         let snap = same_app_snapshot();
         let mut open = None;
         session_step(
@@ -7264,7 +7264,7 @@ mod tests {
             crate::text::TextDecision::Bitmap
         );
         // Even a configured family cannot reach the System stack
-        // against an empty database — the floor is the floor.
+        // against an empty database: the floor is the floor.
         assert_eq!(
             resolve_text(
                 &mut empty,
@@ -7317,7 +7317,7 @@ mod tests {
     }
 
     /// The text twin of the frozen-palette seam: the decision resolves
-    /// once at open and freezes for the session's life — a font edit
+    /// once at open and freezes for the session's life: a font edit
     /// landing mid-gesture (here: the decision the next invocation
     /// would resolve) changes nothing until the session closes and the
     /// next press starts fresh.
@@ -7410,12 +7410,12 @@ mod tests {
     // --- grouped-horizontal: the combined session (GH1) -------------------
 
     /// Opens a combined (grouped-horizontal) session on `snap` with one
-    /// opening Alt+Tab — the grouped twin with a horizontal layout.
+    /// opening Alt+Tab: the grouped twin with a horizontal layout.
     fn combined_session(snap: &Snapshot) -> (Option<Switch>, HashSet<String>) {
         combined_session_listing(snap, Scope::CurrentWorkspace)
     }
 
-    /// [`combined_session`] under a caller-chosen listing — the flag-on
+    /// [`combined_session`] under a caller-chosen listing: the flag-on
     /// strip pins (minimized-listing M2.2) open through it.
     fn combined_session_listing(
         snap: &Snapshot,
@@ -7444,7 +7444,7 @@ mod tests {
 
     /// Three two-window apps, MRU a1, a2, b1, b2, c1, c2. The frozen
     /// tree reads [P-a1, C-a1, C-a2, P-b1, C-b1, C-b2, P-c1, C-c1,
-    /// C-c2] — apps at tree indices 0, 3, 6.
+    /// C-c2]: apps at tree indices 0, 3, 6.
     fn combined_three_apps() -> Snapshot {
         snapshot(
             vec![
@@ -7461,7 +7461,7 @@ mod tests {
 
     /// The three-apps fixture with b's second window gone mid-gesture:
     /// the frozen tree keeps both of b's children, the live set keeps
-    /// one — the shape the shrink rule and the ≥2 rule decide over.
+    /// one: the shape the shrink rule and the ≥2 rule decide over.
     fn combined_three_apps_b_shrunk() -> Snapshot {
         snapshot(
             vec![
@@ -7478,7 +7478,7 @@ mod tests {
     #[test]
     fn combined_opening_press_lands_on_the_second_app_tile() {
         // The quick-tap criterion: the opening press steps the app band
-        // once — the second app tile — and release activates that app's
+        // once (the second app tile), and release activates that app's
         // MRU-front window.
         let snap = grouped_two_apps();
         let (open, _expanded) = combined_session(&snap);
@@ -7490,7 +7490,7 @@ mod tests {
     #[test]
     fn combined_tab_walks_the_run_before_stepping_apps() {
         // Tab steps the app tiles from an app tile; from inside an open
-        // run it joins the linear walk — the run's windows step one at
+        // run it joins the linear walk: the run's windows step one at
         // a time and the run stays open until the walk steps off its
         // edge (the vertical Tab's row-by-row walk through an expanded
         // group, the run closing by derivation only when the selection
@@ -7516,7 +7516,7 @@ mod tests {
 
     #[test]
     fn combined_arrows_step_the_visible_sequence() {
-        // ←/→ step the visible strip sequence linearly, wrapping —
+        // ←/→ step the visible strip sequence linearly, wrapping:
         // windows and app tiles alike. Stepping off a run onto a
         // neighboring tile closes the run (the shape follows the
         // selection by derivation).
@@ -7551,7 +7551,7 @@ mod tests {
     #[test]
     fn combined_down_opens_the_run_and_up_exits() {
         // ↓ from an app tile opens its run on the MRU-front window; ↑
-        // from a window tile selects its parent row — the run closes by
+        // from a window tile selects its parent row: the run closes by
         // derivation, the strip's two shapes one key apart.
         let snap = grouped_two_apps();
         let (mut open, _expanded) = combined_session(&snap);
@@ -7566,7 +7566,7 @@ mod tests {
     #[test]
     fn combined_level_keys_no_op_at_their_edges() {
         // The W3C no-ops: ↓ from a window tile (deepest level) and ↑
-        // from a level-1 tile (root) — parent and leaf kinds alike, the
+        // from a level-1 tile (root): parent and leaf kinds alike, the
         // selection never moves. (↓'s ≥2 floor is
         // `combined_down_holds_the_two_window_floor` below.)
         let two = grouped_two_apps();
@@ -7589,7 +7589,7 @@ mod tests {
     #[test]
     fn combined_down_enters_each_of_three_apps_children() {
         // No collapse state anywhere: ↓ from *each* app tile enters that
-        // app's children in one press — the walk over three apps — and
+        // app's children in one press (the walk over three apps), and
         // the expansion set stays empty throughout (the combined card
         // never touches it).
         let snap = combined_three_apps();
@@ -7610,8 +7610,8 @@ mod tests {
 
     #[test]
     fn combined_grave_opens_the_apps_windows_from_its_tile() {
-        // The key above Tab from an app tile: open that app's windows —
-        // Next on the MRU-front window (↓'s twin), Shift on the last —
+        // The key above Tab from an app tile: open that app's windows (
+        // Next on the MRU-front window (↓'s twin), Shift on the last),
         // across all three apps. The strip derives its run from the
         // selection alone: the press never writes expansion state.
         let snap = combined_three_apps();
@@ -7649,8 +7649,8 @@ mod tests {
     #[test]
     fn combined_grave_cycles_within_the_app_and_wraps() {
         // From a window tile the key cycles the focused app's windows,
-        // wrapping at both ends — never onto another app's rows (that
-        // walk is ←/→ and Tab) — and the run stays open while it
+        // wrapping at both ends, never onto another app's rows (that
+        // walk is ←/→ and Tab), and the run stays open while it
         // cycles: only a tile press (↓'s twin, the toggle half) opens
         // or closes it.
         let snap = grouped_two_apps();
@@ -7704,9 +7704,9 @@ mod tests {
     #[test]
     fn combined_grave_falls_through_to_the_query() {
         // While a query stands the session is flat (flatten-on-query),
-        // so the press types the key's own char instead of walking —
+        // so the press types the key's own char instead of walking:
         // the backtick bare, `~` shifted (the keysym Alt+Shift+` really
-        // delivers) — the level lives in the daemon, key_input stays
+        // delivers): the level lives in the daemon, key_input stays
         // pure.
         let snap = grouped_two_apps();
         let (mut open, mut expanded) = combined_session(&snap);
@@ -7738,7 +7738,7 @@ mod tests {
     #[test]
     fn combined_grave_holds_a_one_window_app_without_dead_ends() {
         // A single-window app: from its tile the key selects its one
-        // window; from the window itself it stays put — no dead end in
+        // window; from the window itself it stays put: no dead end in
         // either direction.
         let lone = grouped_lone_parent();
         let (mut open, mut expanded) = combined_session(&lone);
@@ -7781,7 +7781,7 @@ mod tests {
     #[test]
     fn vertical_grave_opens_the_apps_windows_from_its_entry() {
         // From a collapsed app entry the press opens that app's windows
-        // — Next on the MRU-front window, Shift on the last — and the
+        // (Next on the MRU-front window, Shift on the last), and the
         // group expands for it, the state → shares, persisting past the
         // gesture. Pressing again collapses: the flag decides.
         let snap = grouped_two_apps();
@@ -7838,8 +7838,8 @@ mod tests {
     #[test]
     fn vertical_grave_cycles_within_the_app_and_wraps() {
         // From a window row the key cycles the app's windows, wrapping
-        // at both ends — never onto another app's rows (that walk is
-        // ←/→ and the linear Tab) — and the group stays expanded while
+        // at both ends, never onto another app's rows (that walk is
+        // ←/→ and the linear Tab), and the group stays expanded while
         // it cycles: collapsing is the entry press's half of the key,
         // and ← keeps it from a child too.
         let snap = grouped_two_apps();
@@ -7894,7 +7894,7 @@ mod tests {
     #[test]
     fn vertical_grave_falls_through_to_the_query() {
         // A standing query types the key's own char in the vertical tree
-        // exactly as in the strip — the flatten-on-query rule, the level
+        // exactly as in the strip: the flatten-on-query rule, the level
         // in the daemon.
         let snap = grouped_two_apps();
         let (mut open, mut expanded) = grouped_session(&snap);
@@ -7961,7 +7961,7 @@ mod tests {
         // The Step arm (Tab-alias arrows, wheel) routes through
         // session_step into the strip's linear walk, not the vertical
         // linear walk: from a's front child inside the run, one step
-        // lands on a's second window — never on b's rows.
+        // lands on a's second window: never on b's rows.
         let snap = grouped_two_apps();
         let (mut open, mut expanded) = combined_session(&snap);
         open.as_mut().expect("open").tree_sel = 1;
@@ -7990,7 +7990,7 @@ mod tests {
         // A pointer crossing maps through the one-sequence map: the
         // stored strip (visible + viewport) addresses the exact tree
         // row, so hovering a window tile inside a run selects that
-        // window even though its handle is also its app's parent row —
+        // window even though its handle is also its app's parent row,
         // and the shape follows the selection by derivation.
         let snap = grouped_two_apps();
         let (mut open, _expanded) = combined_session(&snap);
@@ -8017,8 +8017,8 @@ mod tests {
 
     #[test]
     fn combined_close_advances_the_strip_reading_order() {
-        // Advance-then-close walks the strip's own reading order — the
-        // derived sequence — skipping rows carrying the doomed window
+        // Advance-then-close walks the strip's own reading order (the
+        // derived sequence), skipping rows carrying the doomed window
         // (a parent tile and its front child are one window); the
         // session survives for repeated closes.
         let snap = grouped_two_apps();
@@ -8038,7 +8038,7 @@ mod tests {
     fn combined_sessions_ignore_the_expansion_state() {
         // The strip has no collapse state: a pre-populated expansion
         // set (a leftover from vertical grouped gestures) changes
-        // nothing — the derivation never reads it, open or closed.
+        // nothing: the derivation never reads it, open or closed.
         let snap = grouped_two_apps();
         let mut expanded = HashSet::new();
         expanded.insert("app.a".to_string());
@@ -8085,7 +8085,7 @@ mod tests {
     fn combined_pointer_dots_and_past_the_window_address_nothing() {
         // The one-sequence map behind a truncating viewport: content
         // rows map, the `…` tile and rows past the window address
-        // nothing — the affordance never holds a selection.
+        // nothing: the affordance never holds a selection.
         let snap = grouped_two_apps();
         let (mut open, _expanded) = combined_session(&snap);
         let session = open.as_mut().expect("open");
@@ -8106,7 +8106,7 @@ mod tests {
     #[test]
     fn combined_hover_follows_the_derived_shape() {
         // Hovering selects the addressed tree row; the shape follows
-        // the selection by derivation — a window tile inside the run
+        // the selection by derivation: a window tile inside the run
         // keeps the run open, an app tile closes it.
         let snap = grouped_two_apps();
         let (mut open, _expanded) = combined_session(&snap);
@@ -8144,7 +8144,7 @@ mod tests {
     fn combined_click_commits_the_clicked_tile_not_the_selection() {
         // The click seam the pointer Click arm composes: the boundary's
         // captured handle selects through the one-sequence map and the
-        // commit resolves the clicked tile's own window — inside a run,
+        // commit resolves the clicked tile's own window: inside a run,
         // a group's front window is its child tile alone, never its
         // parent row.
         let snap = grouped_two_apps();
@@ -8154,7 +8154,7 @@ mod tests {
         session.tree_sel = 3;
         session.visible = strip_sequence(session, &snap);
         assert_eq!(session.visible, vec![0, 3], "the selection closed a's run");
-        // Reopen a's run the honest way — ↓ on a's tile — then click a
+        // Reopen a's run the honest way (↓ on a's tile), then click a
         // window tile through the flow a click takes.
         session.tree_sel = 0;
         assert!(enter_band(session, &snap));
@@ -8172,7 +8172,7 @@ mod tests {
     fn the_strip_lists_parked_children_and_the_two_window_rule_counts_them() {
         // Flag-on (minimized-listing M2.2): the run's liveness filter is
         // the session's frozen listing, so parked children list in the
-        // run — after the live one, the visible-first order — and the
+        // run (after the live one, the visible-first order), and the
         // ≥2-windows rule counts them: one live plus one parked child
         // opens the run a single-live parent never gets (the flag-off
         // twin is the duplicate-tile pin below).
@@ -8202,7 +8202,7 @@ mod tests {
     #[test]
     fn strip_opens_the_selected_childs_parent_run_in_place() {
         // The derived shape: a child selection replaces its app's tile
-        // with the app's window run at that very slot — the other apps'
+        // with the app's window run at that very slot: the other apps'
         // tiles stay in place around it, at the front and mid-list
         // alike. Nothing sits below; nothing is always-open.
         let snap = combined_three_apps();
@@ -8296,7 +8296,7 @@ mod tests {
     #[test]
     fn combined_down_holds_the_two_window_floor() {
         // The ≥2 rule: ↓ on a tile whose app holds fewer than two live
-        // windows is a no-op — a single-window app commits directly and
+        // windows is a no-op: a single-window app commits directly and
         // never grows a run below its tile (the duplicate-tile bug's
         // grave), and a shrunk parent holds the same floor.
         let lone = grouped_lone_parent();
@@ -8320,7 +8320,7 @@ mod tests {
     #[test]
     fn strip_width_freezes_across_down_and_up() {
         // The width freeze: the closed and open shapes of one selection
-        // compute one slot count, so ↓ and ↑ never resize the card —
+        // compute one slot count, so ↓ and ↑ never resize the card:
         // the strip reflows inside the frozen grid and back.
         let snap = combined_three_apps();
         let (mut open, _expanded) = combined_session(&snap);
@@ -8344,7 +8344,7 @@ mod tests {
     #[test]
     fn opens_run_requires_two_live_windows() {
         // ↓'s ≥2 rule: an app tile opens its run only while the app
-        // holds at least two live windows — a two-window parent yes; a
+        // holds at least two live windows: a two-window parent yes; a
         // leaf and a shrunk parent no (they commit directly, never
         // growing a run below themselves).
         let full = combined_three_apps();
@@ -8408,7 +8408,7 @@ mod tests {
     fn the_width_floor_freezes_across_down_and_up() {
         // The freeze seam beside the tiles twin: the serve loop writes
         // the resolved floor onto the freshly opened session and it
-        // rides the session's life — ↓ and ↑ reflow the strip inside
+        // rides the session's life: ↓ and ↑ reflow the strip inside
         // the same floor, never re-deriving it.
         let snap = combined_three_apps();
         let (mut open, _expanded) = combined_session(&snap);

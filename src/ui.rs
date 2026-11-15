@@ -1,7 +1,7 @@
 //! Switcher overlay: a pure render model, a software renderer, and the
 //! hold-Alt gesture state machine.
 //!
-//! The model and renderer are plain data in, bytes out — unit-tested
+//! The model and renderer are plain data in, bytes out, unit-tested
 //! without a compositor. The layer-shell surface that presents them lives
 //! with the protocol code in [`crate::wayland`] and is only provable on
 //! real COSMIC hardware.
@@ -24,8 +24,8 @@ pub const GLYPH_W: u32 = 8;
 /// Glyph cell height in logical pixels.
 pub const GLYPH_H: u32 = 8;
 
-/// A rasterized app icon, ready to blit: square, premultiplied ARGB — one
-/// `0xAARRGGBB` per pixel, the renderer's write order — with `side` in
+/// A rasterized app icon, ready to blit: square, premultiplied ARGB (one
+/// `0xAARRGGBB` per pixel, the renderer's write order) with `side` in
 /// device pixels (logical size × render scale). Produced by
 /// [`crate::icons`]; the renderer never decodes anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,17 +37,17 @@ pub struct IconBitmap {
 }
 
 /// Font scale as an exact rational (numerator over denominator): text is
-/// 12 logical px tall — re-pinned 2026-11-07 by the owner. The 11-02
+/// 12 logical px tall, re-pinned 2026-11-07 by the owner. The 11-02
 /// re-pin to 8 px ("even 12 read oversized next to the 32-px icons") was
 /// judged on the 200 % VM, where 8 logical px paint as 16 physical; on a
 /// 100 % output the same value is 8 physical pixels, a terminal's
 /// smallest font, and the owner read it as too small. The value didn't
-/// change, the display did — so the pin moves to the middle step, still
+/// change, the display did, so the pin moves to the middle step, still
 /// under the icons in weight (they carry the row's identity, the title
 /// confirms it). Whole-pixel at the render-scale floor of 2 (each font
 /// pixel is 3 device px), which covers every output up to 200 %; at a 3×
 /// output the glyph block floors to 4 device px inside a 4.5-px cell and
-/// the text letter-spaces — stated here, not hidden. 16 px (`2/1`) is
+/// the text letter-spaces: stated here, not hidden. 16 px (`2/1`) is
 /// exact at every scale and stays the alternative if that ever matters.
 /// The studied switchers' 13–16 px consensus (research record §2.10)
 /// spends its height on richer fonts, not on proportion.
@@ -61,14 +61,14 @@ pub const TEXT_W: u32 = GLYPH_W * FONT_SCALE_NUM / FONT_SCALE_DEN;
 pub const TEXT_H: u32 = GLYPH_H * FONT_SCALE_NUM / FONT_SCALE_DEN;
 
 /// The card's text size in logical pixels when the config sets no
-/// `font_size` — the 12-px pin the card has carried since 2026-11-07.
+/// `font_size`: the 12-px pin the card has carried since 2026-11-07.
 /// A configured size resolves once at open into a [`TextProfile`], which
 /// every text-derived metric reads from.
 pub const DEFAULT_FONT_SIZE: u32 = TEXT_W;
 
 /// Smallest `font_size` the setting accepts: 8 px is the bitmap floor's
 /// own 1× cell. Below it the 8×8 glyphs would need to downscale, and the
-/// card's 8-px disclosure caret no longer has a whole-cell home.
+/// card's 8-px disclosure caret needs a whole-cell home.
 pub const FONT_SIZE_MIN: u32 = 8;
 
 /// Largest `font_size` the setting accepts. 24 px still clears the
@@ -78,7 +78,7 @@ pub const FONT_SIZE_MIN: u32 = 8;
 pub const FONT_SIZE_MAX: u32 = 24;
 
 /// App-icon cell, square, in logical pixels. 32 is the converged switcher
-/// row-icon size — cosmic-launcher's alt-tab row uses exactly this
+/// row-icon size: cosmic-launcher's alt-tab row uses exactly this
 /// (research record §2.6); GNOME's app badge is 48 inside much larger
 /// tiles. Icons arrive pre-rasterized at `ICON × render scale` from
 /// [`crate::icons`].
@@ -92,18 +92,18 @@ pub const ICON_GAP: u32 = 12;
 /// rhythm; research record §2.6). The selection band fills this whole
 /// row rect, so the fill holds icon and text as one object.
 /// Derived default (Round + Standard) since 2026-11-07: [`rhythm`]
-/// re-derives it per open — 40/48/56 across the densities at the default
+/// re-derives it per open, 40/48/56 across the densities at the default
 /// text size; [`Rhythm::with_text`] grows it for a larger `font_size`.
 pub const ROW_H: u32 = ICON + 2 * ROW_PAD_Y;
 
 /// Vertical padding inside one row. Derived default (Standard) since
-/// 2026-11-07: [`rhythm`] re-derives it per open — 4/8/12 across the
+/// 2026-11-07: [`rhythm`] re-derives it per open, 4/8/12 across the
 /// densities.
 pub const ROW_PAD_Y: u32 = 8;
 
 /// Gap between rows; selection bands never merge across it. Derived
 /// default (Standard) since 2026-11-07: [`rhythm`] re-derives it per
-/// open — 4/8/12 across the densities.
+/// open, 4/8/12 across the densities.
 pub const ROW_GAP: u32 = 8;
 
 /// Horizontal inset of the selection band from the card edges, so the
@@ -113,7 +113,7 @@ pub const SELECT_INSET: u32 = 4;
 
 /// Corner radius of the selection band's own ends, logical px. The band
 /// is a row button, so its ends round into the card's corner vocabulary
-/// instead of ending as clipped stripes against the 12-px card radius —
+/// instead of ending as clipped stripes against the 12-px card radius,
 /// drawn by the same coverage sampler, still one flat fill (no accent,
 /// no glow). `PAD_Y ≥ RADIUS` holds the band clear of the card's corner
 /// arcs. 2026-11-07 layout pass, preview-frozen beside [`PAD_Y`];
@@ -128,31 +128,31 @@ pub const PAD_X: u32 = 20;
 /// Double the row gap: the card edge breathes one deliberate step above
 /// the row rhythm, so an edge selection reads as held by the container
 /// rather than parked beside its neighbor. Also keeps `PAD_Y ≥ RADIUS`
-/// with real slack — 12 sat at exact equality, one padding trim away
+/// with real slack: 12 sat at exact equality, one padding trim away
 /// from clipping a corner arc. 2026-11-07 layout pass (16 = 2 × the
 /// 8-px row gap). Derived default (Standard) since 2026-11-07:
-/// [`rhythm`] re-derives it per open — 8/16/24 across the densities;
-/// the corner clearance is pinned per profile now (`pad_y +
-/// SELECT_INSET ≥ radius` — Compact's 8 spends the inset, with the
+/// [`rhythm`] re-derives it per open, 8/16/24 across the densities;
+/// the corner clearance is pinned per profile (`pad_y +
+/// SELECT_INSET ≥ radius`; Compact's 8 spends the inset, with the
 /// sampled proof in the tests).
 pub const PAD_Y: u32 = 16;
 
 /// Card corner radius in logical pixels. COSMIC's house radius for cards
 /// is `radius_s + 4` ≈ 12 (research record §2.6). Corners are coverage
-/// anti-aliased by area sampling — see [`shape_cov`] — not aliased steps;
+/// anti-aliased by area sampling (see [`shape_cov`]), not aliased steps;
 /// nothing is blurred. Derived default (Round) since 2026-11-07:
-/// [`style_radius`] re-derives it per open — 12/8/2 across the styles.
+/// [`style_radius`] re-derives it per open, 12/8/2 across the styles.
 pub const RADIUS: u32 = 12;
 
 /// Hairline card border thickness in logical pixels.
 pub const BORDER: u32 = 1;
 
 /// Maximum title columns shown before elision at the default 12-px
-/// cell — 48 columns. A session's [`TextProfile`] derives its own column
+/// cell: 48 columns. A session's [`TextProfile`] derives its own column
 /// count from [`TITLE_BAND_PX`], so a larger `font_size` fits fewer
 /// columns in the same physical band. The rest of this note describes
 /// the default's arithmetic: 48 columns
-/// keeps the title territory at 660 logical px — within reach of
+/// keeps the title territory at 660 logical px: within reach of
 /// cosmic-launcher's 596 fixed switcher width and the cross-platform
 /// consensus cap of ~600 (research record §2.6, §2.10); the full card,
 /// hint band included, is 688 since the 2026-11-09 digit re-pin.
@@ -163,7 +163,7 @@ pub const BORDER: u32 = 1;
 /// widens by the band, the title budget does not fund it).
 pub const MAX_COLS: u32 = 48;
 
-/// The title band's width budget in logical pixels — [`MAX_COLS`] at the
+/// The title band's width budget in logical pixels: [`MAX_COLS`] at the
 /// default 12-px cell. A [`TextProfile`] divides this budget by its own
 /// cell to derive its column count, so a larger `font_size` fits fewer
 /// characters in the same band instead of widening the card past the
@@ -171,7 +171,7 @@ pub const MAX_COLS: u32 = 48;
 pub const TITLE_BAND_PX: u32 = MAX_COLS * TEXT_W;
 
 /// Gap between the title band's right edge and the hint band, logical
-/// px. The hint's territory is its own, never the title's — a
+/// px. The hint's territory is its own, never the title's: a
 /// max-columns title still clears it by the full gap. Two 8-grid
 /// steps; judged beside a 64-column title on the preview sheet
 /// (2026-11-04) before freezing.
@@ -189,22 +189,22 @@ pub const HINT_COLS: u32 = 1; // len("9")
 /// The query strip's breathing above its text, logical px
 /// (`type-filter`). One 4-grid step, the HINT_GAP family; the strip's
 /// own top zone, separate from the card's row padding, so the query
-/// never crowds the first row — the row gap below the strip's text
+/// never crowds the first row: the row gap below the strip's text
 /// supplies that separation (the strip is not a row and earns no
 /// row height).
 pub const STRIP_PAD_Y: u32 = 8;
 
 /// Clear between the query's last glyph and the caret bar, logical px:
-/// one 4-grid step — the caret reads as the text's terminal, not its
+/// one 4-grid step: the caret reads as the text's terminal, not its
 /// neighbor.
 pub const STRIP_CARET_GAP: u32 = 4;
 
 /// The caret bar's width, logical px: Square's own hair (the one 2-px
-/// exception's precedent) — a static terminal, not a blinking one (the
+/// exception's precedent): a static terminal, not a blinking one (the
 /// motion vocabulary is the selection fill and nothing else).
 pub const STRIP_CARET_W: u32 = 2;
 
-/// Indent of a grouped child row's whole cell — icon and title — from
+/// Indent of a grouped child row's whole cell (icon and title) from
 /// the top-level column, logical px: two 8-grid steps, deep enough to
 /// read as nesting at a glance without re-parenting the row rhythm (the
 /// band still spans the card; only the content indents). Frozen
@@ -224,7 +224,7 @@ pub const TREE_INDENT: u32 = 16;
 pub const CHEVRON_COLS: u32 = 2;
 
 /// Clearing between a parent's title and its disclosure caret, logical
-/// px — one 8-grid step. The count pips no longer spend this gap: they
+/// px: one 8-grid step. The count pips spend none of this gap: they
 /// sit below the title, in the row's own bottom padding.
 pub const CHEVRON_GAP: u32 = 8;
 
@@ -239,19 +239,19 @@ pub const CHEVRON_GAP: u32 = 8;
 pub const CHEVRON_SCALE: u32 = 1;
 
 /// Windows the card keeps in view on a long list when the config sets
-/// no `rows` — the setting's default. The budget counts *windows*, not
+/// no `rows`: the setting's default. The budget counts *windows*, not
 /// slots: a longer list reserves [`ROWS_SLACK`] slots beyond it, so the
 /// `…` continuation rows ride on top of the budget (`slots =
 /// min(len, rows + ROWS_SLACK)`) and eight windows stay in view
 /// mid-list, nine at either end, every window of a ≤10-long list.
 /// Re-pinned 2026-11-07 from the 11-04 "8 slots" rule, whose `…` rows
 /// spent two of the budget and left six windows mid-list. Worst case at
-/// the default is 10 slots = 584 logical px — inside a 720-logical
+/// the default is 10 slots = 584 logical px, inside a 720-logical
 /// screen (1440p@2x, any 1× panel); a 1080p panel at 2× (540 logical)
 /// wants `rows = 7`.
 pub const DEFAULT_ROWS: usize = 8;
 
-/// Smallest `rows` the setting accepts — the 11-04 floor, kept: with
+/// Smallest `rows` the setting accepts (the 11-04 floor, kept): with
 /// both edges truncated the window must still hold a content row, and a
 /// card showing fewer than three windows stops reading as a list.
 pub const ROWS_MIN: usize = 3;
@@ -266,13 +266,13 @@ pub const ROWS_MAX: usize = 10;
 /// budget.
 pub const ROWS_SLACK: usize = 2;
 
-/// Smallest `columns` the setting accepts — the floor below which the
+/// Smallest `columns` the setting accepts: the floor below which the
 /// horizontal band stops reading as a strip (the [`ROWS_MIN`]
 /// reasoning, one axis over): three tiles is the shortest thing that
 /// still looks like a band rather than a pair.
 pub const COLUMNS_MIN: usize = 3;
 
-/// Largest `columns` the setting accepts — the ceiling that keeps a
+/// Largest `columns` the setting accepts: the ceiling that keeps a
 /// pinned band a glance, not a wall: twelve tiles at the compact
 /// pitch (glance-tiles G1, 2026-11-09: 72 px a slot) already span half
 /// a 4-K output's logical width.
@@ -281,34 +281,34 @@ pub const COLUMNS_MAX: usize = 12;
 // --- The horizontal band's tokens (glance-tiles; G1) -------------------
 //
 // Re-pinned 2026-11-09 (glance-tiles G1) from the CL4-frozen 152-px
-// tiles: the tiles go icon-only at a compact pitch — a 64-px slot, the
+// tiles: the tiles go icon-only at a compact pitch (a 64-px slot, the
 // ~72-px pitch of the research record's candidate geometry, 2.2×
-// denser than CL4 — and the card gains the one caption line that took
+// denser than CL4), and the card gains the one caption line that took
 // the per-tile title lines' place. The pip decomposition is the
 // owner's pick the same day (the cell grows a pip territory under the
 // icon so the pips sit in their own space, GNOME-arrow style, never
 // painted over the icon).
 //
-// Frozen 2026-11-09 on the G4 sheet — both horizontal families
+// Frozen 2026-11-09 on the G4 sheet: both horizontal families
 // (combined and flat) over both polarities and both text faces, the
 // acceptance scenarios (1/3/12 tiles, the swept selection, the
-// truncated edge, both strip shapes, the over-budget caption) — every
+// truncated edge, both strip shapes, the over-budget caption), every
 // value kept as built except the pips: both sheet judgments named
 // them the weakest element at 4 px, so PIP_SIDE grew to 6 (2.25× the
 // ink) inside the same 12-px territory and the re-judged sheet
 // passed. The caption floor's air over short strips reads calm; the
 // muted hint over a selection fill stays the vertical card's own
-// frozen vocabulary (2.4–2.9:1, measured — the badge digits' ratios);
+// frozen vocabulary (2.4–2.9:1, measured: the badge digits' ratios);
 // the light palette's fill is pre-existing through two freezes and
 // out of this module's byte-identity boundary.
 
-/// One tile's width, logical px — the compact slot of the research
+/// One tile's width, logical px: the compact slot of the research
 /// record's candidate geometry (a 48-px icon in a 64-px cell), on the
 /// 8-grid. Re-pinned 2026-11-09 (glance-tiles G1) from CL4's 152.
 pub const TILE_W: u32 = 64;
 /// Gap between tiles: selection fills never merge across it.
 pub const TILE_GAP: u32 = 8;
-/// The tile's app icon side — the icon keeps its weight while the tile
+/// The tile's app icon side: the icon keeps its weight while the tile
 /// sheds its title line (glance-tiles G1, 2026-11-09; larger than the
 /// row's 32: the tile is the card's whole content, the row's icon one
 /// column of several).
@@ -318,8 +318,8 @@ pub const TILE_PAD_X: u32 = 24;
 /// The band card's vertical padding, logical px. Re-pinned 40 → 32
 /// (glance-tiles G1, 2026-11-09): the caption line and the pip
 /// territory joined the card, and 32 + caption + gap + cell keeps the
-/// working height at exactly 168 — the padding pays for the caption
-/// the title lines used to.
+/// working height at exactly 168: the padding pays for the caption
+/// that took the title lines' place.
 pub const TILE_PAD_Y: u32 = 32;
 /// Clearing between the badge row and the icon.
 pub const TILE_PARENT_GAP: u32 = 4;
@@ -331,30 +331,30 @@ pub const PIP_GAP: u32 = 6;
 /// One count pip's side, logical px. Saturates at three pips
 /// (Unity/GNOME/dash-to-dock precedent, research record R4). Frozen
 /// at 6 on the G4 sheet, 2026-11-09: the working 4 read as texture at
-/// glance scale — both sheet judgments named the pips the weakest
-/// element, gone against the selection fill and the light backdrop —
+/// glance scale (both sheet judgments named the pips the weakest
+/// element, gone against the selection fill and the light backdrop),
 /// and 6 (2.25× the ink) holds the muted color's contrast on both
 /// fills where 4 demanded a squint.
 pub const PIP_SIDE: u32 = 6;
-/// Pitch between pip centers, logical px — `PIP_SIDE` plus a 4-px
+/// Pitch between pip centers, logical px: `PIP_SIDE` plus a 4-px
 /// clear between neighbors; three pips span 26 px centered on the
 /// tile's line. Re-frozen beside [`PIP_SIDE`] on the G4 sheet,
 /// 2026-11-09.
 pub const PIP_STEP: u32 = 10;
-/// The count where pips saturate — three, everywhere pips paint: on a
+/// The count where pips saturate (three), everywhere pips paint: on a
 /// multi-window parent (glance-tiles G2, 2026-11-09) and on the `…`
 /// overflow tile, where the count is the windows past the edge
 /// (more-tile-prominence.md §5 L2, 2026-11-14). Promoted from the
-/// inline `.min(3)` when the overflow tile joined the vocabulary — one
+/// inline `.min(3)` when the overflow tile joined the vocabulary: one
 /// named ceiling so the two readings can never drift apart.
 pub const PIP_MAX: usize = 3;
 /// Clearing between a parent's title line and its count pips, logical
-/// px — the gap the default row's centered line already leaves. The row
+/// px: the gap the default row's centered line already leaves. The row
 /// height is derived from it (see [`Rhythm::with_text`]) so the pips
 /// never share the text line at any `font_size`.
 pub const PIP_TEXT_CLEAR: u32 = 4;
 /// The tile's content cell at one text size: badge row, icon, pip
-/// territory — no title line. The selection fill's extent; the pip row
+/// territory: no title line. The selection fill's extent; the pip row
 /// is structural on every tile (pips paint only on multi-window app
 /// tiles), so the cell never varies per tile.
 pub const fn tile_cell_h_at(cell: u32) -> u32 {
@@ -366,7 +366,7 @@ pub const TILE_CELL_H: u32 = tile_cell_h_at(TEXT_H);
 /// 8-grid steps (glance-tiles G1, 2026-11-09).
 pub const CAPTION_GAP: u32 = 16;
 /// The horizontal card's height at one text size: the caption line, its
-/// gap, the tile cell, and the card padding — 168 logical px at the
+/// gap, the tile cell, and the card padding, 168 logical px at the
 /// default 12-px cell, the working target the G4 sheet freezes
 /// (glance-tiles G1, 2026-11-09): the caption line (12) + its gap (16)
 /// take the per-tile title lines' place (12 + 12) and the padding pays
@@ -378,9 +378,9 @@ pub const fn band_card_height_at(cell: u32) -> u32 {
 pub const fn band_card_height() -> u32 {
     band_card_height_at(TEXT_H)
 }
-/// The band card's width: `slots` tiles plus gaps inside the padding —
+/// The band card's width: `slots` tiles plus gaps inside the padding (
 /// the `…` tile lives inside these slots, so the card never widens for
-/// it — floored at [`CAPTION_FLOOR_W`] so a short strip's caption
+/// it), floored at [`CAPTION_FLOOR_W`] so a short strip's caption
 /// still reads at a glance. The flat band and the grouped strip join
 /// the same floor; tiles stay left-aligned in a floored width.
 pub const fn band_width(slots: u32) -> u32 {
@@ -391,7 +391,7 @@ pub const fn band_width(slots: u32) -> u32 {
         CAPTION_FLOOR_W
     }
 }
-/// The width floor every horizontal card carries, logical px — the
+/// The width floor every horizontal card carries, logical px, the
 /// caption's guarantee: the spec's ≥ 40-bitmap-column sizing target at
 /// the ~512 working estimate, on the 8-grid (glance-tiles G1,
 /// 2026-11-09). At the floor the caption's ink budget (width minus
@@ -401,28 +401,28 @@ pub const fn band_width(slots: u32) -> u32 {
 pub const CAPTION_FLOOR_W: u32 = 512;
 /// The workspace label's size step below the resolved text cell
 /// (workspace-label W2, 2026-11-09; 2 → 4 by the owner's −20 % call,
-/// 2026-11-10 — 10 → 8 at the default 12-px text): the name reads
-/// smaller than the card's own text, one face and one color — the
+/// 2026-11-10, 10 → 8 at the default 12-px text): the name reads
+/// smaller than the card's own text, one face and one color: the
 /// hierarchy is size and position alone. The cell floors at
 /// [`FONT_SIZE_MIN`], so at the 8-px text size the label paints at the
 /// one size the card has.
 pub const WS_LABEL_STEP: u32 = 4;
 /// The workspace label's ink cap, in label cells (workspace-label W6,
-/// 2026-11-09 — column-relative since the numbered form grew a
+/// 2026-11-09, column-relative since the numbered form grew a
 /// prefix): a name longer than the cap truncates with the real `…`,
-/// and the label never widens the card — it loses to the width the
+/// and the label never widens the card: it loses to the width the
 /// shapes already chose. Fourteen cells hold the longest synthesized
 /// form, "# Workspace 12", with room; working value, the preview sheet
 /// freezes it.
 pub const WS_LABEL_MAX_COLS: u32 = 14;
 /// Clearing around the label's line (workspace-label W2, 2026-11-09;
 /// its own line since W7): below the tiles on the horizontal cards,
-/// above the first row on the vertical ones — the caption gap's own
+/// above the first row on the vertical ones: the caption gap's own
 /// double 8-grid step. 16 → 24 by the owner's eye (2026-11-10): W8's
 /// padded bottom put the line 16 px under the tiles and that read as
-/// touching — one more 8-grid step is just enough air.
+/// touching; one more 8-grid step is just enough air.
 pub const WS_LABEL_GAP: u32 = 24;
-/// The workspace label's text cell at one text size — the resolved
+/// The workspace label's text cell at one text size: the resolved
 /// cell minus [`WS_LABEL_STEP`], floored at [`FONT_SIZE_MIN`].
 pub const fn ws_label_cell_at(cell: u32) -> u32 {
     let stepped = cell.saturating_sub(WS_LABEL_STEP);
@@ -435,7 +435,7 @@ pub const fn ws_label_cell_at(cell: u32) -> u32 {
 /// Inset of the badge from a tile's side.
 pub const TILE_TEXT_PAD: u32 = 8;
 /// The strip's top edge inside the card at one text size: the top
-/// padding, the reserved caption line, and the caption-to-strip gap —
+/// padding, the reserved caption line, and the caption-to-strip gap,
 /// the y0 every tile paints from and the line `cell_at`'s y footprint
 /// starts at (glance-tiles G2, 2026-11-09). The reserved line exists on
 /// every frame whether or not the caption has text.
@@ -447,7 +447,7 @@ pub const fn band_strip_top() -> u32 {
     band_strip_top_at(TEXT_H)
 }
 /// The icon's top edge inside a tile at one text size, logical px: the
-/// strip top, the badge row, and its clearing — the line `render_band`
+/// strip top, the badge row, and its clearing, the line `render_band`
 /// blits from and the vertical anchor of the tile's × badge.
 pub const fn band_icon_top_at(cell: u32) -> u32 {
     band_strip_top_at(cell) + cell + TILE_PARENT_GAP
@@ -456,7 +456,7 @@ pub const fn band_icon_top_at(cell: u32) -> u32 {
 pub const fn band_icon_top() -> u32 {
     band_icon_top_at(TEXT_H)
 }
-/// `auto`'s share of the invoking output's logical width — the spec's
+/// `auto`'s share of the invoking output's logical width: the spec's
 /// ~66 % working range, two thirds exactly; frozen on the CL4 sheet
 /// 2026-11-08.
 pub const AUTO_FRACTION_NUM: u32 = 2;
@@ -468,26 +468,26 @@ pub const AUTO_FRACTION_DEN: u32 = 3;
 pub const FALLBACK_OUTPUT_WIDTH: u32 = 1920;
 
 /// The panel the card must always fit: 720 logical px (1440p@2x, any
-/// 1× panel) — `overlay-density`'s headroom rule, unchanged. Since the
+/// 1× panel), `overlay-density`'s headroom rule, unchanged. Since the
 /// density follow the guarantee is by construction: the effective rows
 /// budget clamps to what fits (see [`effective_rows`]).
 pub const CARD_FIT_PX: u32 = 720;
 
 /// The effective `rows` budget at one density: the largest budget at
-/// or under `rows` (never past [`ROWS_MAX`]) whose worst-case card —
-/// budget + [`ROWS_SLACK`] slots — fits [`CARD_FIT_PX`]. Spacious is
+/// or under `rows` (never past [`ROWS_MAX`]) whose worst-case card (
+/// budget + [`ROWS_SLACK`] slots) fits [`CARD_FIT_PX`]. Spacious is
 /// the binding density at the default text size (68-px slot pitch: 8 +
 /// slack = 716 fits, 9 + slack = 784 does not); Standard and Compact
 /// never clamp there. A larger `font_size` grows the rows, so the clamp
 /// follows the session's resolved rhythm ([`effective_rows_rhythm`]).
-/// The setting keeps its value — this is the fit, and the daemon's one
+/// The setting keeps its value; this is the fit, and the daemon's one
 /// diagnostic names density, text size, setting, and clamp when it
 /// binds.
 pub const fn effective_rows(density: Density, rows: usize) -> usize {
     effective_rows_rhythm(rhythm(density), rows)
 }
 
-/// [`effective_rows`] at a session's resolved rhythm — the density's
+/// [`effective_rows`] at a session's resolved rhythm: the density's
 /// rows grown for the `font_size` (see [`Rhythm::with_text`]). The
 /// accepted size range guarantees at least [`ROWS_MIN`] windows still
 /// fit at every density (the test pins the worst case).
@@ -501,14 +501,14 @@ pub const fn effective_rows_rhythm(rhythm: Rhythm, rows: usize) -> usize {
 
 /// Card height in logical px for `slots` rows: the padding top and
 /// bottom, every row, and a gap between rows only. The one place the
-/// formula lives — the compile-time pins and [`overlay_model`] agree by
+/// formula lives: the compile-time pins and [`overlay_model`] agree by
 /// construction. Takes the profile's rhythm since the density follow
 /// (GE3); the constants above stay as the Standard row.
 pub const fn card_height(slots: u32) -> u32 {
     card_height_rhythm(rhythm(Density::Standard), slots)
 }
 
-/// Card height for `slots` rows under one density's rhythm — the
+/// Card height for `slots` rows under one density's rhythm: the
 /// formula itself, shared by the const pins and the model builders.
 pub const fn card_height_rhythm(rhythm: Rhythm, slots: u32) -> u32 {
     2 * rhythm.pad_y + slots * rhythm.row_h + (slots - 1) * rhythm.row_gap
@@ -519,18 +519,18 @@ pub const fn card_height_rhythm(rhythm: Rhythm, slots: u32) -> u32 {
 // The card's shape follows the desktop (owner-ratified 2026-11-07):
 // COSMIC's style choice derives the corner radius, its interface
 // density the row rhythm. Both are Airlock design decisions on the
-// store's evidence, never passthroughs — the store's raw radii feed the
+// store's evidence, never passthroughs: the store's raw radii feed the
 // judgment, the 8-grid values stay ours. The constants block above is
 // the Round + Standard row these ladders re-derive per open; the
 // profile freezes onto the session like the palette (GE3).
 
-/// Row rhythm per desktop density — COSMIC's own spacing ratios
+/// Row rhythm per desktop density: COSMIC's own spacing ratios
 /// (compact ≈ ×2/3, spacious ≈ ×4/3, store record §6) on Airlock's
 /// 8-grid anchors. At the default text size [`Rhythm::row_h`] is
 /// icon-driven (ICON + 2 × `row_pad_y`); [`Rhythm::with_text`] grows it
 /// for a larger `font_size`. `PAD_X` and the band inset have no density
 /// analogue and stay pinned. Compact's 4-px steps are the one deliberate
-/// half-grid exception (OQ 2, ratified): `row_pad_y`/`row_gap` only —
+/// half-grid exception (OQ 2, ratified): `row_pad_y`/`row_gap` only,
 /// COSMIC's own `space_xxs` compact step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rhythm {
@@ -546,8 +546,8 @@ pub struct Rhythm {
     pub row_h: u32,
 }
 
-/// The rhythm ladder. Standard's row *is* the constants block above —
-/// the documented default the follow re-derives — pinned against its
+/// The rhythm ladder. Standard's row *is* the constants block above (
+/// the documented default the follow re-derives), pinned against its
 /// literals by the ladder table test and against the pre-follow render
 /// by the digest test. Compact and Spacious are the table's own values.
 pub const fn rhythm(density: Density) -> Rhythm {
@@ -595,10 +595,10 @@ impl Rhythm {
 /// Judged on the sheet 2026-11-07, not transcribed from the store:
 /// Square's 2 keeps a hair of rounding on a hairline-border card where
 /// 0 would read as a bug; SlightlyRound takes the band's own 8 so card
-/// and band round together; Round is today's pin, unchanged.
+/// and band round together; Round is the pin, unchanged.
 pub const fn style_radius(style: Style) -> u32 {
     match style {
-        // [`RADIUS`] itself — the documented default rung.
+        // [`RADIUS`] itself: the documented default rung.
         Style::Round => RADIUS,
         Style::SlightlyRound => 8,
         Style::Square => 2,
@@ -618,9 +618,9 @@ pub const fn band_radius(radius: u32) -> u32 {
 /// The card's text sizing, resolved once at open from the `font_size`
 /// key and frozen with the palette and shape. `size_px` is the em box in
 /// logical pixels: the System backend shapes at it, the Bitmap floor
-/// scales its 8×8 glyph cells to it. Every text-derived metric — the
+/// scales its 8×8 glyph cells to it. Every text-derived metric (the
 /// title band's column budget, the query strip's line, the band's
-/// caption line, the parent caret's reservation — reads from this
+/// caption line, the parent caret's reservation) reads from this
 /// profile, so a larger face fits fewer characters in the same band
 /// instead of widening the card past its design cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -649,7 +649,7 @@ impl TextProfile {
 
     /// Title columns the band holds at this size: [`TITLE_BAND_PX`]
     /// divided by the cell, floored (a partial column is no column).
-    /// 48 at the default 12-px cell, 72 at 8, 24 at 24 — the band's
+    /// 48 at the default 12-px cell, 72 at 8, 24 at 24; the band's
     /// physical width stays inside its ~600-px cap.
     pub const fn title_cols(self) -> u32 {
         TITLE_BAND_PX / self.safe_size()
@@ -662,7 +662,7 @@ impl TextProfile {
 
     /// Columns a parent row reserves after its title for the disclosure
     /// caret and its clearing: the caret's ink plus [`CHEVRON_GAP`],
-    /// rounded up to whole cells. Never less than one — a caret is
+    /// rounded up to whole cells. Never less than one: a caret is
     /// always reserved.
     pub const fn chevron_cols(self) -> u32 {
         let needed = CHEVRON_GAP + GLYPH_W * CHEVRON_SCALE;
@@ -685,7 +685,7 @@ impl Default for TextProfile {
 
 /// The card's resolved shape: the style's radius and the density's
 /// rhythm, frozen onto a session at open (beside the palette) so a
-/// desktop flip mid-gesture never re-shapes the open card — GE3's
+/// desktop flip mid-gesture never re-shapes the open card, GE3's
 /// freeze. Default is Round + Standard, the constants block verbatim
 /// (pinned by test): COSMIC's factory default and the store-miss
 /// default render byte-identically to every card shipped before the
@@ -716,7 +716,7 @@ impl StyleProfile {
         }
     }
 
-    /// The same profile at a resolved text size — the one seam the
+    /// The same profile at a resolved text size: the one seam the
     /// `font_size` setting crosses. The row rhythm grows with the line
     /// (icons, gaps, and padding stay put), so the parent's pips keep
     /// their clearing and the card's height follows the text.
@@ -728,7 +728,7 @@ impl StyleProfile {
 }
 
 impl Default for StyleProfile {
-    /// Round + Standard — the derived-today row.
+    /// Round + Standard: the derived default row.
     fn default() -> Self {
         Self::resolve(Style::Round, Density::Standard)
     }
@@ -742,17 +742,17 @@ pub const CLOSE_AFTER: Duration = Duration::from_secs(2);
 pub const HARD_CLOSE: Duration = Duration::from_secs(30);
 
 /// Overlay background (ARGB). Near opaque: the card must read identically
-/// on light and dark wallpapers — within a few RGB points of GNOME's OSD
+/// on light and dark wallpapers, within a few RGB points of GNOME's OSD
 /// panel and cosmic-launcher's themed card (research record TL;DR #13).
 pub const COLOR_BACKGROUND: u32 = 0xFA_1E_21_26;
 
 /// Row background for the selected row: the text color at 20% blended
-/// over the card — GNOME's `:selected` formula (research record §2.1),
+/// over the card, GNOME's `:selected` formula (research record §2.1),
 /// a neutral lift that reads on both wallpaper polarities without
 /// borrowing the user's accent color.
 pub const COLOR_SELECTED_BG: u32 = blend_over(COLOR_BACKGROUND, COLOR_TEXT, 20);
 
-/// Card border: the text color at 18% over the card — the hairline role
+/// Card border: the text color at 18% over the card, the hairline role
 /// cosmic-launcher calls `bg_divider` (research record §2.6). Deliberately
 /// stronger than the usual divider: two preview review rounds showed
 /// anything subtler dissolves against dark wallpapers, and without a
@@ -784,7 +784,7 @@ const _: () = {
     assert!(COLOR_SELECTED_BG >> 24 >= 0xFA);
 };
 
-/// WCAG 2.x relative luminance of one straight sRGB color — the alpha
+/// WCAG 2.x relative luminance of one straight sRGB color, the alpha
 /// byte ignored: channels linearized (`c/12.92` below the 0.04045 knee,
 /// `((c+0.055)/1.055)^2.4` above), weighted `0.2126 R + 0.7152 G +
 /// 0.0722 B`. The shared measure behind both the custom pair's floor
@@ -813,13 +813,13 @@ pub fn contrast_ratio(a: u32, b: u32) -> f32 {
 /// The custom `card`/`text` pair's hard floor: WCAG 2.2 AA for 12-px
 /// text, checked when the pair parses. Below it the file is rejected
 /// whole (`settings` names both keys and the measured ratio), so
-/// last-good settings hold — the floor is never a silent clamp.
+/// last-good settings hold; the floor is never a silent clamp.
 pub const CONTRAST_FLOOR: f32 = 4.5;
 
 /// One card polarity: the five colors an overlay render paints with.
-/// `selected_bg`, `border`, and `muted` stay *derived* — the text color
+/// `selected_bg`, `border`, and `muted` stay *derived*: the text color
 /// at 20% / 18% / 55% over the card ([`COLOR_SELECTED_BG`] /
-/// [`COLOR_BORDER`] for the dark card) — so a palette is two chosen
+/// [`COLOR_BORDER`] for the dark card), so a palette is two chosen
 /// colors, three computed ones, and the polarity itself; the blend
 /// system is the design system, and no variant can drift from it.
 /// `is_dark` is the icon-tint polarity: symbolic icons cache per
@@ -840,7 +840,7 @@ pub struct Palette {
     /// range; frozen on the preview sheet 2026-11-04, where the tightest
     /// read was muted-over-selection on the light card.
     pub muted: u32,
-    /// Which polarity this card is — the icon cache's tint key.
+    /// Which polarity this card is: the icon cache's tint key.
     pub is_dark: bool,
 }
 
@@ -859,7 +859,7 @@ impl Palette {
     }
 
     /// The light-mode card: a near-opaque warm-white fill with
-    /// near-black text — the dark palette's inverse. Selection derives
+    /// near-black text: the dark palette's inverse. Selection derives
     /// by the same 20% blend as the dark card; the border is 22%, two
     /// points *past* the band where the dark border sits two points
     /// *before* it (band minus one step on either polarity, the same
@@ -867,7 +867,7 @@ impl Palette {
     /// review round strengthened it from the symmetric 18%: against
     /// light wallpapers the card is only ~12 RGB points brighter than
     /// the backdrop, and the 18% hairline let the card's edges nearly
-    /// dissolve — without a shadow, the stroke is the only separation
+    /// dissolve; without a shadow, the stroke is the only separation
     /// this renderer has.
     pub const fn light() -> Palette {
         const BACKGROUND: u32 = 0xFA_F7_F4_F0;
@@ -884,8 +884,8 @@ impl Palette {
 
     /// Points the selection band at its source, resolved once at open
     /// beside the card: [`SelectionSetting::Accent`] blends the
-    /// followed accent's `base` at 20 % over this card — a `None` read
-    /// is the neutral lift, the band is never absent — and
+    /// followed accent's `base` at 20 % over this card (a `None` read
+    /// is the neutral lift, the band is never absent) and
     /// [`SelectionSetting::Neutral`] keeps the constructor's own
     /// text-at-20 % band, byte-identical to every card shipped before
     /// the follow. Followed alpha cannot leak: the accent arrives as
@@ -907,10 +907,10 @@ impl Palette {
     /// The custom card from the paired `card`/`text` keys: the two
     /// chosen colors as given, the three computed colors by the same
     /// blend system as the built-ins (band 20 %, muted 55 %, the border
-    /// one step off the band per polarity — 18 % on a dark card, 22 %
+    /// one step off the band per polarity, 18 % on a dark card, 22 %
     /// on a light one), and the icon-tint polarity from the card's own
     /// relative luminance (dark under 0.5). The alpha bytes are owned
-    /// here — background `0xFA`, text `0xFF` — so the near-opaque
+    /// here (background `0xFA`, text `0xFF`) so the near-opaque
     /// contract holds whatever the pair. Infallible by construction:
     /// the contrast floor already rejected any pair that parses, and
     /// alpha is unreachable through the keys.
@@ -933,10 +933,10 @@ impl Palette {
     }
 
     /// The card the keys paint: a present pair wins over every
-    /// [`ThemeSetting`] — the user's own card, polarity and all.
+    /// [`ThemeSetting`]; the user's own card, polarity and all.
     /// Otherwise a pinned value wins regardless of the system; `Auto`
     /// follows the system's dark/light answer, and an unreadable one
-    /// (`None`) paints dark — today's look, never a broken switch.
+    /// (`None`) paints dark: the shipped look, never a broken switch.
     pub fn resolve(
         setting: ThemeSetting,
         system_prefers_dark: Option<bool>,
@@ -960,8 +960,8 @@ impl Palette {
 
 /// Which card the overlay paints. `Auto` defers to the COSMIC system
 /// dark/light preference, read per invocation; a missing or unreadable
-/// system answer resolves to dark (today's look). The vocabulary lives
-/// here beside [`Palette`] — the switcher's decision type, parsed by
+/// system answer resolves to dark (the shipped look). The vocabulary lives
+/// here beside [`Palette`]: the switcher's decision type, parsed by
 /// `settings` from the config's `theme` key (the arrangement `Scope`
 /// already uses: `switcher` owns the type, `settings` reads into it).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -976,7 +976,7 @@ pub enum ThemeSetting {
 }
 
 /// What the selection band is made of. `Accent` (the default) follows
-/// the COSMIC system accent — its `base` color at 20 % over the
+/// the COSMIC system accent: its `base` color at 20 % over the
 /// effective card, the desktop's personality in the one place a glance
 /// tracks it. `Neutral` is the 2026-11-04 lift it replaces: the text
 /// color at 20 %, byte-identical to every card shipped before the
@@ -988,12 +988,12 @@ pub enum SelectionSetting {
     /// the neutral lift, so the band is never absent.
     #[default]
     Accent,
-    /// The text color at 20 % over the card — the shipped band.
+    /// The text color at 20 % over the card: the shipped band.
     Neutral,
 }
 
 /// Which way the card lays its list out. `Vertical` (the default) is
-/// today's card — the tall column of rows, byte-identical. `Horizontal`
+/// the shipped card: the tall column of rows, byte-identical. `Horizontal`
 /// is the wide, short band of window tiles, centered. Parsed by
 /// `settings` from the `layout` key, resolved once at open and frozen
 /// like the palette (the `ThemeSetting` arrangement).
@@ -1007,11 +1007,11 @@ pub enum LayoutSetting {
 }
 
 /// The horizontal card's tile budget. `Auto` (the default) fits as many
-/// tiles as a fraction of the invoking output's logical width allows —
+/// tiles as a fraction of the invoking output's logical width allows;
 /// read at map, frozen for the session; `Pinned(n)` fixes the budget at
 /// [`COLUMNS_MIN`]..=[`COLUMNS_MAX`] tiles, card width = n × pitch.
 /// Parsed by `settings` from the `columns` key; binds
-/// [`LayoutSetting::Horizontal`] only — the vertical card ignores it,
+/// [`LayoutSetting::Horizontal`] only; the vertical card ignores it,
 /// `rows` never constrains the band.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ColumnsSetting {
@@ -1023,12 +1023,12 @@ pub enum ColumnsSetting {
 }
 
 /// One card-width key's answer. `Auto` (the default) keeps the
-/// content-sized card — the widest title row on the vertical card, the
+/// content-sized card: the widest title row on the vertical card, the
 /// tile shape on the band; `Px(n)` floors the card at n logical px;
 /// `Percent(n)` at n % of the invoking output's logical width (`"100%"`
 /// the whole output), the percentage parser-guaranteed ≤ 100. Parsed by
 /// `settings` from the `width`/`min-width` keys; both layouts read them,
-/// and neither ever shrinks the card below its content — the floor only
+/// and neither ever shrinks the card below its content; the floor only
 /// widens, so nothing clips mid-gesture.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WidthSetting {
@@ -1043,8 +1043,8 @@ pub enum WidthSetting {
 
 /// The text backend one card paints through, chosen once at session
 /// open beside the palette and frozen for the gesture's life (the
-/// palette freeze philosophy): `Bitmap` is the font8x8 floor — today's
-/// paint, byte-identical, and the zero-fonts fallback — and `System`
+/// palette freeze philosophy): `Bitmap` is the font8x8 floor (the shipped
+/// paint, byte-identical, and the zero-fonts fallback) and `System`
 /// shapes and rasterizes through the daemon's
 /// [`crate::text::TextSystem`] in the family the session resolved.
 /// The model builders and the renderer take the same enum, so a card's
@@ -1052,11 +1052,11 @@ pub enum WidthSetting {
 /// to end.
 pub enum TextBackend<'a> {
     /// The font8x8 paint: folded titles, column caps, the hand-drawn
-    /// `…` — every byte as shipped.
+    /// `…`, every byte as shipped.
     Bitmap,
     /// The system stack: real glyphs, fallback chains, pixel budgets,
     /// the font's own `…`. `query` is the family the session froze
-    /// (`FontQuery::SansSerif` is the default face — the interface-font
+    /// (`FontQuery::SansSerif` is the default face; the interface-font
     /// follow resolves before this, at open).
     System {
         system: &'a mut crate::text::TextSystem,
@@ -1067,7 +1067,7 @@ pub enum TextBackend<'a> {
 /// The backend a frozen [`crate::text::TextDecision`] paints through,
 /// borrowing the daemon's [`crate::text::TextSystem`]: the floor maps
 /// to [`TextBackend::Bitmap`], the system decision to
-/// [`TextBackend::System`] in its resolved family. The one mapping —
+/// [`TextBackend::System`] in its resolved family. The one mapping:
 /// the model builders and the renderer share it, so a card is composed
 /// and painted under one decision end to end.
 pub fn text_backend<'a>(
@@ -1089,8 +1089,8 @@ pub fn text_backend<'a>(
 // band's own ends round within its height; and the border is a
 // hairline, not a frame. Since the geometry follow (GE2) the
 // rhythm/radius pins run parametrized over every style × density
-// profile the desktop can resolve — the values are derived ([`rhythm`],
-// [`style_radius`]), so every combination must hold, not just today's
+// profile the desktop can resolve; the values are derived ([`rhythm`],
+// [`style_radius`]), so every combination must hold, not just the default
 // row; the constants themselves stay pinned to the default profile by
 // the const-equality test.
 const _: () = {
@@ -1118,7 +1118,7 @@ const _: () = {
     assert!(ICON_GAP.is_multiple_of(4));
     assert!(HINT_GAP.is_multiple_of(4));
     // A parent row's disclosure caret and its clearing fit the
-    // CHEVRON_COLS budget — the render guard is defense in depth, this
+    // CHEVRON_COLS budget: the render guard is defense in depth, this
     // is the reservation's truth. (The count pips sit below the title
     // and spend no title width.)
     assert!(CHEVRON_GAP + GLYPH_W * CHEVRON_SCALE <= CHEVRON_COLS * TEXT_W);
@@ -1147,7 +1147,7 @@ const _: () = {
     assert!(ROWS_MIN <= DEFAULT_ROWS && DEFAULT_ROWS <= ROWS_MAX);
 
     // Every profile the desktop can resolve: three styles × three
-    // densities. `while` loops — const evaluation has no `for`.
+    // densities. `while` loops: const evaluation has no `for`.
     let styles = [Style::Round, Style::SlightlyRound, Style::Square];
     let densities = [Density::Compact, Density::Standard, Density::Spacious];
     let mut si = 0;
@@ -1166,12 +1166,12 @@ const _: () = {
             // The band clears the card's corner arcs. The pinned era's
             // `PAD_Y ≥ RADIUS` was a sufficient condition while pad_y
             // was a pinned 16; Compact's derived 8 spends the band's
-            // inset instead — the exact sufficient condition is
+            // inset instead; the exact sufficient condition is
             // `pad_y + SELECT_INSET ≥ radius` (the sampled proof, over
             // the band's own corner arc, runs in the tests).
             assert!(rhythm.pad_y + SELECT_INSET >= profile.radius);
-            // The 8-grid per profile — 4-multiples, with the two
-            // ratified exceptions: Square's 2 (OQ 1 — a hair of
+            // The 8-grid per profile: 4-multiples, with the two
+            // ratified exceptions: Square's 2 (OQ 1, a hair of
             // rounding where 0 would read as a bug) and Compact's
             // row steps (OQ 2, the half-grid).
             assert!(profile.radius == 2 || profile.radius.is_multiple_of(4));
@@ -1182,7 +1182,7 @@ const _: () = {
             // The band's own ends round within its height.
             assert!(2 * profile.band_radius <= rhythm.row_h);
             // The card fits the panel at this density's clamped ceiling
-            // (the fit is by construction — [`effective_rows`] — these
+            // (the fit is by construction, [`effective_rows`], these
             // pins hold it at the worst case; Spacious binds at a
             // budget of 8, Standard's 696 and Compact's 540 never do).
             let budget = effective_rows(densities[di], ROWS_MAX);
@@ -1191,7 +1191,7 @@ const _: () = {
         }
         si += 1;
     }
-    // The default-budget worst case (584, Standard's row) — the
+    // The default-budget worst case (584, Standard's row), the
     // overlay-density pin, unchanged.
     assert!(card_height((DEFAULT_ROWS + ROWS_SLACK) as u32) <= CARD_FIT_PX);
 };
@@ -1207,50 +1207,50 @@ pub const GLYPH_SCALE: u32 = 3;
 /// Generic window glyph, the icon-cell fallback: an 8×8 frame with a
 /// title-bar divider, drawn in the palette's text color scaled to
 /// `GLYPH_SCALE × 8` logical px and centered in the cell. One glyph
-/// vocabulary for every fallback row — the icon column belongs to the
+/// vocabulary for every fallback row: the icon column belongs to the
 /// apps, the glyph to "no icon".
 const WINDOW_GLYPH: [u8; 8] = [0xFF, 0x81, 0x81, 0xFF, 0x81, 0x81, 0x81, 0xFF];
 
-/// Hand-drawn ellipsis for the truncation marker — the one intentional
+/// Hand-drawn ellipsis for the truncation marker: the one intentional
 /// non-ASCII glyph (research record §5.2.3 says elide with `…`; font8x8
 /// has none, so this is it). Dots on the period's baseline, columns
 /// 1/3/5.
 const ELLIPSIS_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x2A, 0x00];
 
-/// Middle dot for `·`/`•` separators (GNOME-style `file.py · src` titles)
-/// — same hand-drawn family as the ellipsis: one 2×2 dot at the x-height
+/// Middle dot for `·`/`•` separators (GNOME-style `file.py · src` titles),
+/// same hand-drawn family as the ellipsis: one 2×2 dot at the x-height
 /// middle, where a middle dot belongs rather than on the period's
 /// baseline.
 const MIDDLE_DOT_GLYPH: [u8; 8] = [0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00];
 
-/// Disclosure caret, collapsed (points right) — the grouped parent's
+/// Disclosure caret, collapsed (points right): the grouped parent's
 /// expansion mark, drawn at [`CHEVRON_SCALE`] in the text color. A
 /// two-pixel-stroke caret, not the filled triangle of the first
 /// grouping pass: inline on the title line the caret reads as tree
 /// structure, where the solid wedge read as a media control.
 const CHEVRON_RIGHT_GLYPH: [u8; 8] = [0x00, 0x0C, 0x18, 0x30, 0x30, 0x18, 0x0C, 0x00];
 
-/// Disclosure caret, expanded (points down) — the right glyph rotated a
+/// Disclosure caret, expanded (points down): the right glyph rotated a
 /// quarter turn and centered on the cell.
 const CHEVRON_DOWN_GLYPH: [u8; 8] = [0x00, 0x00, 0x42, 0x66, 0x3C, 0x18, 0x00, 0x00];
 
 /// The close affordance's × (`close-window`): two 2-px diagonal arms
-/// meeting at a 2×2 center — the chevron family's solid weight, hand
+/// meeting at a 2×2 center: the chevron family's solid weight, hand
 /// drawn like every glyph in the vocabulary, never a typed character.
 const CLOSE_GLYPH: [u8; 8] = [0xC3, 0xE7, 0x66, 0x3C, 0x3C, 0x66, 0xE7, 0xC3];
 
-/// The × badge's side, logical px — a 16-px knockout at the icon's
+/// The × badge's side, logical px: a 16-px knockout at the icon's
 /// top-right corner, shared by the vertical rows and the horizontal
 /// tiles so the pointer affordance is identical in either layout. The
 /// knockout (the card background) separates the mark from a colorful
 /// icon, so it reads on every app, and the mark stays secondary to the
 /// thumbnail it closes. Re-pinned 12 → 16 (2026-11-11, the owner's
 /// "a bit bigger" call): the 12-px button read as a speck on the
-/// 48-px tile at glance distance — one 4-grid step up, the × ink
+/// 48-px tile at glance distance; one 4-grid step up, the × ink
 /// itself unchanged, so the mark stays quiet while its button becomes
 /// findable.
 const CLOSE_BADGE: u32 = 16;
-/// The badge's corner radius, logical px — the knockout's straight
+/// The badge's corner radius, logical px: the knockout's straight
 /// edges hold 4 px with 6-px corner arcs (12/4 kept the same 4-px
 /// straights at a third of the side), the small-chip rounding that
 /// keeps the knockout from reading as a square hole cut in the icon.
@@ -1258,20 +1258,20 @@ const CLOSE_BADGE_RADIUS: u32 = 6;
 /// The × ink's draw scale inside the badge: the 8×8 glyph at 1×
 /// (8 logical px), leaving 4 px of knockout on every side.
 const CLOSE_BADGE_SCALE: u32 = 1;
-/// The badge's click territory, logical px — the 16-px badge plus 4 px
+/// The badge's click territory, logical px: the 16-px badge plus 4 px
 /// of forgiveness on its left and bottom edges, so the small target
 /// stays reachable without widening what the eye reads as the button.
 const CLOSE_BADGE_HIT: u32 = 20;
 
-/// The number chord a row advertises in its hint band — the single
+/// The number chord a row advertises in its hint band: the single
 /// source of "which N selects this row" for both the renderer (the
 /// painted digit) and the input map (the wired key): Ctrl+N addresses
 /// level-1 entries, and a row with no hint (`None`, rows past nine,
-/// continuation rows, and — since rev 5 — every group child) is not
+/// continuation rows, and, since rev 5, every group child) is not
 /// number-addressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowHint {
-    /// `Ctrl+N` — the Nth level-1 entry (1-based), flat rows included
+    /// `Ctrl+N`: the Nth level-1 entry (1-based), flat rows included
     /// (the flat card's every-row numbering is the same rule over a
     /// one-level tree).
     Ctrl(usize),
@@ -1279,7 +1279,7 @@ pub enum RowHint {
 
 impl RowHint {
     /// The Ctrl+N chord for the level-1 entry at `index` (0-based):
-    /// `None` past the ninth — the tenth entry is not number-addressed,
+    /// `None` past the ninth: the tenth entry is not number-addressed,
     /// and no chord is ever shown for it.
     fn ctrl(index: usize) -> Option<Self> {
         (index < MAX_HINTS).then_some(RowHint::Ctrl(index + 1))
@@ -1287,7 +1287,7 @@ impl RowHint {
 
     /// The label both cards paint: the bare digit, `1`..`9`. "Ctrl+9"
     /// is six bitmap columns against the one column the hint band
-    /// reserves (and the four a 64-px tile funds) — glance-tiles G2,
+    /// reserves (and the four a 64-px tile funds); glance-tiles G2,
     /// 2026-11-09; the vertical band followed on 2026-11-09 when the
     /// full chord repeated on every row read as a table column. The
     /// digit stays wired to the same reading-order ordinal.
@@ -1301,7 +1301,7 @@ impl RowHint {
 /// One rendered row: a title, an optional app icon, and whether it is
 /// the selection. `icon: None` draws the generic window glyph. A
 /// continuation row at a truncated edge is the same shape with `handle:
-/// None`, no title, and `count` set to the windows past the edge — the
+/// None`, no title, and `count` set to the windows past the edge: the
 /// missing handle is what makes every input guard (hover, click, Ctrl+N)
 /// treat it as inert.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1309,7 +1309,7 @@ pub struct RowModel {
     pub title: String,
     pub icon: Option<Rc<IconBitmap>>,
     pub selected: bool,
-    /// The window this row renders — the truth a pointer click selects.
+    /// The window this row renders: the truth a pointer click selects.
     /// The renderer ignores it; hit-testing reads it. `None` marks a
     /// continuation row. A grouped parent row carries its app's
     /// MRU-front window, so every row-addressed input resolves to
@@ -1317,7 +1317,7 @@ pub struct RowModel {
     pub handle: Option<Handle>,
     /// The row's place in the grouped tree; [`RowKind::Leaf`] on every
     /// flat row. Drives the child indent, the parent's count pips and
-    /// caret, and nothing else — input addressing reads `handle`.
+    /// caret, and nothing else; input addressing reads `handle`.
     pub kind: RowKind,
     /// The count the pips show, saturating at [`PIP_MAX`]: on a parent
     /// row, the app's window count; on a continuation row, the windows
@@ -1326,10 +1326,10 @@ pub struct RowModel {
     pub count: usize,
     /// The number chord the hint band paints for this row; `None` on
     /// continuation rows and rows past nine (see [`RowHint`]). Set by
-    /// the model builders — the position-to-chord rule is theirs, the
+    /// the model builders: the position-to-chord rule is theirs, the
     /// render and the input map only read it.
     pub hint: Option<RowHint>,
-    /// A parent row's expansion state — the disclosure triangle's
+    /// A parent row's expansion state: the disclosure triangle's
     /// right (collapsed) / down (expanded) direction. Meaningless on
     /// every other kind.
     pub expanded: bool,
@@ -1343,11 +1343,11 @@ pub struct OverlayModel {
     pub rows: Vec<RowModel>,
     pub width: u32,
     pub height: u32,
-    /// The window these rows show — what a session carries into the
+    /// The window these rows show: what a session carries into the
     /// next rebuild as [`visible_window`]'s `prev`, keeping the sticky
     /// rule moving.
     pub viewport: Viewport,
-    /// The shape these rows rendered under — the style/density profile
+    /// The shape these rows rendered under: the style/density profile
     /// frozen at open. The renderer and the pointer's `row_at` read it
     /// back, so what a click addresses is always the geometry the user
     /// saw, whatever the desktop did mid-gesture.
@@ -1355,27 +1355,27 @@ pub struct OverlayModel {
     /// The axis the entries lay on: `false` (the default) paints the
     /// vertical column of rows, `true` the horizontal band of tiles.
     /// The renderer and the pointer's `row_at`/`cell_at` dispatch read
-    /// it back — hit-testing always addresses the geometry the user
+    /// it back; hit-testing always addresses the geometry the user
     /// saw (the `profile` contract, one axis over).
     pub horizontal: bool,
-    /// The type-to-filter query this card is narrowed by (`type-filter`)
-    /// — `None` on every unfiltered card, so the strip and its height
+    /// The type-to-filter query this card is narrowed by (`type-filter`):
+    /// `None` on every unfiltered card, so the strip and its height
     /// exist exactly while a query stands and zero-query cards stay
     /// byte-identical.
     pub query: Option<String>,
-    /// The row the pointer rests on (`close-window`'s × reveal) —
+    /// The row the pointer rests on (`close-window`'s × reveal),
     /// presence, not selection: the daemon sets it from hover
     /// observations, validated against the rows this model just built,
-    /// and the renderer paints the close badge on the row's icon —
-    /// both cards share the badge, on the icon's top-right corner —
-    /// when the row is a window row (leaves, children, query rows —
+    /// and the renderer paints the close badge on the row's icon (
+    /// both cards share the badge, on the icon's top-right corner)
+    /// when the row is a window row (leaves, children, query rows,
     /// never headers or continuations). `None` on every pointerless
     /// card, so nothing paints without pointer presence.
     pub hovered: Option<usize>,
     /// The one caption (glance-tiles G3, 2026-11-09): the commit
-    /// target's title — the selected window tile's own title, an app
+    /// target's title, the selected window tile's own title, an app
     /// tile's MRU-front window's title, the flat band's selected
-    /// window — composed through `display_title` and truncated to the
+    /// window, composed through `display_title` and truncated to the
     /// card's caption budget with the real `…`. The horizontal cards
     /// paint it fixed top-center, full text color, never moving with
     /// the selection; the line is reserved on every frame whether or
@@ -1383,17 +1383,17 @@ pub struct OverlayModel {
     /// nothing of it).
     pub caption: String,
     /// The workspace label (workspace-label W2, 2026-11-09): the
-    /// invoking workspace's name — or its synthesized "# Workspace N"
-    /// — truncated to [`WS_LABEL_MAX_COLS`] with the real `…`. Empty on
+    /// invoking workspace's name (or its synthesized "# Workspace N")
+    /// truncated to [`WS_LABEL_MAX_COLS`] with the real `…`. Empty on
     /// every default-off card; when it stands, each card reserves its
-    /// line — above the first row on the vertical ones, below the
+    /// line: above the first row on the vertical ones, below the
     /// tiles on the horizontal ones. Written once at open, through
     /// [`with_workspace`], and frozen with the session.
     pub workspace: String,
 }
 
 impl OverlayModel {
-    /// The row whose band contains the device-pixel point (`x`, `y`) —
+    /// The row whose band contains the device-pixel point (`x`, `y`):
     /// a surface-local logical pointer position × render `scale`. The
     /// model and its row rhythm are logical; only buffers are device
     /// pixels, so the point scales down to the model's space. The
@@ -1409,7 +1409,7 @@ impl OverlayModel {
         }
         // The rhythm the model rendered under, not the default's. The
         // query strip, when one stands, shifts every row down by its
-        // height — the strip zone itself is the top padding's twin: no
+        // height; the strip zone itself is the top padding's twin: no
         // row, no selection. The workspace label's line, when one
         // stands, sits above the strip and shifts with the same rule.
         let rhythm = self.profile.rhythm;
@@ -1428,11 +1428,11 @@ impl OverlayModel {
         (y_px - row as f64 * pitch < rhythm.row_h as f64).then_some(row) // gap seam
     }
 
-    /// The tile whose cell contains the device-pixel point (`x`, `y`) —
+    /// The tile whose cell contains the device-pixel point (`x`, `y`),
     /// the horizontal twin of [`OverlayModel::row_at`]: a surface-local
     /// logical pointer position × render `scale`, the point scaled down
     /// to the model's space. The footprint is the full band height
-    /// (the cell is the unit) below the reserved caption line — the
+    /// (the cell is the unit) below the reserved caption line: the
     /// caption's line and gap are the top padding's twin (the query
     /// strip's rule, one axis over): no tile paints there, so nothing
     /// is addressed from there (glance-tiles G2, 2026-11-09). Tile
@@ -1448,8 +1448,8 @@ impl OverlayModel {
         let cell = self.profile.text.cell();
         let strip_top = band_strip_top_at(cell) as f64 * scale as f64;
         // The tiles' own cell bounds the band (workspace-label W8):
-        // everything below — the clearing, the label's line, the bottom
-        // padding — addresses nothing, like the caption line above.
+        // everything below (the clearing, the label's line, the bottom
+        // padding) addresses nothing, like the caption line above.
         let strip_bottom = strip_top + tile_cell_h_at(cell) as f64 * scale as f64;
         if y < strip_top || y >= strip_bottom {
             return None; // the caption line above, the label's territory below
@@ -1466,7 +1466,7 @@ impl OverlayModel {
     }
 
     /// The window the Nth *content* tile in reading order resolves to
-    /// (0-based) — continuation affordances skipped, left→right — the
+    /// (0-based, continuation affordances skipped, left→right): the
     /// address a horizontal card's Ctrl+N chords resolve against at
     /// event receipt. The hint ordinals number the same sequence, so
     /// every displayed hint is wired. `None` past the content tiles.
@@ -1479,7 +1479,7 @@ impl OverlayModel {
     }
 
     /// The row whose close target contains the device-pixel point (`x`,
-    /// `y`) — `close-window`'s click territory. Both axes use the same
+    /// `y`): `close-window`'s click territory. Both axes use the same
     /// × badge on the icon's top-right corner: a vertical row's icon
     /// cell (the same footprint [`OverlayModel::row_at`] resolves, the
     /// profile's rhythm, the query strip's shift, the child indent) or
@@ -1522,8 +1522,8 @@ impl OverlayModel {
     }
 }
 
-/// Whether a row offers the × (`close-window`): a window row — a leaf,
-/// a group child, or a query row — whose handle resolves the window it
+/// Whether a row offers the × (`close-window`): a window row (a leaf,
+/// a group child, or a query row) whose handle resolves the window it
 /// closes. Group headers close their app's front window through
 /// Alt+minus but never reveal a pointer target, and a continuation row
 /// has no window at all.
@@ -1533,8 +1533,8 @@ fn closeable(row: &RowModel) -> bool {
 
 /// The × badge's rectangle over an icon cell, logical px: the icon's
 /// top-right corner, where the mark sits on the thumbnail it closes.
-/// Both cards use this one badge — a vertical row's 32-px icon cell and
-/// a horizontal tile's 48-px icon cell — so the affordance is identical
+/// Both cards use this one badge (a vertical row's 32-px icon cell and
+/// a horizontal tile's 48-px icon cell) so the affordance is identical
 /// in either layout.
 fn close_badge_rect(icon_left: u32, icon_top: u32, icon_side: u32) -> (u32, u32, u32, u32) {
     let icon_right = icon_left + icon_side;
@@ -1546,7 +1546,7 @@ fn close_badge_rect(icon_left: u32, icon_top: u32, icon_side: u32) -> (u32, u32,
     )
 }
 
-/// The ×'s click territory over an icon cell, logical px — the badge's
+/// The ×'s click territory over an icon cell, logical px: the badge's
 /// top-right anchor with [`CLOSE_BADGE_HIT`] of forgiveness on the left
 /// and bottom edges, so the small target stays reachable. The badge
 /// paints inside this rectangle.
@@ -1560,7 +1560,7 @@ fn close_zone_rect(icon_left: u32, icon_top: u32, icon_side: u32) -> (u32, u32, 
     )
 }
 
-/// The ×'s click territory on a horizontal tile, logical px — the
+/// The ×'s click territory on a horizontal tile, logical px: the
 /// tile's icon cell, centred in the slot, at the default text size.
 #[allow(dead_code)] // the default-profile seam for tests; the daemon uses `_at`
 fn close_tile_zone(left: u32) -> (u32, u32, u32, u32) {
@@ -1577,7 +1577,7 @@ fn close_tile_zone_at(left: u32, cell: u32) -> (u32, u32, u32, u32) {
     )
 }
 
-/// The icon cell's top-left corner on a vertical row, logical px — the
+/// The icon cell's top-left corner on a vertical row, logical px: the
 /// row rhythm, the workspace label's and the query strip's shifts, and
 /// the child indent, the same geometry the renderer paints the icon
 /// under. `None` past the model's rows.
@@ -1595,7 +1595,7 @@ fn row_icon_origin(model: &OverlayModel, row: usize) -> Option<(u32, u32)> {
     Some((PAD_X + indent, top + (rhythm.row_h - ICON) / 2))
 }
 
-/// The ×'s click territory on a vertical row, logical px — the same
+/// The ×'s click territory on a vertical row, logical px: the same
 /// badge anchor over the row's icon cell.
 fn close_row_zone(model: &OverlayModel, row: usize) -> Option<(u32, u32, u32, u32)> {
     let (icon_left, icon_top) = row_icon_origin(model, row)?;
@@ -1663,7 +1663,7 @@ fn paint_close_badge(
 /// continuation row replaces the outermost slot at each truncated edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Viewport {
-    /// The list index the window's first slot covers — a continuation
+    /// The list index the window's first slot covers: a continuation
     /// row when `top`, a content row otherwise.
     pub start: usize,
     /// Content rows in the window: its slots that are not continuations.
@@ -1704,7 +1704,7 @@ pub struct Banding {
 /// verbatim, `Percent(n)` is `output × n / 100` (whole logical px,
 /// parser-guaranteed ≤ 100 so never past the output). Like
 /// [`resolved_tiles`]: read once at map and frozen for the session.
-/// The caller owns the one clamp left — a pixel count past the output
+/// The caller owns the one clamp left: a pixel count past the output
 /// rides back down to it with the daemon's diagnostic.
 pub fn resolved_width(setting: WidthSetting, output_width: u32) -> Option<u32> {
     match setting {
@@ -1719,7 +1719,7 @@ pub fn resolved_width(setting: WidthSetting, output_width: u32) -> Option<u32> {
 /// Resolves the `columns` setting against the invoking output's
 /// logical width: `Pinned` is the budget verbatim (parser-guaranteed
 /// [`COLUMNS_MIN`]..=[`COLUMNS_MAX`]), `Auto` fits
-/// `floor(AUTO_FRACTION × width / tile pitch)` tiles — floored at
+/// `floor(AUTO_FRACTION × width / tile pitch)` tiles, floored at
 /// [`COLUMNS_MIN`], uncapped above (a ceiling is the pinned form's
 /// contract; auto's is the output). Read once at map and frozen for
 /// the session, like every session-scoped value.
@@ -1735,7 +1735,7 @@ pub fn resolved_tiles(columns: ColumnsSetting, output_width: u32) -> usize {
 }
 
 /// The window over a `len`-long eligible list with `sel` selected,
-/// keeping `rows` windows in view, continuing from `prev` — `None` is a
+/// keeping `rows` windows in view, continuing from `prev`; `None` is a
 /// fresh session, top-aligned.
 ///
 /// A list of at most `rows + ROWS_SLACK` windows shows whole; a longer
@@ -1745,7 +1745,7 @@ pub fn resolved_tiles(columns: ColumnsSetting, output_width: u32) -> usize {
 ///
 /// The window moves the minimum needed to keep the selection on a
 /// *content* row, never a continuation slot: nothing while the selection
-/// stays interior (the sticky rule — the walking fill keeps its motion
+/// stays interior (the sticky rule: the walking fill keeps its motion
 /// vocabulary), exactly one row when stepping past an edge. The starts
 /// keeping `sel` content-visible form one interval, so the rule is a
 /// clamp of the carried start into it; the interval's upper end widens
@@ -1779,18 +1779,18 @@ pub fn visible_window(len: usize, sel: usize, rows: usize, prev: Option<Viewport
 }
 
 /// The horizontal band's window over a `len`-long eligible list with
-/// `sel` selected, under a `tiles`-tile budget, continuing from `prev`
-/// — `None` is a fresh session, left-aligned on the MRU head. The
+/// `sel` selected, under a `tiles`-tile budget, continuing from `prev`;
+/// `None` is a fresh session, left-aligned on the MRU head. The
 /// one-axis mirror of [`visible_window`] (CL2): same clamp-of-carried-
 /// start shape, different slot accounting.
 ///
-/// The band is `min(len, tiles)` tiles wide, never wider — the spec's
+/// The band is `min(len, tiles)` tiles wide, never wider; the spec's
 /// "card width = N × tile pitch": the `…` affordance lives *inside*
 /// the budget, replacing the trailing tile when the window's end hides
 /// windows (unlike the vertical card, whose `…` rows ride on top of
 /// its `rows`). A truncated band shows `tiles − 1` windows; the tail
 /// window, whose end hides nothing, shows all `tiles`. There is no
-/// leading affordance — the list reads left to right, so only a
+/// leading affordance: the list reads left to right, so only a
 /// truncated *trailing* edge gets one.
 ///
 /// The window moves the minimum needed to keep the selection on a
@@ -1823,8 +1823,8 @@ pub fn band_window(len: usize, sel: usize, tiles: usize, prev: Option<Viewport>)
 /// Builds the flat overlay contents for `snapshot` with `selected`
 /// highlighted, listing windows under `listing`, with app icons from
 /// `icons` prepared at `scale` for the card `palette` paints, windowed
-/// by `windowing` — the session's `rows` budget and the sticky viewport
-/// it carries (`None` at open) — composing titles through `text` (the
+/// by `windowing` (the session's `rows` budget and the sticky viewport
+/// it carries (`None` at open)), composing titles through `text` (the
 /// backend the session froze; see [`TextBackend`]). Rows follow
 /// [`switcher::eligible`] order (workspace-major under
 /// [`switcher::Scope::All`],
@@ -1835,7 +1835,7 @@ pub fn band_window(len: usize, sel: usize, tiles: usize, prev: Option<Viewport>)
 /// model reports the window it computed for the session to carry next.
 /// Returns `None` when there is nothing to show: no active workspace,
 /// no eligible windows, or a selection that is not in the eligible set.
-// Nine render inputs — the text backend joined the seam beside the
+// Nine render inputs: the text backend joined the seam beside the
 // windowing and the shape profile (the geometry follow's note).
 #[expect(clippy::too_many_arguments)]
 pub fn overlay_model(
@@ -1885,19 +1885,19 @@ pub fn overlay_model(
 }
 
 /// Builds the horizontal band for `snapshot` with `selected`
-/// highlighted — the flat list as one row of tiles, eligible-order from the
+/// highlighted: the flat list as one row of tiles, eligible-order from the
 /// left, windowed by `banding` (the session's resolved tile budget and
 /// the sticky band it carries, `None` at open) per [`band_window`].
 /// A tile is the honest analogue the research locked: the app icon
 /// over the clamped title, the selection filling the whole tile cell,
-/// the Ctrl+N chord as a corner badge — reading order over the
+/// the Ctrl+N chord as a corner badge, reading order over the
 /// displayed content tiles, ≤ 9, every displayed hint wired. A
-/// truncated trailing edge spends its last tile on the `…` — full-ink
+/// truncated trailing edge spends its last tile on the `…`: full-ink
 /// dots over the hidden count's pips (more-tile-prominence.md §5
 /// L1+L2, 2026-11-14).
 /// Returns `None` under the same emptiness contract as
 /// [`overlay_model`].
-// Nine render inputs — the banding joined the seam beside the
+// Nine render inputs: the banding joined the seam beside the
 // windowing (the geometry follow's note).
 #[expect(clippy::too_many_arguments)]
 pub fn overlay_model_horizontal(
@@ -1930,7 +1930,7 @@ pub fn overlay_model_horizontal(
         // snapshot.
         let toplevel = snapshot.toplevels.iter().find(|t| t.handle == handle)?;
         rows.push(RowModel {
-            // The display title unclamped — nothing paints it at the
+            // The display title unclamped: nothing paints it at the
             // compact pitch; the caption reads the selected tile's
             // title and truncates against its own budget.
             title: display_title(&toplevel.title, &toplevel.app_id),
@@ -1948,10 +1948,10 @@ pub fn overlay_model_horizontal(
     }
     // The card is the tile grid: wide-short, the `…` tile inside the
     // slots (the spec's "card width = N × tile pitch"), floored at the
-    // caption's guarantee and — when the session carries one — the
+    // caption's guarantee and (when the session carries one) the
     // `width`/`min-width` floor; the floor only widens, the tiles stay
     // left-aligned in the air it buys. The caption names the selected
-    // window — the commit target of a flat band is always a window.
+    // window: the commit target of a flat band is always a window.
     let width = band_width(slots as u32).max(banding.width_floor.unwrap_or(0));
     let caption = compose_caption_at(
         rows.iter()
@@ -1980,23 +1980,23 @@ pub fn overlay_model_horizontal(
 /// Builds the grouped overlay contents: the session's frozen tree cut to
 /// `visible` (its expansion state, liveness-filtered by the caller),
 /// with the tree row `selected` highlighted. Titles and icons draw from
-/// `snapshot`; the window set does not — a window that appeared after
+/// `snapshot`; the window set does not: a window that appeared after
 /// the session froze never joins the card, and one that died was
 /// filtered out of `visible` by the caller. Titles compose through
 /// `text` (the session's frozen backend; see [`TextBackend`]).
 ///
 /// Level-1 rows (app entries and leaves) hint their Ctrl+N chord by
-/// position among level 1; children hint nothing (rev 5 — the Alt+N
+/// position among level 1; children hint nothing (rev 5: the Alt+N
 /// chords are gone with the digits freed for the query). A parent's
 /// pips count its app's frozen windows and its caret states the
-/// expansion the caller passed — expanded iff its children follow it
+/// expansion the caller passed: expanded iff its children follow it
 /// in `visible`. Width derives from the visible rows' widest title
 /// plus the child indent and the parent's caret terrace, so the card is
 /// stable under stepping and breathes only when the user expands or
 /// collapses. The pips themselves sit in the row's bottom padding and
 /// spend no width. Returns `None` when
 /// nothing is visible or the selection is not on a visible row.
-// Eleven render inputs — the text backend joined the flat builder's
+// Eleven render inputs: the text backend joined the flat builder's
 // seam one level deeper (its note).
 #[expect(clippy::too_many_arguments)]
 pub fn overlay_model_grouped(
@@ -2057,13 +2057,13 @@ pub fn overlay_model_grouped(
                         .get(index + 1)
                         .is_some_and(|next| next.kind == RowKind::Child)
                         && visible.contains(&(index + 1));
-                    // The parent's label is its app_id — the icon
+                    // The parent's label is its app_id: the icon
                     // cache's own identity (spec OQ default; a
                     // desktop-entry display name is a cosmetic
                     // follow-up); the pips count the app's frozen
                     // windows, expanded state included in the card
                     // only through the caret. The label composes
-                    // with no app_id fallback — the grouping tree only
+                    // with no app_id fallback; the grouping tree only
                     // parents non-empty app_ids.
                     let hint = RowHint::ctrl(ordinal);
                     let (title, band) = compose_title(
@@ -2113,9 +2113,9 @@ pub fn overlay_model_grouped(
 }
 
 /// Builds the grouped-horizontal strip (`inplace-strip`): the frozen
-/// tree as **one** sequence of tiles — the app tiles with the selected
+/// tree as **one** sequence of tiles (the app tiles with the selected
 /// app's tile replaced in place by its window run, exactly as the
-/// daemon derived it — behind one [`band_window`], at one tile pitch.
+/// daemon derived it) behind one [`band_window`], at one tile pitch.
 ///
 /// The open group is derived, never carried: `sequence` is the pure
 /// function of the tree selection the daemon computed (a child
@@ -2123,7 +2123,7 @@ pub fn overlay_model_grouped(
 /// selection ⇒ plain app tiles), so the card holds no band or collapse
 /// state of its own. The width arrives **frozen**: `width_slots` is the
 /// daemon's max of the closed and open shapes' slots, so ↓ and ↑ never
-/// resize the card — the narrower shape renders left-aligned in the
+/// resize the card; the narrower shape renders left-aligned in the
 /// wider grid.
 ///
 /// `sequence` holds tree indices, liveness-filtered by the caller (the
@@ -2133,9 +2133,9 @@ pub fn overlay_model_grouped(
 /// truncated trailing edge and never holds the selection). Ctrl+N
 /// chords read the strip left→right, ≤ 9. App tiles carry icon, label,
 /// and count (a parent commits its MRU-front window); window tiles
-/// carry icon and title — activation always resolves the tile's own
+/// carry icon and title; activation always resolves the tile's own
 /// event-time handle.
-// Eleven render inputs — the banding joined the seam beside the
+// Eleven render inputs: the banding joined the seam beside the
 // windowing (the geometry follow's note).
 #[expect(clippy::too_many_arguments)]
 pub fn overlay_model_grouped_horizontal(
@@ -2162,7 +2162,7 @@ pub fn overlay_model_grouped_horizontal(
             .toplevels
             .iter()
             .find(|t| t.handle == grow.handle)?;
-        // The display title unclamped — nothing paints it at the
+        // The display title unclamped: nothing paints it at the
         // compact pitch; the caption reads the commit target's title
         // and truncates against its own budget.
         let title = match grow.kind {
@@ -2191,12 +2191,12 @@ pub fn overlay_model_grouped_horizontal(
     }
     // The frozen grid: the daemon's max of the two shapes, whatever
     // the strip is showing now, floored at the caption's guarantee and
-    // — when the session carries one — the `width`/`min-width` floor;
+    // (when the session carries one) the `width`/`min-width` floor;
     // the floor only widens, the strip stays left-aligned in it.
     let width = band_width(width_slots as u32).max(banding.width_floor.unwrap_or(0));
     // The caption names the commit target: a window tile's own title;
     // an app tile's MRU-front window's title (committing the app
-    // activates that window — the parent row's handle is that window,
+    // activates that window; the parent row's handle is that window,
     // and the tile's own label names the app, not the target).
     let caption = match rows.iter().find(|row| row.selected) {
         Some(row) if row.kind == RowKind::Parent => {
@@ -2233,7 +2233,7 @@ pub fn overlay_model_grouped_horizontal(
 }
 
 /// Composes one row's title under `text`'s backend and returns it with
-/// the title-band width the card sizes from (the title's own px — the
+/// the title-band width the card sizes from (the title's own px; the
 /// kind's extras are geometry and ride in the same number so
 /// [`finish_model`] sees one width per row).
 ///
@@ -2241,7 +2241,7 @@ pub fn overlay_model_grouped_horizontal(
 /// and column-caps exactly as shipped (byte-identity at the default
 /// 12-px profile; the floor's every pin depends on it); `System`
 /// measures the un-folded title through the real font and pixel-budgets
-/// it — real glyphs, real accents, fallback chains — with the kind's
+/// it (real glyphs, real accents, fallback chains) with the kind's
 /// extras paid out of the same [`TITLE_BAND_PX`] territory (the child
 /// indent and the parent's caret always fit, exactly as the column caps
 /// paid for them). `text_profile` chooses the cell and column budget, so
@@ -2254,7 +2254,7 @@ fn compose_title(
     scale: u32,
     text_profile: TextProfile,
 ) -> (String, u32) {
-    // A parent's label is its app_id verbatim — no `display_title`
+    // A parent's label is its app_id verbatim: no `display_title`
     // fallback (the grouping tree only parents non-empty app_ids, and
     // the floor's byte-identity keeps the raw path).
     let label = |title: &str| -> String {
@@ -2297,7 +2297,7 @@ fn compose_title(
 
 /// The one caption's composition (glance-tiles G3, 2026-11-09): the
 /// commit target's display title, truncated to the card's caption
-/// budget — the card's width minus its horizontal padding — with the
+/// budget (the card's width minus its horizontal padding) with the
 /// real `…` in both backends (the row composer's truncation
 /// vocabulary, the budget the card instead of a title band). The
 /// preview sheet composes through the same rule, so its captions judge
@@ -2329,7 +2329,7 @@ pub fn compose_caption_at(
 
 /// The workspace label's composition (workspace-label W2, 2026-11-09):
 /// the invoking workspace's name truncated to [`WS_LABEL_MAX_COLS`] with
-/// the real `…` — the caption composer's own vocabulary at the label's
+/// the real `…`: the caption composer's own vocabulary at the label's
 /// smaller cell.
 fn compose_workspace(
     name: &str,
@@ -2375,11 +2375,11 @@ fn finish_model(
         windowed.push(continuation_row(total - viewport.start - viewport.content));
     }
     let count = windowed.len() as u32;
-    // The title band's width is the widest row's own measure — columns ×
-    // TEXT_W on the Bitmap floor, measured ink on System — under the same
+    // The title band's width is the widest row's own measure, columns ×
+    // TEXT_W on the Bitmap floor, measured ink on System, under the same
     // ceiling: the band never exceeds MAX_COLS × TEXT_W (the compile-time
     // pin above its formula). The card adds its chrome and, when the
-    // session carries one, the `width`/`min-width` floor — the floor only
+    // session carries one, the `width`/`min-width` floor; the floor only
     // widens, so the ceiling caps the title's ink, never the card; rows
     // stay left-aligned and the hint band right-anchors to the wider
     // edge, the band's floored-width behavior on end.
@@ -2391,7 +2391,7 @@ fn finish_model(
         rows: windowed,
         width,
         // The row gap lives between rows only; the bottom edge mirrors
-        // the top. Height follows the profile's rhythm — width never
+        // the top. Height follows the profile's rhythm; width never
         // does (density has no width analogue).
         height: card_height_rhythm(profile.rhythm, count),
         viewport,
@@ -2399,7 +2399,7 @@ fn finish_model(
         horizontal: false,
         query: None,
         hovered: None,
-        // Vertical cards paint no caption — the field stays empty and
+        // Vertical cards paint no caption; the field stays empty and
         // the horizontal-only paint never sees them.
         caption: String::new(),
     })
@@ -2407,10 +2407,10 @@ fn finish_model(
 
 /// The continuation row at a truncated edge: the `…` affordance in a
 /// full row slot, riding the row rhythm, `hidden` the windows past the
-/// edge — the count its pips show (`min(PIP_MAX)`, at least one: the
+/// edge, the count its pips show (`min(PIP_MAX)`, at least one: the
 /// row exists only because something is hidden; more-tile-prominence.md
 /// §5 L2, 2026-11-14). Not hoverable, not clickable, not
-/// number-addressable, never selected — its missing handle is what
+/// number-addressable, never selected: its missing handle is what
 /// every input guard already reads.
 fn continuation_row(hidden: usize) -> RowModel {
     RowModel {
@@ -2424,7 +2424,7 @@ fn continuation_row(hidden: usize) -> RowModel {
 }
 
 /// The empty-match card (`type-filter`): the query's strip over its
-/// one-word verdict — a single inert row no input can address (the
+/// one-word verdict, a single inert row no input can address (the
 /// continuation-row precedent: no handle, no hint, nothing selected),
 /// so the session and the query both stand while nothing matches.
 pub fn no_matches_model(
@@ -2460,7 +2460,7 @@ pub fn no_matches_model(
 
 /// The height the query strip adds to a card at the default text size:
 /// its pad, its text line, and the row gap that separates it from the
-/// first row — zero with no query (`type-filter`). The strip is not a
+/// first row, zero with no query (`type-filter`). The strip is not a
 /// row and earns no row height; the gap is the separation the rows
 /// themselves use. [`strip_height_at`] is the same math at one
 /// session's text size.
@@ -2479,7 +2479,7 @@ pub fn strip_height_at(query: &Option<String>, rhythm: Rhythm, cell: u32) -> u32
 }
 
 /// The strip's text: the query's *tail*, an ellipsis on the head when
-/// it overflows — what was just typed stays visible, matching how the
+/// it overflows: what was just typed stays visible, matching how the
 /// query itself ignores everything before its last 64 characters. The
 /// cap shares the row title's column budget minus the one column the
 /// leading ellipsis spends.
@@ -2494,7 +2494,7 @@ fn strip_text(query: &str, cols: u32) -> String {
     }
 }
 
-/// Sets `model`'s query and grows its height by the strip — the one
+/// Sets `model`'s query and grows its height by the strip: the one
 /// seam between a querying session and its card. Pure, so the height
 /// math and the zero-query identity pin headlessly.
 pub fn with_query(mut model: OverlayModel, query: &str) -> OverlayModel {
@@ -2504,7 +2504,7 @@ pub fn with_query(mut model: OverlayModel, query: &str) -> OverlayModel {
     model
 }
 
-/// The workspace label's line at one rhythm and text size — the label's
+/// The workspace label's line at one rhythm and text size: the label's
 /// own (smaller) cell plus the row gap, the strip's twin separator
 /// (workspace-label W2, 2026-11-09).
 pub fn ws_label_height_at(rhythm: Rhythm, cell: u32) -> u32 {
@@ -2512,11 +2512,11 @@ pub fn ws_label_height_at(rhythm: Rhythm, cell: u32) -> u32 {
 }
 
 /// Sets `model`'s workspace label and pays for its line (workspace-label
-/// W2, 2026-11-09) — the `with_query` seam's twin, pure so the height
+/// W2, 2026-11-09); the `with_query` seam's twin, pure so the height
 /// math and the empty-name identity pin headlessly. The vertical cards
 /// reserve the label's line above the first row (`row_at` walks past it
-/// like the strip's); the horizontal cards keep their height — the
-/// label rides the caption line the card already reserves — and the
+/// like the strip's); the horizontal cards keep their height (the
+/// label rides the caption line the card already reserves) and the
 /// caption recomposes against the budget the label's zone takes, so a
 /// full-length caption never collides with it. The empty name is the
 /// identity: the default-off card is unchanged.
@@ -2532,7 +2532,7 @@ pub fn with_workspace(
     model.workspace = compose_workspace(name, text, scale, model.profile.text);
     let cell = model.profile.text.cell();
     if model.horizontal {
-        // The bottom line (W7): below the tiles, centered — the card
+        // The bottom line (W7): below the tiles, centered, the card
         // grows by the clearing and the label's own smaller cell, the
         // caption's line untouched above.
         model.height += WS_LABEL_GAP + ws_label_cell_at(cell);
@@ -2563,7 +2563,7 @@ fn edge_spans(ly: u32, lh: u32, lw: u32, reach: u32) -> [(u32, u32); 2] {
 /// icons, and the border hairline last so the stroke reads above the
 /// selection. Every device pixel inside `width`/`height` is written;
 /// coordinates outside are skipped, so an oversized canvas is harmless.
-// Nine render inputs — the text backend joined the seam beside the
+// Nine render inputs: the text backend joined the seam beside the
 /// windowing and the shape profile (the geometry follow's note).
 #[expect(clippy::too_many_arguments)]
 pub fn render(
@@ -2583,7 +2583,7 @@ pub fn render(
     let scale = scale.max(1);
     let lw = width / scale;
     let lh = height / scale;
-    // The shape the model was built under — every radius and rhythm
+    // The shape the model was built under: every radius and rhythm
     // below reads the profile, so the render always matches the
     // geometry `row_at` addresses (the constants are only the default
     // row).
@@ -2635,11 +2635,11 @@ pub fn render(
     }
     if model.horizontal {
         // The one caption (glance-tiles G3, 2026-11-09): the commit
-        // target's title, fixed top-center in the full text color —
+        // target's title, fixed top-center in the full text color:
         // the line the card always reserves, empty or not. Centered
         // ink; the paint loop's edge is the card's own padding,
         // defense in depth behind the composer's budget. The workspace
-        // label no longer shares this line (W7): it takes its own at
+        // label takes its own line (W7) at
         // the card's bottom, and the caption's budget is whole again.
         match &mut text {
             TextBackend::Bitmap => {
@@ -2681,13 +2681,13 @@ pub fn render(
             }
         }
         // The workspace label's own line (workspace-label W7,
-        // 2026-11-09): below the tiles, centered on the card — one text
+        // 2026-11-09): below the tiles, centered on the card: one text
         // color, the smaller cell, the caption's quiet counterpart at
         // the other end. The line exists only when the label stands;
         // the seam grew the card for it.
         if !model.workspace.is_empty() {
             let label_cell = ws_label_cell_at(cell);
-            // The tiles' bottom, the clearing, the line — then the
+            // The tiles' bottom, the clearing, the line, then the
             // card's own bottom padding beneath (the growth pays the
             // clearing and the line; the padding was already there).
             let y = band_strip_top_at(cell) + tile_cell_h_at(cell) + WS_LABEL_GAP;
@@ -2756,7 +2756,7 @@ pub fn render(
     }
     // The workspace label's line (workspace-label W3, 2026-11-09; the
     // thumbnail's edge since W8): the reserved twin above the query
-    // strip — the name left-aligned at `PAD_X`, the icon column's own
+    // strip: the name left-aligned at `PAD_X`, the icon column's own
     // left edge (the owner's eye, 2026-11-10), its smaller cell at the
     // line's top, the row gap below it the separator. Every strip and
     // row below shifts by its height, the same height `row_at`
@@ -2803,7 +2803,7 @@ pub fn render(
         ws_label_height_at(rhythm, cell)
     };
     // The query strip (`type-filter`): the query in the titles' own
-    // column and voice — full text color, the session's frozen backend —
+    // column and voice (full text color, the session's frozen backend)
     // with a static caret bar for its terminal. The strip exists only
     // while a query stands; every row below shifts by its height, the
     // same height `row_at` subtracts, so pointer rows and paint stay
@@ -2855,7 +2855,7 @@ pub fn render(
             }
         };
         // The caret: a 2-px hair in the full text color, the text's own
-        // height — static, the motion vocabulary's one-line budget
+        // height; static, the motion vocabulary's one-line budget
         // spent elsewhere.
         let caret_x = text_end + STRIP_CARET_GAP;
         if caret_x + STRIP_CARET_W <= lw {
@@ -2878,8 +2878,8 @@ pub fn render(
         // Continuation row: the `…` glyph card-centered on the titles'
         // own line. Re-pinned 2026-11-14 (more-tile-prominence.md §5
         // L1+L2): the glyph moved from the muted derivation to the full
-        // text ink — the hint color never survived a light-backdrop
-        // glance (3.60:1, below AA) — and the row's pip territory now
+        // text ink (the hint color never survived a light-backdrop
+        // glance (3.60:1, below AA)) and the row's pip territory now
         // carries the hidden count, muted like every pip. Nothing else
         // paints on this row: no band, no icon, no title, no hint. The
         // glyph paints `TEXT_W` wide, so
@@ -2888,12 +2888,12 @@ pub fn render(
         // of the card's center line. Frozen 2026-11-08 on the LV3 sheet
         // after a two-round preview loop (the TH4 pattern): card-centered
         // placement and the font's own glyph at text scale stand as
-        // built — the native-resolution round passed both palettes over
+        // built: the native-resolution round passed both palettes over
         // both backdrops at even perceived weight.
         if row.handle.is_none() {
             // A titled addressable-nothing is the no-matches verdict
-            // (`type-filter`): its words paint in the muted derivation —
-            // the beyond-addressability color, the dots' own — in the
+            // (`type-filter`): its words paint in the muted derivation (
+            // the beyond-addressability color, the dots' own) in the
             // titles' column, wordless dots stay for the untitled
             // continuation row.
             if !row.title.is_empty() {
@@ -2977,7 +2977,7 @@ pub fn render(
             // row: full-weight dots for the prominence, muted pips for
             // the magnitude, centered like the dots above them and
             // sitting where a parent's pips sit (the row's bottom
-            // padding). No fill, no hint — the row stays addressable to
+            // padding). No fill, no hint; the row stays addressable to
             // nothing (more-tile-prominence.md §5 L1+L2, 2026-11-14).
             if row.count >= 1 {
                 let pips = row.count.min(PIP_MAX) as u32;
@@ -2992,7 +2992,7 @@ pub fn render(
             // The band is its own rounded rect: `BAND_RADIUS` ends
             // through the same coverage sampler as the card corners.
             // The ramp interpolates toward the band fill between two
-            // painted fills — full coverage is the exact band color, zero
+            // painted fills: full coverage is the exact band color, zero
             // coverage leaves the card untouched, and because both are
             // near-opaque the arc never thins the card. The
             // profile's `pad_y + SELECT_INSET ≥ radius` holds the band
@@ -3031,7 +3031,7 @@ pub fn render(
         }
         // Icon cell: a bitmap prepared at ICON × scale blits 1:1; a
         // mismatched size or a missing icon draws the generic glyph. A
-        // child row indents its whole cell — icon and title move
+        // child row indents its whole cell: icon and title move
         // together, one TREE_INDENT right of the top-level column.
         let indent = (row.kind == RowKind::Child) as u32 * TREE_INDENT;
         let cell_x = PAD_X + indent;
@@ -3054,7 +3054,7 @@ pub fn render(
             }
         }
         // The × reveal (`close-window`): pointer presence on a window
-        // row claims the icon's top-right corner — the same knockout
+        // row claims the icon's top-right corner, the same knockout
         // badge the horizontal tiles paint, so the affordance is one
         // vocabulary on both cards. Headers and continuations never
         // reveal, whatever the pointer does.
@@ -3062,12 +3062,12 @@ pub fn render(
             paint_close_badge(canvas, stride, scale, cell_x, cell_y, ICON, palette);
         }
         // Title: vertically centered against the row, stopping at the
-        // title band's right edge — the hint's territory is its own, so
+        // title band's right edge; the hint's territory is its own, so
         // even a max-cols title can never touch a hint (the model sizes
         // for the band; the edge guard is the defense in depth). The
         // match also fixes the row's text line for the hint below: on
         // Bitmap that is the TEXT_H cell's top y, on System the shaped
-        // run's baseline — each backend's own anchor — and `title_end`
+        // run's baseline (each backend's own anchor) and `title_end`
         // is where the title's ink stopped (the caret's clearing
         // measures from it).
         let title_edge = lw.saturating_sub(PAD_X + HINT_GAP + HINT_COLS * cell);
@@ -3118,7 +3118,7 @@ pub fn render(
         // (the 4-px clearing above them falls out of the centered text
         // line at every density). Re-pinned 2026-11-09 (owner,
         // in-thread) from the numeric count chip and then from the
-        // inline pips — the count no longer spends title width. The
+        // inline pips; the count spends no title width. The
         // caret stays on the title line: an 8-px, two-pixel-stroke
         // mark one CHEVRON_GAP after the title's ink, right when
         // collapsed and down when expanded (the 16-px solid wedge
@@ -3156,7 +3156,7 @@ pub fn render(
         // Hint: the row's own number digit, right-aligned in the band
         // the card always reserves and vertically centered on the
         // titles' own line (`text_line_y`: the Bitmap cell top, the
-        // System baseline). Rows past nine paint nothing — every
+        // System baseline). Rows past nine paint nothing; every
         // displayed hint is a wired key (the model's [`RowHint`] is
         // that truth's single source, paired with `key_input`). The
         // digit stays put under pointer presence: the × lives on the
@@ -3218,9 +3218,9 @@ pub fn render(
 /// rounded corners with the same anti-aliasing. The
 /// difference-of-masks formulation could open gaps where both masks
 /// quantize alike on an arc; this rule cannot. The ring lives only
-/// within radius + BORDER of the card boundary — scanning the interior
+/// within radius + BORDER of the card boundary: scanning the interior
 /// is wasted work at Tab speed.
-// Nine paint inputs — render's own seam, extracted for the horizontal
+// Nine paint inputs: render's own seam, extracted for the horizontal
 // branch (the geometry follow's note).
 #[expect(clippy::too_many_arguments)]
 fn border_ring(
@@ -3252,27 +3252,27 @@ fn border_ring(
     }
 }
 
-/// Paints the horizontal band's tiles — the card background and border
+/// Paints the horizontal band's tiles: the card background and border
 /// are the shared passes in [`render`]; this is the content loop. A
 /// content tile carries the selection fill (its own rounded rect over
 /// the whole tile cell, the row band's own vocabulary), the app icon
 /// centered on the icon line, the clamped title beneath, and the Ctrl+N
 /// chord as a corner badge (top-left of the badge row, muted like every
-/// hint — placement frozen on the CL4 sheet, 2026-11-08). The `…` tile
-/// paints its glyph at full text weight — the caret's own ink, not the
+/// hint, placement frozen on the CL4 sheet, 2026-11-08). The `…` tile
+/// paints its glyph at full text weight: the caret's own ink, not the
 /// hint derivation, so the affordance survives a glance on either
-/// backdrop — centered on the icon line, with the hidden count's pips
+/// backdrop, centered on the icon line, with the hidden count's pips
 /// in the pip territory every tile reserves, muted like every pip. No
 /// band, no icon, no title, no badge (a tile beyond addressability
-/// earns dots at full ink and its magnitude, nothing else —
+/// earns dots at full ink and its magnitude, nothing else;
 /// more-tile-prominence.md §5 L1+L2, 2026-11-14).
-/// Paints one band of tiles — `tiles` at a card top of `y0` — the shared
+/// Paints one band of tiles (`tiles` at a card top of `y0`), the shared
 /// tile renderer behind the flat horizontal band and the grouped strip.
 /// A tile is the honest analogue the
 /// research locked: the app icon over the clamped title, the selection
 /// filling the whole tile cell, the Ctrl+N chord as a corner badge, and
 /// a handleless tile drawing the wordless `…` centered in the cell.
-// Nine paint inputs — the band top and slice joined the render seam
+// Nine paint inputs: the band top and slice joined the render seam
 // (the geometry follow's note).
 #[expect(clippy::too_many_arguments)]
 fn render_band(
@@ -3329,7 +3329,7 @@ fn render_band(
             // The overflow's own count: pips = the windows past the
             // edge, saturating like every other count (PIP_MAX), in the
             // pip territory every tile already reserves. Muted, like
-            // every pip — the full-weight dots carry the prominence,
+            // every pip; the full-weight dots carry the prominence,
             // the pips carry the magnitude (more-tile-prominence.md §5
             // L1+L2, 2026-11-14). No band, no fill, no icon: the tile
             // stays addressable to nothing.
@@ -3394,12 +3394,12 @@ fn render_band(
             }
         }
         // No title line: the tile is icon-only at the compact pitch
-        // (glance-tiles G1, 2026-11-09) — the one caption names the
+        // (glance-tiles G1, 2026-11-09); the one caption names the
         // commit target; the per-tile title paint died with the
         // title-gap token it rode on.
         // The count pips (glance-tiles G2, 2026-11-09; research record
         // R4): under the icon, only while the app holds ≥ 2 live
-        // windows, saturating at three — muted squares in their own
+        // windows, saturating at three: muted squares in their own
         // territory, never a fill shape, never a corner digit (the
         // notification-count reading R4 cautions against).
         if tile.count >= 2 {
@@ -3409,7 +3409,7 @@ fn render_band(
             let first_x = left + TILE_W / 2 - span / 2 - PIP_SIDE / 2;
             paint_pips(canvas, stride, scale, first_x, pip_y, pips, palette.muted);
         }
-        // The corner badge — the chord's digit alone, the chord's own
+        // The corner badge: the chord's digit alone, the chord's own
         // muted color, top-left of the tile's badge row (CL4-frozen
         // placement, 2026-11-08; digit-only since glance-tiles G2,
         // 2026-11-09).
@@ -3448,7 +3448,7 @@ fn render_band(
             }
         }
         // The × reveal (`close-window`): pointer presence on a window
-        // tile claims the top-right corner of its icon — the same
+        // tile claims the top-right corner of its icon, the same
         // knockout badge the vertical rows paint. App tiles (group
         // headers) and the `…` tile never reveal, whatever the pointer
         // does; app tiles still close their front window through
@@ -3472,7 +3472,7 @@ fn render_band(
 /// in 0..=255.
 ///
 /// Exact along the straight edges (a single comparison); 4×4 area
-/// sampling inside the corner quadrants only — 16 subsamples per
+/// sampling inside the corner quadrants only: 16 subsamples per
 /// boundary pixel, which is anti-aliasing by measurement, not blur.
 fn shape_cov(lx: u32, ly: u32, w: u32, h: u32, radius: u32, inset: u32) -> u8 {
     let radius = radius.saturating_sub(inset);
@@ -3493,7 +3493,7 @@ fn shape_cov(lx: u32, ly: u32, w: u32, h: u32, radius: u32, inset: u32) -> u8 {
         return if dx >= 0 && dy >= 0 { 255 } else { 0 };
     }
     // Corner quadrant: area-sample the pixel square against the rounded
-    // corner, 8×8 — 64 coverage steps turn the arc into a smooth ramp;
+    // corner, 8×8: 64 coverage steps turn the arc into a smooth ramp;
     // coarser sampling read as ticks against light backdrops. Arc
     // centers sit at (left + r, top + r) and mirrored.
     let corner_x = if lx < left + radius {
@@ -3577,7 +3577,7 @@ fn put_pixel(canvas: &mut [u8], stride: u32, x: u32, y: u32, argb: u32) {
 
 /// Interpolates one painted pixel toward `src` by `coverage`/255: the
 /// anti-aliasing ramp between two fills. Full coverage is the exact
-/// source color, zero coverage the untouched destination — and because
+/// source color, zero coverage the untouched destination, and because
 /// both fills are near-opaque, the ramp never thins the card's alpha.
 fn mix_pixel(dst: u32, src: u32, coverage: u8) -> u32 {
     let c = coverage as u32;
@@ -3590,15 +3590,15 @@ fn mix_pixel(dst: u32, src: u32, coverage: u8) -> u32 {
 
 /// Paints one shaped run through the System backend: each glyph's
 /// cached-or-rasterized mask composites over the canvas at its
-/// whole-device-pixel position — pen `x_logical`, baseline
-/// `baseline_logical` — with every pixel past `edge_logical` (logical)
+/// whole-device-pixel position (pen `x_logical`, baseline
+/// `baseline_logical`) with every pixel past `edge_logical` (logical)
 /// skipped, the title-band guard the Bitmap loop's break has always
 /// been. Coverage blends toward `color` by the mask's ramp (grayscale
 /// AA, the corners' own arithmetic); a color-bitmap glyph (the fallback
-/// chains' emoji pick) paints its own RGB under its alpha instead — a
+/// chains' emoji pick) paints its own RGB under its alpha instead: a
 /// small image, exactly the honesty the themed icons practice.
 // Eight paint inputs, the render seam's own (canvas, stride, scale,
-// run, color, position, edge) — the Bitmap twin's draw_glyph signature
+// run, color, position, edge): the Bitmap twin's draw_glyph signature
 // flattened one level up.
 #[expect(clippy::too_many_arguments)]
 fn paint_run(
@@ -3616,7 +3616,7 @@ fn paint_run(
     let baseline = i64::from(baseline_logical) * i64::from(scale);
     let edge = i64::from(edge_logical) * i64::from(scale);
     for glyph in &run.glyphs {
-        // The immutable mask borrow outlives only the pixel loop — the
+        // The immutable mask borrow outlives only the pixel loop; the
         // canvas is not the system's, so no borrow crosses a mutation.
         let Some(mask) = system.mask(&glyph.cache_key) else {
             continue; // nothing rasterizable: skip, as cosmic's own renderer would
@@ -3682,8 +3682,8 @@ fn draw_glyph(
     }
 }
 
-/// Paints `pips` count squares — [`PIP_SIDE`] on a side, [`PIP_STEP`]
-/// centers apart — starting at `first_x` with their top at `y`, in
+/// Paints `pips` count squares ([`PIP_SIDE`] on a side, [`PIP_STEP`]
+/// centers apart) starting at `first_x` with their top at `y`, in
 /// `color`. The one count vocabulary shared by the horizontal tiles and
 /// the grouped rows' parent entries.
 fn paint_pips(
@@ -3711,8 +3711,8 @@ fn paint_pips(
 
 /// Glyph bitmap for one character: ASCII printables come from [`FONT`],
 /// the ellipsis is [`ELLIPSIS_GLYPH`], typographic punctuation folds to
-/// its ASCII lookalike ([`fold_punct`]), everything else renders as `?`
-/// — the per-glyph backstop behind [`fold_title`]'s string-level fold.
+/// its ASCII lookalike ([`fold_punct`]), everything else renders as `?`,
+/// the per-glyph backstop behind [`fold_title`]'s string-level fold.
 fn glyph(ch: char) -> [u8; 8] {
     match fold_punct(ch) {
         '…' => ELLIPSIS_GLYPH,
@@ -3725,11 +3725,11 @@ fn glyph(ch: char) -> [u8; 8] {
 /// Folds the typographic punctuation window titles routinely carry onto
 /// its ASCII lookalike: `main.rs — airlock` and `Notes “draft”` render as
 /// punctuation, not as a row of `?` where a title's own separator went.
-/// At the 8×8 cell the fold is invisible — the ASCII glyph and a
+/// At the 8×8 cell the fold is invisible: the ASCII glyph and a
 /// purpose-drawn one differ by pixels, not shape. Every fold is one char
 /// to one char, so column math is unchanged. Letters fold at the string
 /// level in [`fold_title`]; whatever survives both folds falls through
-/// to `?` in [`glyph`] — the honest floor of an ASCII font, stated
+/// to `?` in [`glyph`]: the honest floor of an ASCII font, stated
 /// rather than papered over with lookalike letters.
 fn fold_punct(ch: char) -> char {
     match ch {
@@ -3749,7 +3749,7 @@ fn fold_punct(ch: char) -> char {
 }
 
 /// Latin Extended-A members whose canonical decomposition is an ASCII
-/// base plus a combining mark, as `(first, last, upper, lower)` — the
+/// base plus a combining mark, as `(first, last, upper, lower)`: the
 /// block pairs upper/lower alternately from each entry's first, which
 /// handles `Ÿ`'s run of capitals at the top of the Z block (its `ÿ`
 /// lives in Latin-1, so `Ź` is odd-numbered). Strokes (`Đ Ħ Ł Ŧ`),
@@ -3784,7 +3784,7 @@ const LATIN_EXTENDED_A: &[(u32, u32, char, char)] = &[
 fn fold_diacritic(ch: char) -> Option<char> {
     let base = match ch {
         // Latin-1 Supplement letters. `×` and `÷` are math signs, and
-        // `ß æ ð ø þ` have no ASCII base — all of them stay `?`.
+        // `ß æ ð ø þ` have no ASCII base; all of them stay `?`.
         'À'..='Å' => 'A',
         'Ç' => 'C',
         'È'..='Ë' => 'E',
@@ -3821,8 +3821,8 @@ fn fold_diacritic(ch: char) -> Option<char> {
 /// combining marks are dropped so NFD decompositions fold too (a
 /// macOS-built `café.txt` reads `cafe.txt`), and [`fold_punct`] still
 /// handles punctuation per glyph. Runs before [`truncate_cols`], so the
-/// deleted marks never spend columns. Everything else — CJK, Cyrillic,
-/// stroke letters, ligatures — still falls through to `?` in
+/// deleted marks never spend columns. Everything else (CJK, Cyrillic,
+/// stroke letters, ligatures) still falls through to `?` in
 /// [`glyph`]. The fold deletes a phonemic distinction: `café.txt` and
 /// `cafe.txt` render identically by decision, and that is documented
 /// degradation (README, the design skill), not fidelity.
@@ -3837,7 +3837,7 @@ pub fn fold_title(title: &str) -> String {
 
 /// The title shown for a toplevel: its title if non-blank, else its
 /// app_id, else a placeholder. The horizontal tiles' unclamped label
-/// since glance-tiles G1 (2026-11-09) — nothing paints it at the
+/// since glance-tiles G1 (2026-11-09); nothing paints it at the
 /// compact pitch; the caption composer (G3) reads the commit target's
 /// title through this rule and truncates against its own budget.
 pub fn display_title(title: &str, app_id: &str) -> String {
@@ -3863,19 +3863,19 @@ fn truncate_cols(title: String, cap: u32) -> String {
     }
 }
 
-/// The chords addressing the first nine rows, in row order — the render
+/// The chords addressing the first nine rows, in row order: the render
 /// twin of `key_input`'s Ctrl+digit mapping. The pairing is unit-pinned:
 /// a label that outlives its wiring would be a dead key advertised on
 /// the card.
 /// How many rows the number chords reach: Ctrl+1..9 at level 1,
-/// Alt+1..9 within a group — the tenth and deeper are never hinted and
+/// Alt+1..9 within a group; the tenth and deeper are never hinted and
 /// never wired.
 const MAX_HINTS: usize = 9;
 
 /// Keys the switcher gesture reacts to, normalized from keysyms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GestureKey {
-    /// Tab / Shift+Tab: one visible row, linearly, in either mode —
+    /// Tab / Shift+Tab: one visible row, linearly, in either mode,
     /// ↓/↑'s twin since grouping rev 5 (the level-scoped step is gone).
     Tab,
     /// Explicit confirm: Return / KP_Enter / ISO_Enter while showing.
@@ -3884,19 +3884,19 @@ pub enum GestureKey {
     /// A directional step: Up/Left previous, Down/Right next.
     Arrow(Direction),
     /// Ctrl+1..9 (or keypad 1..9): select and activate row `n` (0-based,
-    /// top row = 0) in one motion — the keyboard twin of a pointer
+    /// top row = 0) in one motion: the keyboard twin of a pointer
     /// click. Produced by the pure [`key_input`]; the wayland boundary
-    /// rewrites it to [`GestureKey::SelectHandle`] — the row resolved
-    /// against the event-time model — before queueing, so no bare row
+    /// rewrites it to [`GestureKey::SelectHandle`] (the row resolved
+    /// against the event-time model) before queueing, so no bare row
     /// ever crosses the queue as an activation target.
     Select(usize),
     /// Grouped mode's Ctrl+1..9: address the Nth *level-1* entry
-    /// (0-based) — an app entry or a leaf — committing its implied
+    /// (0-based, an app entry or a leaf) committing its implied
     /// window. The boundary resolves it against the event-time model
     /// exactly as [`GestureKey::Select`] resolves a flat row.
     SelectApp(usize),
     /// Tab in the grouped-horizontal card: step the next/previous app
-    /// (band 1) from an app tile — the spec's "Tab steps apps". Inside
+    /// (band 1) from an app tile: the spec's "Tab steps apps". Inside
     /// an open run the daemon joins the linear walk instead, so the
     /// run stays open while Tab walks its windows (the vertical Tab's
     /// behavior). Distinct from [`GestureKey::Arrow`], which steps
@@ -3905,18 +3905,18 @@ pub enum GestureKey {
     StepApp(Direction),
     /// The key above Tab (keysym `grave`, `` ` `` on US layouts) in
     /// either grouped card: the focused app's key. From the app's
-    /// entry or tile it toggles the group — open on the MRU-front
+    /// entry or tile it toggles the group; open on the MRU-front
     /// window (Shift on the last) when collapsed, collapsed in place
     /// when open; from a window row or tile it cycles the app's
     /// windows with wrap, never crossing into another app. The daemon
-    /// resolves it against the session state — the selection's level
+    /// resolves it against the session state; the selection's level
     /// and the app's expanded flag are invisible to this pure map, and
     /// a standing query reroutes it to the type-into path there.
     ToggleOrCycle(Direction),
     /// The handle-carrying twin of the select family, produced only
     /// by the wayland boundary at event receipt: the window of the row
-    /// the user addressed. `None` — a continuation row, or a row past
-    /// the model's end — flows through and no-ops at the daemon,
+    /// the user addressed. `None` (a continuation row, or a row past
+    /// the model's end) flows through and no-ops at the daemon,
     /// leaving the session intact.
     SelectHandle(Option<Handle>),
     /// → in grouped mode: expand the selected parent and enter its
@@ -3928,15 +3928,15 @@ pub enum GestureKey {
     /// The daemon resolves the target against the frozen tree.
     ExitParent,
     /// A printable keypress (`type-filter`): the character types into
-    /// the session's query, whatever modifiers report — Alt is held
+    /// the session's query, whatever modifiers report; Alt is held
     /// the whole gesture, Shift is how uppercase types. Chord arms win
     /// ahead of it in `key_input`.
     Type(char),
-    /// Backspace: erase the query's last character. Never dismisses —
+    /// Backspace: erase the query's last character. Never dismisses;
     /// on an empty query it is a no-op.
     Backspace,
     /// Alt+minus (top row or keypad, `close-window`): close the
-    /// selected row's window — the row's resolved handle, a group
+    /// selected row's window: the row's resolved handle, a group
     /// header's front window included. The daemon advances the
     /// selection before the request and keeps the session open.
     Close,
@@ -3961,13 +3961,13 @@ pub enum GestureInput {
 
 /// Pointer inputs the switcher gesture reacts to, normalized from
 /// wl_pointer events on the overlay surface. The selection target is
-/// captured at event-receipt time — the handle of the row the user saw —
+/// captured at event-receipt time (the handle of the row the user saw),
 /// so nothing draining earlier in the same batch can retarget it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PointerInput {
     /// Cursor over a row (enter or motion) or gone (leave / gap /
     /// off-card). `row` drives the pure crossing policy only; `handle`
-    /// is the event-time selection target — `None` on continuation
+    /// is the event-time selection target: `None` on continuation
     /// rows, gaps, and leaves, and those never select.
     Hover {
         row: Option<usize>,
@@ -3978,7 +3978,7 @@ pub enum PointerInput {
     /// continuation rows queue nothing.
     Click { handle: Handle },
     /// Left-button press inside the hovered row's × zone
-    /// (`close-window`): close that row's window — the handle captured
+    /// (`close-window`): close that row's window: the handle captured
     /// at the press, the same event-time resolution
     /// [`PointerInput::Click`] carries. The boundary's click split
     /// produces this only on the vertical card's window rows; every
@@ -3992,13 +3992,13 @@ pub enum PointerInput {
 /// Pure hover-selection policy: which [`PointerInput::Hover`]
 /// observations may move the overlay's selection.
 ///
-/// Only row *crossings* select — presence alone never steals the
+/// Only row *crossings* select; presence alone never steals the
 /// MRU-first selection, because the overlay maps center-screen, often
 /// directly under a resting cursor. The first observation after a
 /// [`reset`](Self::reset) seeds the baseline and selects nothing: a
 /// surface's first pointer event is always the Enter that map-time
 /// contact (or first arrival) produces, and neither expresses crossing
-/// intent. A `None` observation — a gap, or leaving the card — never
+/// intent. A `None` observation (a gap, or leaving the card) never
 /// selects but forgets the row, so returning to it re-asserts pointer
 /// intent.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -4008,12 +4008,12 @@ pub struct PointerHover {
     last_row: Option<usize>,
     /// Whether any observation has arrived since the last reset. The
     /// first is map-time contact: it seeds `last_row` and selects
-    /// nothing — even when it lands in a gap.
+    /// nothing; even when it lands in a gap.
     entered: bool,
 }
 
 impl PointerHover {
-    /// Applies one observation, returning the row to select — only when
+    /// Applies one observation, returning the row to select, only when
     /// it is concrete and differs from the last observed row.
     pub fn observe(&mut self, row: Option<usize>) -> Option<usize> {
         let crossing = self.entered && row.is_some() && row != self.last_row;
@@ -4045,13 +4045,13 @@ pub enum GestureOutput {
     /// exit is the W3C no-op.
     ExitParent,
     /// Tab in the grouped-horizontal card: step the next/previous app
-    /// tile (band 1) — from inside an open run the daemon joins the
+    /// tile (band 1); from inside an open run the daemon joins the
     /// linear walk instead, keeping the run open. The daemon resolves
     /// it against the frozen tree.
     StepApp(Direction),
     /// The key above Tab in either grouped card: toggle the selected
-    /// app's group from a closed entry — opening on its MRU-front
-    /// window — or collapse it when open, and cycle the app's windows
+    /// app's group from a closed entry (opening on its MRU-front
+    /// window) or collapse it when open, and cycle the app's windows
     /// from inside the group. The daemon holds the selection's level
     /// and the app's expanded flag; a standing query reroutes the press
     /// to the type-into path, keeping this map pure.
@@ -4066,11 +4066,11 @@ pub enum GestureOutput {
     /// Close the selected row's window (`close-window`): the daemon
     /// resolves the row's handle, advances the selection off it, sends
     /// the compositor request, and keeps the session open for repeated
-    /// closes — dismissing when nothing eligible remains.
+    /// closes; dismissing when nothing eligible remains.
     CloseSelected,
     /// Activate the selection and unmap the overlay.
     Commit,
-    /// Select and activate the captured window in one motion — the
+    /// Select and activate the captured window in one motion; the
     /// handle was fixed at event receipt against the model the user
     /// saw. The gesture session survives the output: the daemon closes
     /// it only when the activation actually happens, so a `None`
@@ -4082,7 +4082,7 @@ pub enum GestureOutput {
     /// Escape was pressed. Since `type-filter`, the machine cannot
     /// decide alone: with a query standing, the press clears the query
     /// and keeps the session; only an empty query dismisses. The daemon
-    /// — which holds the session state — decides and closes the
+    /// (which holds the session state) decides and closes the
     /// gesture itself when it dismisses.
     Escape,
     /// Unmap the overlay without switching.
@@ -4093,12 +4093,12 @@ pub enum GestureOutput {
 /// The hold-Alt gesture as a pure state machine.
 ///
 /// The daemon feeds it normalized inputs and applies the outputs, so the
-/// full gesture — invoke, cycle, release-commit, quick-tap commit, escape,
-/// focus loss — is unit-testable without a compositor.
+/// full gesture (invoke, cycle, release-commit, quick-tap commit, escape,
+/// focus loss) is unit-testable without a compositor.
 ///
 /// Release-capture rides on [`GestureInput::Modifiers`]: with the overlay's
 /// keyboard grabbed, the compositor reports modifier changes, so Alt going
-/// away is the commit signal. The first report without Alt commits too — a
+/// away is the commit signal. The first report without Alt commits too: a
 /// quick Alt+Tab tap releases before the overlay maps, and must still
 /// switch.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -4127,22 +4127,22 @@ impl Gesture {
                 }
                 GestureKey::Arrow(direction) => GestureOutput::Step(direction),
                 // Grouped mode's tree keys. The machine cannot resolve
-                // them — the targets live in the daemon's frozen tree
-                // and expansion state — so it forwards them as outputs
+                // them (the targets live in the daemon's frozen tree
+                // and expansion state), so it forwards them as outputs
                 // exactly as it forwards arrows.
                 GestureKey::EnterChild => GestureOutput::EnterChild,
                 GestureKey::ExitParent => GestureOutput::ExitParent,
                 // Tab in the combined card steps apps, not the focused
-                // band's tiles — a distinct output so the daemon can
+                // band's tiles; a distinct output so the daemon can
                 // route it.
                 GestureKey::StepApp(direction) => GestureOutput::StepApp(direction),
-                // The key above Tab works the focused app's group —
-                // toggle from its entry, cycle from inside — forwarded
+                // The key above Tab works the focused app's group (
+                // toggle from its entry, cycle from inside), forwarded
                 // the same way; the daemon holds the level, the window
                 // set, and the expanded flag.
                 GestureKey::ToggleOrCycle(direction) => GestureOutput::ToggleOrCycle(direction),
                 // The query edits (`type-filter`): session state, not a
-                // row address — forwarded for the daemon to apply.
+                // row address; forwarded for the daemon to apply.
                 GestureKey::Type(ch) => GestureOutput::Type(ch),
                 GestureKey::Backspace => GestureOutput::Erase,
                 // The close key (`close-window`): the daemon resolves
@@ -4150,7 +4150,7 @@ impl Gesture {
                 // ordering.
                 GestureKey::Close => GestureOutput::CloseSelected,
                 // Select-and-activate in one motion, addressing the
-                // event-time handle; the session stays open — the daemon
+                // event-time handle; the session stays open: the daemon
                 // closes it via `close()` only when the activation
                 // actually happens, so an unaddressable row (`None`)
                 // leaves the gesture fully intact.
@@ -4162,7 +4162,7 @@ impl Gesture {
                 GestureKey::Select(_) | GestureKey::SelectApp(_) => GestureOutput::Nothing,
                 // The daemon decides: a standing query clears first, an
                 // empty one dismisses (and the daemon closes the
-                // gesture then — the machine's own `showing` stays true
+                // gesture then; the machine's own `showing` stays true
                 // until that close, so a cleared query keeps typing).
                 GestureKey::Escape => GestureOutput::Escape,
                 GestureKey::Other => GestureOutput::Nothing,
@@ -4193,7 +4193,7 @@ impl Gesture {
     /// Whether a gesture session is open (the overlay should be mapped).
     /// Tests assert visibility directly; the daemon mirrors the session
     /// with its ring instead of asking (dead in the binary, public API in
-    /// the dev lib target — an `allow`, not an `expect`, for exactly that
+    /// the dev lib target: an `allow`, not an `expect`, for exactly that
     /// reason).
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn showing(&self) -> bool {
@@ -4218,23 +4218,23 @@ impl Gesture {
 /// Shift+Tab arrives as ISO_Left_Tab on most layouts and as Tab plus the
 /// shift modifier on others: both step backwards. `shift_held`,
 /// `ctrl_held`, and `alt_held` are the seat's last reported modifier
-/// states — Ctrl classifies digit presses, exactly as shift classifies
+/// states: Ctrl classifies digit presses, exactly as shift classifies
 /// Tab.
 ///
 /// Grouped mode (the owner's 2026-11-08 rev-5 simplification): Tab
-/// steps one visible row like ↓/↑ — headers included, collapsed
+/// steps one visible row like ↓/↑; headers included, collapsed
 /// children never; → expands and enters ([`GestureKey::EnterChild`]), ←
 /// exits or collapses ([`GestureKey::ExitParent`]); Ctrl+N addresses
 /// level-1 entries ([`GestureKey::SelectApp`]). Flat mode
-/// (`grouped = false`) keeps the flat mapping byte for byte — Tab and
-/// ←/→ step rows — pinned by the flat regression tests. The boundary
+/// (`grouped = false`) keeps the flat mapping byte for byte (Tab and
+/// ←/→ step rows), pinned by the flat regression tests. The boundary
 /// passes the live model's own mode flag, so the keysym the user
 /// pressed maps against the list they see.
 ///
 /// Type-to-filter (`type-filter`, 2026-11-08): a printable keysym types
 /// into the session's query through every modifier; Backspace erases.
-/// Chord arms win ahead of the printable arm — only Ctrl+N survives.
-/// The overlay's key-map mode — which card shape the grabbed keys map
+/// Chord arms win ahead of the printable arm: only Ctrl+N survives.
+/// The overlay's key-map mode, which card shape the grabbed keys map
 /// against: the flat list (vertical or horizontal), the vertical grouped
 /// tree, or the grouped-horizontal combination (the axis-swapped card).
 /// The boundary passes the live overlay's mode, so a keysym maps against
@@ -4258,16 +4258,16 @@ pub enum KeyMode {
 /// Shift+Tab arrives as ISO_Left_Tab on most layouts and as Tab plus the
 /// shift modifier on others: both step backwards. `shift_held`,
 /// `ctrl_held`, and `alt_held` are the seat's last reported modifier
-/// states — Ctrl classifies digit presses, exactly as shift classifies
+/// states: Ctrl classifies digit presses, exactly as shift classifies
 /// Tab.
 ///
 /// Grouped mode (the owner's 2026-11-08 rev-5 simplification): Tab
-/// steps one visible row like ↓/↑ — headers included, collapsed
+/// steps one visible row like ↓/↑; headers included, collapsed
 /// children never; → expands and enters ([`GestureKey::EnterChild`]), ←
 /// exits or collapses ([`GestureKey::ExitParent`]); the key above Tab
 /// works the focused app's group ([`GestureKey::ToggleOrCycle`]); Ctrl+N
 /// addresses level-1 entries ([`GestureKey::SelectApp`]). Flat mode
-/// keeps the flat mapping byte for byte — Tab and ←/→ step rows —
+/// keeps the flat mapping byte for byte (Tab and ←/→ step rows),
 /// pinned by the flat regression tests. The boundary passes the live
 /// model's own mode, so the keysym the user pressed maps against the
 /// list they see.
@@ -4278,20 +4278,20 @@ pub enum KeyMode {
 /// steps apps from an app tile and joins the linear walk inside an
 /// open run ([`GestureKey::StepApp`]), the key above
 /// Tab works the focused app's group ([`GestureKey::ToggleOrCycle`],
-/// grave alone — every other keysym still types), and Ctrl+N
-/// addresses the visible tiles in reading order ([`GestureKey::Select`]
-/// — band 1 left→right then band 2 left→right, exactly as the card
+/// grave alone; every other keysym still types), and Ctrl+N
+/// addresses the visible tiles in reading order ([`GestureKey::Select`]:
+/// band 1 left→right then band 2 left→right, exactly as the card
 /// concatenates them).
 ///
 /// Type-to-filter (`type-filter`, 2026-11-08): a printable keysym types
 /// into the session's query through every modifier; Backspace erases.
-/// Chord arms win ahead of the printable arm — only Ctrl+N survives.
+/// Chord arms win ahead of the printable arm: only Ctrl+N survives.
 pub fn key_input(
     keysym: Keysym,
     shift_held: bool,
     ctrl_held: bool,
     // Alt classifies the close key (minus); typing deliberately ignores
-    // it — Alt is held the whole gesture.
+    // it; Alt is held the whole gesture.
     alt_held: bool,
     mode: KeyMode,
 ) -> GestureInput {
@@ -4336,21 +4336,21 @@ pub fn key_input(
         // it as a no-op on an empty query).
         Keysym::BackSpace => (GestureKey::Backspace, shift_held),
         // Alt+minus closes the selected row's window (`close-window`),
-        // top row or keypad. Shift+minus — the underscore keysym — is a
+        // top row or keypad. Shift+minus (the underscore keysym) is a
         // printable, not the key.
         Keysym::minus | Keysym::KP_Subtract if alt_held => (GestureKey::Close, shift_held),
         // The key above Tab (`` `` ``) works the focused app's group in
-        // every grouped card — the strip and the vertical tree alike —
+        // every grouped card (the strip and the vertical tree alike)
         // and only there: flat sessions keep typing it into the query
         // (the type-filter contract). Both of the key's keysyms map: the
         // compositor reports the level-resolved symbol, so Shift+` on a
-        // US layout arrives as `asciitilde`, never `grave` — matching
+        // US layout arrives as `asciitilde`, never `grave`; matching
         // `grave` alone left Alt+Shift+` unmatchable at runtime (the
         // shifted-printable twin of the underscore arm below). The
-        // daemon resolves the level and the flag — a closed entry opens
+        // daemon resolves the level and the flag: a closed entry opens
         // on the MRU-front window (Shift on the last), an expanded entry
         // collapses in place, and a window row or tile cycles the app's
-        // windows — and reroutes to the type-into path while a query
+        // windows, and reroutes to the type-into path while a query
         // stands.
         Keysym::grave | Keysym::asciitilde if matches!(mode, GroupedHorizontal | Grouped) => (
             GestureKey::ToggleOrCycle(if shift_held {
@@ -4361,7 +4361,7 @@ pub fn key_input(
             shift_held,
         ),
         // Ctrl+digits map with or without shift held; without Ctrl the
-        // number row stays Other — it must never surprise-activate. In
+        // number row stays Other; it must never surprise-activate. In
         // vertical grouped mode the chord addresses level-1 entries; in
         // flat and combined it addresses rows (the strip's rows are
         // already the reading order).
@@ -4373,8 +4373,8 @@ pub fn key_input(
             shift_held,
         ),
         // The query (`type-filter`): a printable keysym types through
-        // every modifier — Alt is held the whole gesture, Shift is how
-        // uppercase types — and the chord arms above have already had
+        // every modifier (Alt is held the whole gesture, Shift is how
+        // uppercase types), and the chord arms above have already had
         // their pick. Control characters (Tab, Return, Escape, the
         // keypad's enter/tab) never type: their dedicated arms caught
         // them, and the filter drops the rest.
@@ -4386,7 +4386,7 @@ pub fn key_input(
 
 /// The character a keysym types into the query, if it types at all:
 /// `key_char`'s mapping (the xkb_keysym_to_utf32 rule) minus control
-/// characters. Layout-correct by construction — the keysym is what the
+/// characters. Layout-correct by construction: the keysym is what the
 /// layout produced.
 fn printable(keysym: Keysym) -> Option<char> {
     keysym.key_char().filter(|ch| !ch.is_control())
@@ -4394,7 +4394,7 @@ fn printable(keysym: Keysym) -> Option<char> {
 
 /// The 0-based overlay row a digit keysym addresses: top-row `1..=9`
 /// (0x31..=0x39) and keypad `KP_1..KP_9` (0xffb1..=0xffb9) are row
-/// `digit - 1`. Everything else — `0` included (no Ctrl+0-as-10) — is
+/// `digit - 1`. Everything else (`0` included (no Ctrl+0-as-10)) is
 /// not number-addressable. Matching rides the raw codes because a
 /// range pattern over the named consts is not something xkeysym's
 /// associated constants promise to compile.
@@ -4407,8 +4407,8 @@ fn digit_row(keysym: Keysym) -> Option<usize> {
     }
 }
 
-/// Saturating accumulate, bounded per event: no compositor value —
-/// however buggy or hostile — can panic (debug) or enqueue an unbounded
+/// Saturating accumulate, bounded per event: no compositor value (
+/// however buggy or hostile) can panic (debug) or enqueue an unbounded
 /// step burst (release). ±32 notches in one event is far past any
 /// physical device (a full-spin flick delivers a handful) and far below
 /// the freeze regime; rotation outside the clamp is dropped, not
@@ -4422,7 +4422,7 @@ pub const WHEEL_MAX_NOTCHES_PER_EVENT: i32 = 32;
 /// ±120. `value120` counts 1/120ths of a notch, so a physical notch may
 /// arrive split across events (60+60, or a touchpad's stream of small
 /// deltas) and only the carried residual keeps the step count linear in
-/// the total rotation — the protocol pins 60+60 = 1 notch and 60−60 = 0
+/// the total rotation: the protocol pins 60+60 = 1 notch and 60−60 = 0
 /// notches, so the residual keeps its sign. The deprecated `discrete`
 /// step is the pre-v120 equivalent, is already whole notches, applies
 /// only when the compositor sends no `value120`, and never touches the
@@ -4431,7 +4431,7 @@ pub const WHEEL_MAX_NOTCHES_PER_EVENT: i32 = 32;
 /// Both branches are bounded per event at
 /// [`WHEEL_MAX_NOTCHES_PER_EVENT`]: the v120 branch saturates before
 /// the add and clamps before the divide, the legacy discrete count
-/// clamps symmetrically — an axis value at the i32 rails steps at most
+/// clamps symmetrically: an axis value at the i32 rails steps at most
 /// ±32 notches instead of panicking or freezing the enqueue loop, and
 /// rotation beyond the clamp is dropped, not carried.
 pub fn wheel_notches(value120: i32, discrete: i32, residual: i32) -> (i32, i32) {
@@ -4459,7 +4459,7 @@ pub fn wheel_notches(value120: i32, discrete: i32, residual: i32) -> (i32, i32) 
 pub const ECHO_WINDOW_MS: u32 = 8;
 
 /// Whether this whole-notch wheel step is an echo of the last accepted
-/// one — same direction, arriving within [`ECHO_WINDOW_MS`] of it — and
+/// one (same direction, arriving within [`ECHO_WINDOW_MS`] of it) and
 /// so should be dropped instead of stepping again.
 ///
 /// `time_ms` is the axis event's own millisecond timestamp; a timestamp
@@ -4701,7 +4701,7 @@ mod tests {
     }
 
     /// The hint band's device pixels for `row`'s band at the rendered()
-    /// scale — where `render` paints a row's digit.
+    /// scale: where `render` paints a row's digit.
     fn hint_band_points(row: usize, width: u32) -> impl Iterator<Item = (u32, u32)> {
         let top = (PAD_Y + row as u32 * (ROW_H + ROW_GAP)) * 2;
         let x0 = (width - PAD_X - HINT_COLS * TEXT_W) * 2;
@@ -4998,8 +4998,8 @@ mod tests {
 
     #[test]
     fn the_default_profile_is_exactly_todays_constants() {
-        // The Round + Standard row — COSMIC's factory default and the
-        // miss default — equals the constants block verbatim, so the
+        // The Round + Standard row (COSMIC's factory default and the
+        // miss default) equals the constants block verbatim, so the
         // default desktop renders byte-identically.
         assert_eq!(
             StyleProfile::default(),
@@ -5033,7 +5033,7 @@ mod tests {
     fn every_profile_keeps_the_band_clear_of_the_card_corner() {
         // The true invariant behind the pinned era's `PAD_Y ≥ RADIUS`:
         // no part of the selection band falls in the card corner's
-        // exclusion zone — inside the corner square yet outside the
+        // exclusion zone: inside the corner square yet outside the
         // corner circle. That assert was sufficient while pad_y was a
         // pinned 16; as a derived value Compact's pad_y is 8 and the
         // band's SELECT_INSET buys the clearance instead (the compile
@@ -5070,8 +5070,8 @@ mod tests {
     #[test]
     fn every_density_and_rows_budget_fits_the_panel() {
         // The fit is guaranteed by construction (SC 4): the effective
-        // budget is the largest rows whose worst-case card —
-        // rows + ROWS_SLACK slots — fits the panel rule.
+        // budget is the largest rows whose worst-case card (
+        // rows + ROWS_SLACK slots) fits the panel rule.
         for density in [Density::Compact, Density::Standard, Density::Spacious] {
             for rows in ROWS_MIN..=ROWS_MAX {
                 let effective = effective_rows(density, rows);
@@ -5085,7 +5085,7 @@ mod tests {
         }
         // Spacious is the binding density: its 68-px slot pitch clamps
         // the ceiling to 8 (9 + slack = 11 slots = 784 px > 720; 8 +
-        // slack = 10 = 716 ≤ 720 — the plan's "rows ≤ 9 / 11 slots =
+        // slack = 10 = 716 ≤ 720; the plan's "rows ≤ 9 / 11 slots =
         // 720" line mixed Standard's gap and pad into the Spacious
         // card). Standard and Compact never clamp.
         assert_eq!(effective_rows(Density::Spacious, ROWS_MAX), 8);
@@ -5101,7 +5101,7 @@ mod tests {
     }
 
     /// The golden-render scenario: fifteen varied windows at the default
-    /// budget — long enough to window (dots, hints, bands, border), the
+    /// budget: long enough to window (dots, hints, bands, border), the
     /// digest pin's fixed inputs.
     fn digest_snapshot() -> Snapshot {
         fn entry(handle: u64, n: u64) -> switcher::Toplevel {
@@ -5164,7 +5164,7 @@ mod tests {
     #[test]
     fn model_height_follows_the_density_and_width_never_moves() {
         // The same five windows at every density: the card breathes
-        // vertically per the rhythm table and never horizontally —
+        // vertically per the rhythm table and never horizontally;
         // density has no width analogue (the spec's pinned-X
         // invariant).
         let snap = long_snapshot(5);
@@ -5424,7 +5424,7 @@ mod tests {
     fn a_width_floor_widens_the_vertical_card_never_narrows_it() {
         // The `width`/`min-width` contract on the vertical card: a
         // floor below the content width sizes nothing (nothing ever
-        // clips), a floor above widens — rows stay left-aligned, the
+        // clips), a floor above widens: rows stay left-aligned, the
         // hint band re-anchors to the new right edge.
         let snap = snapshot(
             vec![toplevel(
@@ -5493,7 +5493,7 @@ mod tests {
     fn the_glyph_block_is_whole_device_pixels_at_the_render_scale_floor() {
         // 12-px text at the 2× floor: each font pixel is exactly three
         // device pixels, so nothing letter-spaces on any output up to
-        // 200 % (the 3× case floors to 4 in a 4.5 cell — documented on
+        // 200 % (the 3× case floors to 4 in a 4.5 cell; documented on
         // FONT_SCALE, not pinned here).
         assert_eq!((TEXT_W, TEXT_H), (12, 12));
         assert_eq!(TEXT_W * 2 / GLYPH_W, 3);
@@ -5503,7 +5503,7 @@ mod tests {
     #[test]
     fn alt_minus_closes_the_selected_window() {
         // The close key (`close-window`): Alt+minus, top row or keypad,
-        // both modes alike — Alt is the gesture's own modifier.
+        // both modes alike; Alt is the gesture's own modifier.
         for mode in [KeyMode::Flat, KeyMode::Grouped] {
             for keysym in [Keysym::minus, Keysym::KP_Subtract] {
                 assert_eq!(
@@ -5516,7 +5516,7 @@ mod tests {
                 );
             }
         }
-        // Shift+minus is the underscore keysym — a printable, not the
+        // Shift+minus is the underscore keysym: a printable, not the
         // key; a plain minus types a hyphen (the gesture always holds
         // Alt, but the pure map answers honestly without it).
         assert_eq!(
@@ -5606,12 +5606,12 @@ mod tests {
             queried.row_at(4.0, (rhythm.pad_y + strip + 1) as f64, 1),
             Some(0)
         );
-        // And the card grew to hold it — row 1 answers at its shifted
+        // And the card grew to hold it: row 1 answers at its shifted
         // zone, not the plain one.
         let row_one = (rhythm.pad_y + strip + rhythm.row_h + rhythm.row_gap + 1) as f64;
         assert_eq!(queried.row_at(4.0, row_one, 1), Some(1));
         // The shift is sub-row (28 < one pitch): the plain row-1 zone
-        // lands inside queried row 0 — the point of the shifted mapping.
+        // lands inside queried row 0, the point of the shifted mapping.
         assert_eq!(
             queried.row_at(4.0, (rhythm.pad_y + rhythm.row_h + 1) as f64, 1),
             Some(0)
@@ -5622,7 +5622,7 @@ mod tests {
 
     #[test]
     fn with_workspace_off_returns_the_model_unchanged() {
-        // The empty name is the identity — the default-off card is
+        // The empty name is the identity: the default-off card is
         // byte-for-byte today's, the no-config pin.
         let plain = hit_model(2);
         let mut text = TextBackend::Bitmap;
@@ -5678,7 +5678,7 @@ mod tests {
     #[test]
     fn with_workspace_grows_the_horizontal_card_at_the_bottom() {
         // The label's own line (W7): the horizontal card grows by the
-        // clearing and the label's cell below the tiles — and the
+        // clearing and the label's cell below the tiles, and the
         // caption above is untouched, its budget whole again.
         let snap = band_snapshot(4);
         let model = build_band(&snap, Handle(1), 4, None).expect("builds");
@@ -5704,9 +5704,9 @@ mod tests {
     #[test]
     fn row_hints_address_exactly_one_through_nine() {
         // Entries 1..9 are addressable and hinted; entry 10 onward
-        // paints nothing — no dead keys on the card (cosmic's own
+        // paints nothing: no dead keys on the card (cosmic's own
         // row-10 hint is an unwired upstream gap Airlock does not
-        // copy). Rev 5: one chord — Ctrl+N at level 1; the Alt+N
+        // copy). Rev 5: one chord, Ctrl+N at level 1; the Alt+N
         // children chords left with the scoped vocabulary.
         for (index, n) in (1..=9).enumerate() {
             assert_eq!(RowHint::ctrl(index), Some(RowHint::Ctrl(n)));
@@ -5717,7 +5717,7 @@ mod tests {
     #[test]
     fn overlay_width_carries_the_structural_hint_band() {
         // The band is furniture every card owns: the width formula
-        // reserves HINT_GAP + HINT_COLS whatever the row count — a
+        // reserves HINT_GAP + HINT_COLS whatever the row count; a
         // one-row card and a fifteen-row card of equal titles are
         // equally wide, whether or not any row paints a hint.
         let single = snapshot(
@@ -5797,7 +5797,7 @@ mod tests {
     }
 
     /// The slot count the rule reserves for a `len`-long list under a
-    /// `rows` budget — the contract, not the implementation: whole up to
+    /// `rows` budget, the contract, not the implementation: whole up to
     /// `rows + ROWS_SLACK`, the budget plus one slot per truncatable edge
     /// above it.
     fn expected_slots(len: usize, rows: usize) -> usize {
@@ -5809,7 +5809,7 @@ mod tests {
     }
 
     /// Every `rows` the setting accepts: the property suite runs over all
-    /// of them — the enumerations stay small.
+    /// of them; the enumerations stay small.
     fn every_rows() -> std::ops::RangeInclusive<usize> {
         ROWS_MIN..=ROWS_MAX
     }
@@ -5829,7 +5829,7 @@ mod tests {
 
     /// Prior windows a session could carry into a `len`-long rebuild:
     /// every window reachable at `len` plus every window reachable at a
-    /// longer length — the mid-gesture shrink case.
+    /// longer length: the mid-gesture shrink case.
     fn prior_windows(len: usize, rows: usize) -> Vec<Viewport> {
         let mut priors = reachable_windows(len, rows);
         for longer in len + 1..=3 * rows + 2 {
@@ -5843,7 +5843,7 @@ mod tests {
         // The fixed point, exhaustive over every (rows, len, sel, prev)
         // the gesture can produce: the window covers exactly the
         // reserved slots, the flags honestly report what is hidden, and
-        // the selection always lands in the inner content range — never
+        // the selection always lands in the inner content range: never
         // an affordance slot, never off-window. Any implementation
         // satisfying this is the contract; the clamping inside is not.
         for rows in every_rows() {
@@ -5889,7 +5889,7 @@ mod tests {
     #[test]
     fn a_long_list_keeps_at_least_rows_windows_in_view() {
         // The 11-07 budget: the `…` rows ride on top of `rows`, never
-        // inside it — exactly `rows` content between two dots, one more
+        // inside it: exactly `rows` content between two dots, one more
         // when only one edge is truncated.
         for rows in every_rows() {
             for len in rows + ROWS_SLACK + 1..=3 * rows + 2 {
@@ -5920,7 +5920,7 @@ mod tests {
     fn a_list_within_the_budget_plus_slack_shows_whole() {
         // Up to `rows + ROWS_SLACK` windows fit the reserved slots with
         // nothing hidden, so no affordance is drawn and every row is
-        // content — the no-truncation boundary moved from `rows` to
+        // content: the no-truncation boundary moved from `rows` to
         // `rows + 2` with the 11-07 rule.
         for rows in every_rows() {
             for len in 1..=rows + ROWS_SLACK {
@@ -5995,7 +5995,7 @@ mod tests {
     #[test]
     fn a_fresh_session_opens_top_aligned() {
         // The selection at open is the MRU front (row 0), so a fresh
-        // window shows the head of the list — and the rule stays total:
+        // window shows the head of the list, and the rule stays total:
         // any fresh selection the head window can still show as content
         // keeps it.
         for rows in every_rows() {
@@ -6013,7 +6013,7 @@ mod tests {
     fn the_truncation_edges_appear_past_the_slack() {
         // Past `rows + ROWS_SLACK` the windows reach both truncations:
         // the head hides rows below, the pulled-down window rows above,
-        // and an interior window — four past the budget — both at once.
+        // and an interior window (four past the budget) both at once.
         for rows in every_rows() {
             let past = rows + ROWS_SLACK + 1;
             let head = visible_window(past, 0, rows, None);
@@ -6046,7 +6046,7 @@ mod tests {
     fn a_full_sweep_shifts_the_window_in_single_row_steps() {
         // Carrying the window through a whole Tab sweep (and back) moves
         // it from the top window to the bottom window one row at a time,
-        // never jumping — the shift reads as one clean frame per step.
+        // never jumping: the shift reads as one clean frame per step.
         for rows in every_rows() {
             for len in [rows + ROWS_SLACK + 1, 2 * rows + 2, 3 * rows + 2] {
                 let visible = expected_slots(len, rows);
@@ -6091,14 +6091,14 @@ mod tests {
     // --- card-layout: the horizontal windowing rule (CL2) ---------------
 
     /// Every tile budget the `columns` setting can produce, plus one
-    /// past the ceiling: the property suite runs over all of them —
+    /// past the ceiling: the property suite runs over all of them;
     /// the enumerations stay small.
     fn every_tiles() -> std::ops::RangeInclusive<usize> {
         COLUMNS_MIN..=COLUMNS_MAX + 1
     }
 
     /// The tile count the band reserves for a `len`-long list under a
-    /// `tiles` budget — the contract, not the implementation: the whole
+    /// `tiles` budget, the contract, not the implementation: the whole
     /// list up to the budget, the budget above it. The trailing `…`
     /// lives inside these tiles, never beyond them.
     fn expected_tiles(len: usize, tiles: usize) -> usize {
@@ -6120,7 +6120,7 @@ mod tests {
 
     /// Prior windows a horizontal session could carry into a `len`-long
     /// rebuild: every band reachable at `len` plus every band reachable
-    /// at a longer length — the mid-gesture shrink case.
+    /// at a longer length: the mid-gesture shrink case.
     fn prior_bands(len: usize, tiles: usize) -> Vec<Viewport> {
         let mut priors = reachable_bands(len, tiles);
         for longer in len + 1..=3 * tiles + 2 {
@@ -6178,7 +6178,7 @@ mod tests {
     #[test]
     fn a_long_band_spends_one_tile_on_the_affordance() {
         // The budget contract, one axis over: a list longer than the
-        // budget keeps at least `tiles − 1` windows in view — the
+        // budget keeps at least `tiles − 1` windows in view: the
         // affordance spends the last tile mid-list, the tail window
         // hides nothing and shows all `tiles`.
         for tiles in every_tiles() {
@@ -6269,7 +6269,7 @@ mod tests {
     #[test]
     fn a_fresh_session_opens_left_aligned() {
         // The selection at open is the MRU front (tile 0), so a fresh
-        // band shows the head of the list — and the rule stays total:
+        // band shows the head of the list, and the rule stays total:
         // any fresh selection the head window can still show as
         // content keeps it.
         for tiles in every_tiles() {
@@ -6315,7 +6315,7 @@ mod tests {
     fn a_full_sweep_shifts_the_band_in_single_tile_steps() {
         // Carrying the band through a whole Tab sweep (and back) moves
         // it from the head window to the tail window one tile at a
-        // time, never jumping — the shift reads as one clean frame per
+        // time, never jumping: the shift reads as one clean frame per
         // step.
         for tiles in every_tiles() {
             for len in [tiles + 1, 2 * tiles + 2, 3 * tiles + 2] {
@@ -6431,7 +6431,7 @@ mod tests {
 
     /// A two-workspace snapshot whose recency crosses the workspace
     /// boundary, invoked from workspace 1, with a workspace-less window
-    /// between the recencies — flat MRU order (1, 4, 2, 3) and the
+    /// between the recencies: flat MRU order (1, 4, 2, 3) and the
     /// grouped order (1, 3, 2, 4) disagree, and so does the empty-list
     /// degenerate (1, 3, 4, 2), which is what a model builder that
     /// drops the workspace list would produce.
@@ -6462,9 +6462,9 @@ mod tests {
     #[test]
     fn a_vertical_model_under_all_lists_the_grouped_order() {
         // The overlay must thread the snapshot's workspace list into
-        // eligible: under All the rows list workspace-major — the
+        // eligible: under All the rows list workspace-major (the
         // invoking workspace's windows first, the other workspace after,
-        // the workspace-less window last — not by global recency
+        // the workspace-less window last), not by global recency
         // (workspace-order, 2026-11-14).
         let snap = all_scope_grouped_snapshot();
         let model = build(&snap, Handle(3), Scope::All).expect("eligible windows exist");
@@ -6484,7 +6484,7 @@ mod tests {
 
     #[test]
     fn a_horizontal_model_under_all_lists_the_grouped_order() {
-        // The Alt+Esc band over the same pin — build_band hardcodes the
+        // The Alt+Esc band over the same pin; build_band hardcodes the
         // v1 scope, so this calls the model builder directly with All.
         let snap = all_scope_grouped_snapshot();
         let model = overlay_model_horizontal(
@@ -6517,13 +6517,13 @@ mod tests {
 
     #[test]
     fn a_truncated_band_appends_one_continuation_tile() {
-        // Six windows, four tiles: four content tiles then one `…` tile
-        // — handle `None`, inert to every input, never hinted, never
+        // Six windows, four tiles: four content tiles then one `…` tile;
+        // handle `None`, inert to every input, never hinted, never
         // banded, and carrying the three hidden windows as its count.
         let snap = band_snapshot(6);
         let model = build_band(&snap, Handle(1), 4, None).expect("eligible windows exist");
         // The dots spend a content tile: three windows plus the dots is
-        // four slots — the card stays four tiles wide.
+        // four slots; the card stays four tiles wide.
         assert_eq!(model.rows.len(), 4, "three content tiles plus the dots");
         let dots = model.rows.last().expect("the trailing tile");
         assert_eq!(dots.handle, None, "the continuation tile carries no window");
@@ -6551,7 +6551,7 @@ mod tests {
     #[test]
     fn tile_hints_stop_at_nine_in_reading_order() {
         // Reading order is left to right over the *content* tiles; the
-        // tenth and beyond hint nothing, the dots tile nothing — the
+        // tenth and beyond hint nothing, the dots tile nothing; the
         // flat card's every-row rule one axis over.
         let snap = band_snapshot(14);
         let model = build_band(&snap, Handle(1), 12, None).expect("eligible windows exist");
@@ -6567,7 +6567,7 @@ mod tests {
     fn the_band_sizes_wide_and_short() {
         // The wide-short aspect: width is the tile grid floored at the
         // caption (glance-tiles G1), height the caption line, the tile
-        // cell, and the card padding — wider than tall at every budget
+        // cell, and the card padding; wider than tall at every budget
         // the setting accepts, and the `…` tile never widens it.
         let whole = build_band(&band_snapshot(3), Handle(1), 3, None).expect("builds");
         assert_eq!(
@@ -6595,7 +6595,7 @@ mod tests {
         // The floor only widens, on the band too: below the caption's
         // own guarantee it sizes nothing; above it the card widens with
         // the tiles left-aligned in the air, and the caption recomposes
-        // against the wider budget — a long title un-truncates, never
+        // against the wider budget: a long title un-truncates, never
         // overflows.
         let snap = snapshot(
             vec![toplevel(
@@ -6644,11 +6644,11 @@ mod tests {
     #[test]
     fn auto_columns_fit_a_fraction_of_the_output_min_three() {
         // Auto: floor of two thirds of the invoking output's logical
-        // width over the tile pitch, floored at three — pinned against
+        // width over the tile pitch, floored at three; pinned against
         // synthetic outputs, uncapped above (only pinned values cap at
         // twelve, and the parser enforces that). The pins re-derived at
         // the compact pitch (glance-tiles G1, 2026-11-09: 72 px against
-        // CL4's 160 — the same outputs fit 2.2× the tiles).
+        // CL4's 160; the same outputs fit 2.2× the tiles).
         assert_eq!(resolved_tiles(ColumnsSetting::Auto, 1920), 17);
         assert_eq!(resolved_tiles(ColumnsSetting::Auto, 1366), 12);
         assert_eq!(resolved_tiles(ColumnsSetting::Auto, 2560), 23);
@@ -6670,7 +6670,7 @@ mod tests {
     fn width_settings_resolve_against_the_output() {
         // The three forms beside the tiles twin: `auto` stays
         // content-sized (`None`), a percentage is the output's share in
-        // whole logical px, a pixel count is the floor verbatim — the
+        // whole logical px, a pixel count is the floor verbatim; the
         // daemon owns the one clamp left, a pixel count past the
         // output.
         assert_eq!(resolved_width(WidthSetting::Auto, 1920), None);
@@ -6690,7 +6690,7 @@ mod tests {
     #[test]
     fn cell_at_maps_each_tile_cell_to_its_index() {
         // The pointer's horizontal contract: a point in tile N's cell
-        // addresses tile N — device pixels in, model logical out, at
+        // addresses tile N: device pixels in, model logical out, at
         // both render scales. Gap seams, card padding, and off-card
         // points are `None`.
         let snap = band_snapshot(5);
@@ -6726,8 +6726,8 @@ mod tests {
 
     #[test]
     fn a_cell_click_resolves_the_window_the_tile_showed() {
-        // The event-time twin (II1's shape): the same screen point —
-        // tile 1's cell center — resolves the window *that model* was
+        // The event-time twin (II1's shape): the same screen point (
+        // tile 1's cell center) resolves the window *that model* was
         // showing, so a click captured against one card never activates
         // another card's window at the shifted list underneath. Run red
         // against a row-addressed resolution: tile 1 of B is W9, not
@@ -6745,8 +6745,8 @@ mod tests {
             toplevel(9, "W9", "app.9", &[1], switcher::State::ACTIVATED, 50),
         );
         let b = build_band(&snapshot(shifted, Some(1)), Handle(9), 4, None).expect("model B");
-        // B's own tile 0 is its new front window W9; the same point —
-        // tile 1 — now addresses W1. A click captured on A resolves
+        // B's own tile 0 is its new front window W9; the same point (
+        // tile 1) now addresses W1. A click captured on A resolves
         // W2 whatever B shows by drain time; a click on B resolves W1.
         assert_eq!(b.rows[0].handle, Some(Handle(9)), "B leads with W9");
         let cell_b = b.cell_at(point_x, point_y, 1).expect("a tile");
@@ -6786,7 +6786,7 @@ mod tests {
             u32::from_le_bytes(canvas[index..index + 4].try_into().expect("pixel"))
         };
         let tile_center_x = |index: u32| TILE_PAD_X + index * (TILE_W + TILE_GAP) + TILE_W / 2;
-        // Interior of the selected tile (tile 1): the band fill — the
+        // Interior of the selected tile (tile 1): the band fill, the
         // exact blended byte, like the vertical band pin.
         let band = Palette::dark().selected_bg;
         assert_eq!(px(tile_center_x(1), lh / 2), band, "selected tile fill");
@@ -6810,8 +6810,8 @@ mod tests {
     #[test]
     fn the_compact_pitch_pins_the_tile_cell() {
         // The owner-frozen decomposition (2026-11-09): the tile sheds
-        // its title line and shrinks to a 64-px slot — the icon keeps
-        // its 48-px weight — while the cell gains the pip territory
+        // its title line and shrinks to a 64-px slot (the icon keeps
+        // its 48-px weight), while the cell gains the pip territory
         // under the icon. Badge row + icon + pips, nothing else; the
         // slot pitch is the spec's ~72 px; every padding and gap stays
         // on the 8-grid.
@@ -6838,7 +6838,7 @@ mod tests {
     #[test]
     fn the_card_keeps_the_caption_line_and_the_working_height() {
         // One caption line above the strip, one tile cell below it, the
-        // paddings around both — the working target keeps today's 168
+        // paddings around both: the working target keeps today's 168
         // px exactly (the caption takes the per-tile title lines'
         // place).
         assert_eq!(
@@ -6851,7 +6851,7 @@ mod tests {
     #[test]
     fn band_width_floors_short_strips_at_the_caption() {
         // The caption floor: a short strip renders inside a card wide
-        // enough that the caption reads at a glance — the shape's width
+        // enough that the caption reads at a glance: the shape's width
         // when it exceeds the floor, the floor when it does not. Tiles
         // stay left-aligned in the floored width.
         let shape = |slots: u32| 2 * TILE_PAD_X + slots * TILE_W + (slots - 1) * TILE_GAP;
@@ -6871,7 +6871,7 @@ mod tests {
 
     // --- glance-tiles: the tile paints (G2) -------------------------------
 
-    /// Renders `model` with the bitmap backend at scale 2 — the
+    /// Renders `model` with the bitmap backend at scale 2: the
     /// tile-paint probes' shared footing.
     fn render_bitmap(model: &OverlayModel) -> Vec<u8> {
         let scale = 2u32;
@@ -6898,9 +6898,9 @@ mod tests {
         u32::from_le_bytes(canvas[index..index + 4].try_into().expect("pixel"))
     }
 
-    /// A hand-built horizontal card with one tile per `counts` entry —
+    /// A hand-built horizontal card with one tile per `counts` entry:
     /// kind Parent with that count (Leaf for zero), unselected,
-    /// unhinted, iconless — the pip and badge probes' fixture.
+    /// unhinted, iconless; the pip and badge probes' fixture.
     fn pip_card(counts: &[usize]) -> OverlayModel {
         let rows = counts
             .iter()
@@ -6937,7 +6937,7 @@ mod tests {
 
     #[test]
     fn the_caption_names_the_flat_bands_selected_window() {
-        // The flat band's caption is the selected window's own title —
+        // The flat band's caption is the selected window's own title:
         // the window Alt-release would activate.
         let snap = band_snapshot(4);
         let model = build_band(&snap, Handle(2), 4, None).expect("builds");
@@ -6952,7 +6952,7 @@ mod tests {
     #[test]
     fn the_caption_names_the_app_tiles_mru_front_window() {
         // An app tile commits its MRU-front window, so the caption
-        // names that window's title — the icon already names the app;
+        // names that window's title; the icon already names the app;
         // the tile's own label (`app.a`) is not the commit target's
         // name.
         let (snap, closed, _open) = combined_fixture();
@@ -6970,7 +6970,7 @@ mod tests {
     #[test]
     fn the_caption_names_a_window_tiles_own_title() {
         // A window tile's commit target is itself: the caption is its
-        // own title — here the open run's back window.
+        // own title: here the open run's back window.
         let (snap, _closed, open) = combined_fixture();
         let model = build_strip(&snap, &open, 2, 4, 8).expect("builds");
         assert_eq!(model.rows[0].title, "a-front");
@@ -6983,7 +6983,7 @@ mod tests {
     #[test]
     fn the_caption_falls_back_through_the_display_title_rule() {
         // The caption composes through `display_title`: a blank title
-        // falls to the app_id, a blank both to `(untitled)` — the same
+        // falls to the app_id, a blank both to `(untitled)`; the same
         // rule every title on the card follows.
         let mut snap = band_snapshot(2);
         let target = snap
@@ -7039,7 +7039,7 @@ mod tests {
 
     #[test]
     fn the_caption_stays_centered_whatever_the_selection() {
-        // Fixed-center (GNOME, KDE, Gala — the record's stability
+        // Fixed-center (GNOME, KDE, Gala: the record's stability
         // finding): the caption's ink never moves with the selection.
         // Two cards differing only in which tile holds the selection
         // paint byte-identical caption lines.
@@ -7066,7 +7066,7 @@ mod tests {
     #[test]
     fn the_caption_paints_top_center_in_both_backends() {
         // The paint: full text color, centered on the reserved line,
-        // its first ink exactly where centering puts it — and the
+        // its first ink exactly where centering puts it, and the
         // caption is the only ink on its line. Proven on the bitmap
         // floor; the System face paints the same line by the
         // shape_budgeted twin above.
@@ -7095,7 +7095,7 @@ mod tests {
 
     #[test]
     fn the_workspace_label_paints_bottom_center_on_the_horizontal_card() {
-        // Centered on the card below the tiles, at its smaller cell —
+        // Centered on the card below the tiles, at its smaller cell:
         // the caption's quiet counterpart at the other end. Proven on
         // the bitmap floor; the System face paints the same line by
         // the shaped twin.
@@ -7107,7 +7107,7 @@ mod tests {
         let text_color = Palette::dark().text;
         let label_cell = ws_label_cell_at(TEXT_H);
         let ink = 4 * label_cell;
-        // The line: the tiles' bottom, the clearing, the label — and
+        // The line: the tiles' bottom, the clearing, the label, and
         // the card's own bottom padding beneath (the owner's eye,
         // 2026-11-10: the label never hugs the card's edge).
         let line_top = band_strip_top() + tile_cell_h_at(TEXT_H) + WS_LABEL_GAP;
@@ -7134,9 +7134,9 @@ mod tests {
     #[test]
     fn the_vertical_card_paints_the_label_above_its_rows() {
         // The reserved line above the first row carries the name,
-        // left-aligned with the thumbnail — the icon column's own left
+        // left-aligned with the thumbnail: the icon column's own left
         // edge (the owner's eye, 2026-11-10); without the label the
-        // same line is bare — the default-off identity.
+        // same line is bare: the default-off identity.
         let plain = hit_model(2);
         let mut text = TextBackend::Bitmap;
         let labeled = with_workspace(plain.clone(), "ab", &mut text, 2);
@@ -7223,7 +7223,7 @@ mod tests {
         // R4's marker: pips under the icon, only while the app holds
         // ≥ 2 live windows, saturating at three (Unity, GNOME's arrow,
         // dash-to-dock). Exact pip counts by pixel census in the pip
-        // zone — zero below two, exact to three, saturated past three.
+        // zone: zero below two, exact to three, saturated past three.
         let model = pip_card(&[0, 1, 2, 3, 5]);
         let canvas = render_bitmap(&model);
         let muted = Palette::dark().muted;
@@ -7244,7 +7244,7 @@ mod tests {
                 _ => 3 * ink_per_pip,
             };
             assert_eq!(pips, expected, "count {count}: the pip census is exact");
-            // The zone below a pipless tile's icon is the plain card —
+            // The zone below a pipless tile's icon is the plain card;
             // the per-tile title line is gone, nothing else paints
             // there.
             if count < 2 {
@@ -7290,7 +7290,7 @@ mod tests {
     fn system_tiles_paint_the_digit_and_pips_too() {
         // Both backends are honest faces of one budget (the module
         // boundary): the System face paints the same digit-only badge
-        // — no chord tail within two columns of bearings — and the
+        // (no chord tail within two columns of bearings) and the
         // same solid pip squares under a multi-window app tile.
         let (snap, closed, _open) = combined_fixture();
         let model = build_strip(&snap, &closed, 0, 4, 8).expect("builds");
@@ -7393,7 +7393,7 @@ mod tests {
     }
 
     /// Like [`build`], grouped: the app tree over the same snapshot,
-    /// collapsed by default — `expanded` names the apps standing open,
+    /// collapsed by default: `expanded` names the apps standing open,
     /// `selected` the selected *tree row* (the daemon selects rows, not
     /// handles, in this mode).
     fn build_grouped(snap: &Snapshot, selected: usize, expanded: &[&str]) -> Option<OverlayModel> {
@@ -7426,7 +7426,7 @@ mod tests {
 
     // --- Grouped model ----------------------------------------------------
 
-    /// The grouped fixture the model tests read: MRU a1, b1, a2, u —
+    /// The grouped fixture the model tests read: MRU a1, b1, a2, u;
     /// two windows of app a, one of b, one un-attributable.
     fn grouped_snap() -> Snapshot {
         snapshot(
@@ -7442,7 +7442,7 @@ mod tests {
 
     #[test]
     fn grouped_model_collapses_by_default_and_lists_all_windows_expanded() {
-        // Collapsed (the default): only level-1 rows — the parent entry
+        // Collapsed (the default): only level-1 rows, the parent entry
         // carrying its count pips, and the leaves under their window
         // titles.
         // Expanded: the parent's whole window set follows as children,
@@ -7524,8 +7524,8 @@ mod tests {
 
     #[test]
     fn grouped_model_selects_by_tree_row_not_handle() {
-        // A parent and its first child carry the same window — the
-        // group's front — so handle matching cannot tell them apart.
+        // A parent and its first child carry the same window (the
+        // group's front), so handle matching cannot tell them apart.
         // The model marks the selected *tree row*: selecting the parent
         // highlights the entry, selecting the front child highlights
         // the child.
@@ -7546,8 +7546,8 @@ mod tests {
 
     #[test]
     fn grouped_model_hints_every_header_and_no_child() {
-        // Rev 5: headers are normal rows — an expanded entry hints its
-        // Ctrl+N chord like any entry — and children hint nothing (the
+        // Rev 5: headers are normal rows; an expanded entry hints its
+        // Ctrl+N chord like any entry, and children hint nothing (the
         // Alt+N chords are gone).
         let snap = grouped_snap();
         let model = build_grouped(&snap, 1, &["app.a"]).expect("eligible windows exist");
@@ -7569,7 +7569,7 @@ mod tests {
     fn grouped_model_sizes_for_indent_and_extras() {
         // The card widens for the tree: a child's indent and a parent's
         // caret terrace join the flat title budget. The bands are pixel
-        // measures — the 16-px child indent is not a whole text column.
+        // measures: the 16-px child indent is not a whole text column.
         let snap = grouped_snap();
         let flat =
             build(&snap, Handle(1), Scope::CurrentWorkspace).expect("eligible windows exist");
@@ -7592,7 +7592,7 @@ mod tests {
     #[test]
     fn grouped_model_windows_the_visible_sequence() {
         // One list, one budget: `rows`/`…` apply over the visible rows
-        // — parents and expanded children together — through the same
+        // (parents and expanded children together) through the same
         // windowing rule. Here a 9-row expanded tree (a×3 grouped, b×2
         // grouped, two leaves) at budget 3 keeps 5 slots with both
         // edges truncated, the selection mid-list.
@@ -7609,7 +7609,7 @@ mod tests {
             Some(1),
         );
         // Expanded tree rows: P-a1, C-a1, C-a2, C-a3, P-b1, C-b1,
-        // C-b2, L-c1, L-u1 — handles 1,1,2,3,4,4,5,6,7. Selecting the
+        // C-b2, L-c1, L-u1; handles 1,1,2,3,4,4,5,6,7. Selecting the
         // b parent (tree row 4) at budget 3: 5 slots from 2, both
         // edges truncated.
         let tree = crate::switcher::Grouping::new(
@@ -7657,7 +7657,7 @@ mod tests {
 
     #[test]
     fn grouped_render_indents_the_child_row() {
-        // The child's whole cell — generic window glyph included — sits
+        // The child's whole cell (generic window glyph included) sits
         // TREE_INDENT right of the top-level column, so the pixel where
         // a parent's glyph starts is pure card on the child's row, and
         // the child's ink appears one indent over.
@@ -7685,7 +7685,7 @@ mod tests {
     fn render_draws_the_inline_disclosure_caret() {
         // Re-pinned 2026-11-09 (owner, in-thread): the disclosure mark
         // is an 8-px, two-pixel-stroke caret in the text color, one
-        // CHEVRON_GAP after the parent's title — inline tree structure,
+        // CHEVRON_GAP after the parent's title; inline tree structure,
         // not the 16-px solid wedge that floated in the
         // hint-gap column and read as a play button. Collapsed points
         // right, expanded points down; a leaf paints nothing.
@@ -7732,7 +7732,7 @@ mod tests {
             "a leaf paints nothing in the caret cell"
         );
 
-        // Expanded: the caret points down — ink where the right-pointing
+        // Expanded: the caret points down: ink where the right-pointing
         // stroke was card and vice versa.
         let expanded =
             build_grouped(&grouped_snap(), 3, &["app.a"]).expect("eligible windows exist");
@@ -7761,7 +7761,7 @@ mod tests {
     fn render_paints_the_count_pips_below_the_title() {
         // Re-pinned 2026-11-09 (owner, in-thread): the parent's count is
         // the horizontal tiles' pip vocabulary, adapted below the app
-        // name — two muted squares for app.a's two windows, in the row's
+        // name; two muted squares for app.a's two windows, in the row's
         // own bottom padding. The title line keeps the caret and the
         // hint only; the count spends no title width. No fill shape, no
         // digit.
@@ -7798,7 +7798,7 @@ mod tests {
 
     #[test]
     fn count_pips_saturate_at_three() {
-        // Five windows still paint three pips — the band's saturation
+        // Five windows still paint three pips: the band's saturation
         // rule, now the parent row's too. The fourth pip's slot stays
         // empty.
         let snap = snapshot(
@@ -7899,7 +7899,7 @@ mod tests {
     fn a_list_within_the_budget_renders_whole_and_unchanged() {
         // The no-regression boundary, exactly at the default budget: no
         // affordance rows, every handle present, and the pre-module
-        // geometry formulas verbatim — a ≤ 8-window gesture renders
+        // geometry formulas verbatim: a ≤ 8-window gesture renders
         // byte-identical to the card before `rows` existed.
         let snap = long_snapshot(DEFAULT_ROWS as u64);
         let model =
@@ -7930,7 +7930,7 @@ mod tests {
 
     #[test]
     fn a_long_lists_head_window_truncates_only_below() {
-        // Fifteen windows under the default budget: ten slots — nine
+        // Fifteen windows under the default budget: ten slots, nine
         // windows in view, dots below.
         let snap = long_snapshot(15);
         let model =
@@ -8069,7 +8069,7 @@ mod tests {
         }
     }
 
-    /// The device-pixel points of `slot`'s row interior — the band a
+    /// The device-pixel points of `slot`'s row interior: the band a
     /// selection would fill, clear of the border's edge reach.
     fn row_band_points(slot: usize, width: u32) -> impl Iterator<Item = (u32, u32)> {
         let top = (PAD_Y + slot as u32 * (ROW_H + ROW_GAP)) * 2;
@@ -8172,7 +8172,7 @@ mod tests {
     fn the_dots_rows_carry_the_hidden_count_on_vertical_cards() {
         // The vertical card's edges report their own magnitude: the top
         // edge hides exactly one window here and shows one pip, the
-        // bottom edge's six hide past `PIP_MAX` and saturate — the
+        // bottom edge's six hide past `PIP_MAX` and saturate, the
         // parent pip rule's count vocabulary, one row over
         // (more-tile-prominence.md §5 L2, 2026-11-14).
         let snap = long_snapshot(15);
@@ -8222,7 +8222,7 @@ mod tests {
     #[test]
     fn affordance_rows_paint_no_hint() {
         // A dots row is not number-addressable, so it must not advertise
-        // a chord — the content row beside it still does.
+        // a chord; the content row beside it still does.
         let snap = long_snapshot(15);
         let model = build_windowed(
             &snap,
@@ -8259,8 +8259,8 @@ mod tests {
     #[test]
     fn selection_band_rounds_its_ends_like_the_card_corners() {
         // The band is a row button: its own corners take the coverage
-        // ramp — card fill at the exact corner, a blend along the arc,
-        // exact fill from the first straight-edge pixel — composited
+        // ramp (card fill at the exact corner, a blend along the arc,
+        // exact fill from the first straight-edge pixel), composited
         // over the card, so the ramp never thins the near-opaque fill.
         let mut model = hit_model(3);
         model.rows[1].selected = true;
@@ -8295,7 +8295,7 @@ mod tests {
     #[test]
     fn continuation_dots_center_their_painted_glyph() {
         // The `…` glyph paints TEXT_W wide, so its box centers on
-        // TEXT_W — centering on the font cell biased the ink 2 px right
+        // TEXT_W; centering on the font cell biased the ink 2 px right
         // of the card's center line. The expected ink derives from the
         // glyph's own set columns, not hardcoded positions.
         let mut model = hit_model(3);
@@ -8362,7 +8362,7 @@ mod tests {
         let model = hit_model(3);
         let x = model.width as f64 / 2.0;
         // Mid-band of every row: PAD_Y top inset, ROW_H bands, ROW_GAP
-        // seams — 40/96/152 at the documented rhythm (PAD_Y 16 doubles
+        // seams: 40/96/152 at the documented rhythm (PAD_Y 16 doubles
         // the row gap; the 11-07 layout pass).
         for (row, mid) in [(0usize, 40.0f64), (1, 96.0), (2, 152.0)] {
             assert_eq!(model.row_at(x, mid, 1), Some(row), "mid of row {row}");
@@ -8415,7 +8415,7 @@ mod tests {
     fn row_at_agrees_between_scale_1_and_scale_2_device_points() {
         // Pointer events are surface-local logical; row_at takes device
         // pixels (logical × render scale). The same on-screen point must
-        // name the same row at both scales — the HiDPI contract, pinned
+        // name the same row at both scales; the HiDPI contract, pinned
         // here at the pure seam the hardware walk re-proves at 200%.
         let model = hit_model(3);
         let x = model.width as f64 / 2.0;
@@ -8439,7 +8439,7 @@ mod tests {
 
     #[test]
     fn selection_and_border_colors_are_the_documented_blends() {
-        // GNOME's :selected formula — text at 20% over the card — pinned
+        // GNOME's :selected formula (text at 20% over the card), pinned
         // exactly so the token cannot drift by accident.
         assert_eq!(COLOR_SELECTED_BG, 0xFA_48_4B_50);
         assert_eq!(COLOR_BORDER, 0xFA44464B);
@@ -8448,7 +8448,7 @@ mod tests {
     #[test]
     fn the_close_zone_is_the_window_rows_icon_badge() {
         // `close-window` on the vertical card: the × sits on the row's
-        // icon, top-right corner — the same badge the horizontal tiles
+        // icon, top-right corner, the same badge the horizontal tiles
         // paint. The badge's own boundaries belong to it; the icon land
         // below and left of it activates, and the hint band is the
         // hint's alone.
@@ -8478,7 +8478,7 @@ mod tests {
             model.close_zone_at((left + right) as f64 / 2.0, bottom as f64, 1),
             None
         );
-        // The hint band no longer closes: the pointer there activates.
+        // The hint band closes nothing: the pointer there activates.
         let hint_x = (model.width - PAD_X - HINT_COLS * TEXT_W) as f64 + 1.0;
         assert_eq!(
             model.close_zone_at(hint_x, top as f64 + 1.0, 1),
@@ -8491,7 +8491,7 @@ mod tests {
     fn the_close_zone_rides_the_workspace_label_s_line_with_its_rows() {
         // The regression the vertical card carried (2026-11-11): the
         // label's reserved line shifts every row down, `row_at` and the
-        // renderer walk past it — but the ×'s zone anchor didn't, so the
+        // renderer walk past it; but the ×'s zone anchor didn't, so the
         // click territory sat `ws_label_height_at` px above the badge it
         // belongs to and a press on the visible × fell through to
         // activate. The zone must sit where the renderer paints: the
@@ -8544,8 +8544,8 @@ mod tests {
 
     #[test]
     fn the_close_zone_refuses_headers_and_continuations() {
-        // A group header closes nothing from its icon — "close an app"
-        // is not this module — and a continuation affordance has no
+        // A group header closes nothing from its icon ("close an app"
+        // is not this module), and a continuation affordance has no
         // window to close. Children are window rows like leaves.
         let mut model = hit_model(3);
         model.rows[0].kind = RowKind::Parent;
@@ -8577,7 +8577,7 @@ mod tests {
     #[test]
     fn the_close_zone_is_the_horizontal_tiles_icon_badge() {
         // `close-window` on the band: the ×'s territory is the square
-        // on the tile's icon at its top-right corner — the same badge
+        // on the tile's icon at its top-right corner, the same badge
         // the vertical rows paint. The rest of the icon activates as
         // before, and the zone's own edges belong to it.
         let model = build_band(&band_snapshot(4), Handle(2), 4, None).expect("builds");
@@ -8648,8 +8648,8 @@ mod tests {
     fn the_horizontal_close_zone_refuses_app_tiles_and_continuations() {
         // An app tile closes its front window through Alt+minus but is
         // not a pointer target ("close an app" is not this module), and
-        // the `…` tile has no window to close. Window tiles — the flat
-        // band's leaves and the open run's children — are the zone.
+        // the `…` tile has no window to close. Window tiles (the flat
+        // band's leaves and the open run's children) are the zone.
         let mut model = build_band(&band_snapshot(4), Handle(2), 4, None).expect("builds");
         model.rows[0].kind = RowKind::Parent;
         model.rows[3].handle = None;
@@ -8683,7 +8683,7 @@ mod tests {
         // Pointer presence is what reveals the ×: a hovered leaf's icon
         // gains the badge it did not carry without the hover, while a
         // header hovered the same way paints byte-identically to the
-        // pointerless card — the reveal never leaks onto rows that must
+        // pointerless card: the reveal never leaks onto rows that must
         // not offer a close. The hint band stays put: the × lives in
         // the icon's corner now, never in the chord's territory.
         let palette = Palette::dark();
@@ -8704,7 +8704,7 @@ mod tests {
             }
         }
         assert!(inked, "the × paints in the full text color");
-        // The hovered row's chord is untouched — the hint no longer
+        // The hovered row's chord is untouched; the hint never
         // yields to the close affordance.
         for (x, y) in hint_band_points(1, model.width) {
             assert_eq!(
@@ -8811,7 +8811,7 @@ mod tests {
     fn light_selection_and_border_derive_by_the_blend_formula() {
         // The light card's band and hairline, hand-computed from the
         // documented 20%/22% formula over the warm-white card and
-        // near-black text — the light twin of the pin above, so neither
+        // near-black text: the light twin of the pin above, so neither
         // variant can drift from the blend system.
         let light = Palette::light();
         assert_eq!(light.background, 0xFA_F7_F4_F0);
@@ -8823,7 +8823,7 @@ mod tests {
     #[test]
     fn muted_derives_by_the_blend_formula_on_both_polarities() {
         // Hints: text at 55% over the card, hand-computed for both
-        // polarities so the derivation cannot drift — the same pin the
+        // polarities so the derivation cannot drift; the same pin the
         // selection and border carry. Dark: R 30→146, G 33→149, B 38→153
         // over (0x1E2126, 0xF2F4F8); light: R 247→127, G 244→127,
         // B 240→128 over (0xF7F4F0, 0x1E2126).
@@ -8851,7 +8851,7 @@ mod tests {
     #[test]
     fn resolve_honors_pinned_values_and_auto_follows_the_system() {
         // Pinned values ignore the system answer entirely; Auto follows
-        // it, and an unreadable answer (None) paints dark — today's look.
+        // it, and an unreadable answer (None) paints dark, today's look.
         // No pair (the PA3 pin: no keys, byte-identical paint).
         let dark = Palette::dark();
         let light = Palette::light();
@@ -8874,7 +8874,7 @@ mod tests {
     #[test]
     fn custom_reproduces_the_builtins_from_their_own_colors() {
         // The built-ins are customs with the shipped colors: the same
-        // two chosen colors in, byte-identical card out — proof the
+        // two chosen colors in, byte-identical card out: proof the
         // custom path adds no derivation of its own.
         assert_eq!(
             Palette::custom(0x00_1E_21_26, 0x00_F2_F4_F8),
@@ -8889,7 +8889,7 @@ mod tests {
     #[test]
     fn custom_derives_by_the_blend_system_per_polarity() {
         // 20/55 everywhere; the border rides one step off the band per
-        // polarity — 18 before it on a dark card, 22 past it on a light
+        // polarity: 18 before it on a dark card, 22 past it on a light
         // one (the built-ins' rule, mirrored).
         let dark = Palette::custom(0x00_2A_1E_30, 0x00_E8_E6_E0);
         assert_eq!(
@@ -8915,7 +8915,7 @@ mod tests {
     #[test]
     fn custom_polarity_flips_at_the_luminance_threshold() {
         // The ratified 0.5 threshold: #BBBBBB sits just under (≈ 0.497),
-        // #BCBCBC just over (≈ 0.503) — the icon tint follows the card
+        // #BCBCBC just over (≈ 0.503); the icon tint follows the card
         // the user chose, not the system's.
         assert!(Palette::custom(0x00_BB_BB_BB, 0x00_00_00_00).is_dark);
         assert!(!Palette::custom(0x00_BC_BC_BC, 0x00_00_00_00).is_dark);
@@ -8923,8 +8923,8 @@ mod tests {
 
     #[test]
     fn custom_stays_near_opaque_for_any_pair() {
-        // The constructor owns the alpha bytes — background 0xFA, text
-        // 0xFF — and blend_over keeps the card's, so every derived
+        // The constructor owns the alpha bytes (background 0xFA, text
+        // 0xFF), and blend_over keeps the card's, so every derived
         // color clears the near-opaque bar whatever the pair.
         for (card, text) in [
             (0x00_1E_21_26u32, 0x00_F2_F4_F8u32),
@@ -8944,7 +8944,7 @@ mod tests {
     #[test]
     fn resolve_lets_a_present_pair_win_over_every_theme_setting() {
         // A present pair pins the card: the setting and the system
-        // answer — present or not — change nothing.
+        // answer (present or not) change nothing.
         let pair = Some((0x00_2A_1E_30, 0x00_E8_E6_E0));
         let expected = Palette::custom(0x00_2A_1E_30, 0x00_E8_E6_E0);
         for setting in [ThemeSetting::Auto, ThemeSetting::Dark, ThemeSetting::Light] {
@@ -8957,7 +8957,7 @@ mod tests {
     #[test]
     fn a_custom_palette_renders_its_own_band_and_card() {
         // The render pin: the selected row's band is exactly this
-        // card's own text@20 blend, the gaps are this card as given —
+        // card's own text@20 blend, the gaps are this card as given;
         // nothing in the renderer reaches for a built-in color.
         let mut model = hit_model(3);
         model.rows[1].selected = true;
@@ -8997,7 +8997,7 @@ mod tests {
     #[test]
     fn neutral_selection_reproduces_the_shipped_band_on_every_card() {
         // The escape hatch, byte-exact: `selection = "neutral"` paints
-        // the band every card shipped before the follow — even when an
+        // the band every card shipped before the follow, even when an
         // accent was available to borrow.
         let accent = Some(0x63_D0_DF);
         for card in [
@@ -9052,7 +9052,7 @@ mod tests {
     #[test]
     fn followed_alpha_never_leaks_into_the_band() {
         // SC 10: even a source color carrying its own alpha byte blends
-        // opaquely — blend_over keeps the card's alpha, and the accent
+        // opaquely: blend_over keeps the card's alpha, and the accent
         // arrives straight anyway.
         let card = Palette::dark();
         let opaque = card.with_selection(SelectionSetting::Accent, Some(0x63_D0_DF));
@@ -9068,7 +9068,7 @@ mod tests {
     #[test]
     fn the_bands_accent_side_follows_the_cards_polarity() {
         // The daemon's composition pinned: the accent read for the band
-        // is `accent_base(card.is_dark)` — the side matching the card
+        // is `accent_base(card.is_dark)`: the side matching the card
         // the keys just chose. Auto theme + system flip flips the card
         // and with it the accent side (the store record's live pair:
         // purple on dark, dark-teal on light).
@@ -9089,7 +9089,7 @@ mod tests {
         // shipped-ratio numbers: dark title 14.66:1, light title
         // 14.73:1 exactly. The record's light muted 3.60:1 was measured
         // on the blend before integer flooring (0x808081 → 3.599); the
-        // shipped floored muted (0x7F7F80) measures 3.648 — the same
+        // shipped floored muted (0x7F7F80) measures 3.648; the same
         // derivation, one rounding apart, and below AA either way (the
         // note that keeps the muted derivation out of the floor's
         // jurisdiction).
@@ -9105,7 +9105,7 @@ mod tests {
 
     #[test]
     fn relative_luminance_hits_the_wcag_anchors() {
-        // White is 1, black is 0, the ratio's full span is 21:1 — the
+        // White is 1, black is 0, the ratio's full span is 21:1, the
         // formula's own anchor points.
         assert!((relative_luminance(0xFFFF_FFFF) - 1.0).abs() < 1e-6);
         assert!(relative_luminance(0xFF00_0000) < 1e-6);
@@ -9141,7 +9141,7 @@ mod tests {
     #[test]
     fn shape_cov_rounds_corners_by_area() {
         // Corner center at (12, 12), radius 12: the exact corner pixel
-        // center is 16.3 px away — no subsample inside, zero coverage.
+        // center is 16.3 px away: no subsample inside, zero coverage.
         assert_eq!(shape_cov(0, 0, 100, 60, RADIUS, 0), 0);
         assert_eq!(shape_cov(1, 1, 100, 60, RADIUS, 0), 0);
         // A pixel straddling the arc carries partial coverage, and the
@@ -9271,8 +9271,8 @@ mod tests {
 
     #[test]
     fn render_draws_glyph_pixels_at_the_text_origin() {
-        // 'A' (row 0 bits 2 and 3) proves the text origin — the column
-        // after the icon — at the doubled font scale. The selection is on
+        // 'A' (row 0 bits 2 and 3) proves the text origin (the column
+        // after the icon) at the doubled font scale. The selection is on
         // the other row so this row shows plain background around glyphs.
         let snap = snapshot(
             vec![
@@ -9324,7 +9324,7 @@ mod tests {
         let row1_y = (PAD_Y + ROW_H + ROW_GAP + ROW_H / 2) * 2;
         // Mid-card x (clear of the border columns): plain background for
         // row 0, selection background for row 1.
-        // Probe left of the icon cell — clear of titles at any width.
+        // Probe left of the icon cell; clear of titles at any width.
         let inside_x = 8 * 2;
         assert_eq!(pixel(&canvas, stride, inside_x, row0_y), COLOR_BACKGROUND);
         assert_eq!(pixel(&canvas, stride, inside_x, row1_y), COLOR_SELECTED_BG);
@@ -9405,7 +9405,7 @@ mod tests {
             COLOR_SELECTED_BG
         );
         assert_eq!(pixel(&canvas, stride, w - 1, h / 2), COLOR_BORDER);
-        // The exact corner pixel is partially covered — mostly outside
+        // The exact corner pixel is partially covered: mostly outside
         // the rounded shape.
         let corner = pixel(&canvas, stride, w - 1, h - 1);
         assert!(
@@ -9501,7 +9501,7 @@ mod tests {
             &Palette::dark(),
             TextBackend::Bitmap,
         );
-        // The 'A' pixels land at the text origin — font column 2 — not
+        // The 'A' pixels land at the text origin (font column 2), not
         // at the row start.
         let block = TEXT_W * 2 / GLYPH_W;
         let text_x = (PAD_X + ICON + ICON_GAP) * 2 + 2 * block;
@@ -9514,7 +9514,7 @@ mod tests {
         // A polish review read the sheet as "the list stretches around the
         // selection". The renderer must prove otherwise: the band is
         // exactly one row tall, and the background corridors between
-        // bands are exactly one row gap — measured on rendered pixels,
+        // bands are exactly one row gap: measured on rendered pixels,
         // at every x inside the card interior, for selections at the
         // top, middle, and bottom of a five-row list.
         for selected in [0usize, 2, 4] {
@@ -9540,7 +9540,7 @@ mod tests {
             };
             let (canvas, stride) = rendered(&model, 2);
             // A probe column inside the band's horizontal extent, in the
-            // empty corridor between the icon cell and the title text —
+            // empty corridor between the icon cell and the title text;
             // clear of glyphs at every row.
             let probe_x = (PAD_X + ICON + ICON_GAP / 2) * 2;
             let first_row_top = PAD_Y * 2;
@@ -9578,7 +9578,7 @@ mod tests {
     #[test]
     fn render_paints_hints_on_rows_one_through_nine_only() {
         // Twelve rows: the first nine carry their chord in the band;
-        // rows ten and deeper stay silent, and the silence is accurate —
+        // rows ten and deeper stay silent, and the silence is accurate:
         // nine rows are addressable, nine are hinted.
         let model = OverlayModel {
             workspace: String::new(),
@@ -9658,7 +9658,7 @@ mod tests {
     #[test]
     fn the_selected_rows_hint_stays_muted() {
         // The accessory rule: the selection colors the row's fill, never
-        // its hint — over the band the chord reads in the same muted
+        // its hint; over the band the chord reads in the same muted
         // color as every unselected row's.
         let model = OverlayModel {
             workspace: String::new(),
@@ -9710,7 +9710,7 @@ mod tests {
     fn render_keeps_a_max_cols_title_a_full_gap_clear_of_its_hint() {
         // Defense in depth, pixel-proved: the widest title a card can
         // carry still ends the full HINT_GAP before its hint's first
-        // glyph cell — the strip between them is pure card fill, and the
+        // glyph cell: the strip between them is pure card fill, and the
         // moved clip guard cost the title nothing.
         let model = OverlayModel {
             workspace: String::new(),
@@ -9746,7 +9746,7 @@ mod tests {
             }
         }
         // The last title glyph still paints (font column 6 of 'W' is
-        // lit) — the guard clips at the title band's edge, not earlier.
+        // lit); the guard clips at the title band's edge, not earlier.
         let last_cell_x = (PAD_X + ICON + ICON_GAP + (MAX_COLS - 1) * TEXT_W) * 2;
         let text_top = (PAD_Y + (ROW_H - TEXT_H) / 2) * 2;
         let block = TEXT_W * 2 / GLYPH_W;
@@ -9846,7 +9846,7 @@ mod tests {
         assert_ne!(glyph('·'), glyph('?'));
         assert_ne!(glyph('·'), glyph('.'));
         // Every fold is one char to one char, so column math never
-        // shifts — asserted over the whole table, not a sample, so a
+        // shifts; asserted over the whole table, not a sample, so a
         // dropped match arm cannot silently regress a separator to `?`.
         for (input, folded) in [
             // Hyphen, figure dash, en dash, em dash, horizontal bar, minus.
@@ -9889,7 +9889,7 @@ mod tests {
                 input as u32
             );
         }
-        // Only the table folds: everything else passes through — the
+        // Only the table folds: everything else passes through; the
         // ellipsis keeps its own glyph path, letters stay themselves
         // (the diacritic fold lives at the string level, `fold_title`).
         assert_eq!(fold_punct('…'), '…');
@@ -9902,7 +9902,7 @@ mod tests {
         // title; punctuation still rides the per-glyph table.
         assert_eq!(fold_title("Résumé — naïve.txt"), "Resume — naive.txt");
         assert_eq!(fold_title("Ångström.log"), "Angstrom.log");
-        // NFD marks are dropped, so a macOS-built title folds too —
+        // NFD marks are dropped, so a macOS-built title folds too,
         // and the marks never spend columns for truncate_cols.
         assert_eq!(fold_title("cafe\u{0301}.txt"), "cafe.txt");
         assert_eq!(fold_title("cafe\u{0301}").chars().count(), 4);
@@ -10056,7 +10056,7 @@ mod tests {
     fn first_modifiers_report_without_alt_commits_immediately() {
         // Quick tap: Alt is already released when the overlay finally maps
         // and receives keyboard focus, so the first modifier report says
-        // alt=false — that tap must still switch.
+        // alt=false; that tap must still switch.
         let mut gesture = Gesture::default();
         gesture.feed(GestureInput::Invoke(Direction::Next));
         assert_eq!(
@@ -10208,7 +10208,7 @@ mod tests {
     #[test]
     fn a_number_selection_between_sessions_is_nothing() {
         // The dead-arm contract every press shares: no overlay, no
-        // output — for the queueable twin and for the pure translation's
+        // output; for the queueable twin and for the pure translation's
         // bare row alike.
         let mut gesture = Gesture::default();
         assert_eq!(
@@ -10392,7 +10392,7 @@ mod tests {
 
     #[test]
     fn key_input_maps_ctrl_keypad_digits_to_row_selects() {
-        // A keypad digit is the same intent as a top-row digit — the
+        // A keypad digit is the same intent as a top-row digit; the
         // Enter family already accepts the keypad's Enter.
         let digits = [
             (Keysym::KP_1, 0),
@@ -10419,8 +10419,8 @@ mod tests {
     #[test]
     fn key_input_types_digits_without_ctrl() {
         // `type-filter` claims the number row: without Ctrl a digit
-        // types into the query, top row and keypad alike — it can no
-        // longer surprise-activate because it no longer activates at
+        // types into the query, top row and keypad alike; it cannot
+        // surprise-activate because it does not activate at
         // all.
         assert_eq!(
             key_input(Keysym::_3, false, false, false, KeyMode::Flat),
@@ -10454,7 +10454,7 @@ mod tests {
     #[test]
     fn key_input_leaves_ctrl_zero_and_ctrl_non_digits_alone() {
         // No Ctrl+0-as-10 (OQ 2): zero never selects. Since
-        // `type-filter` it also never surprises — a Ctrl+0 types a 0
+        // `type-filter` it also never surprises: a Ctrl+0 types a 0
         // like any printable (the query ignores modifier flavor), and
         // Ctrl on a non-printable (Delete) stays inert.
         assert_eq!(
@@ -10509,7 +10509,7 @@ mod tests {
 
     #[test]
     fn grouped_key_input_binds_tab_to_the_linear_step() {
-        // Rev 5: Tab is ↓'s twin in grouped mode too — one visible row,
+        // Rev 5: Tab is ↓'s twin in grouped mode too; one visible row,
         // wrapping, headers included. The level-scoped step is gone.
         assert_eq!(
             key_input(Keysym::Tab, false, false, false, KeyMode::Grouped),
@@ -10538,7 +10538,7 @@ mod tests {
     #[test]
     fn the_level_toggle_key_is_gone() {
         // Rev 5 removed the level toggle; `type-filter` claims the
-        // letters — Alt+W types a w into the query in either mode, and
+        // letters: Alt+W types a w into the query in either mode, and
         // W without Alt types it too (printables ride every modifier).
         for mode in [KeyMode::Flat, KeyMode::Grouped] {
             for (keysym, ch) in [(Keysym::w, 'w'), (Keysym::W, 'W')] {
@@ -10558,7 +10558,7 @@ mod tests {
 
     #[test]
     fn grouped_digits_with_alt_type_into_the_query() {
-        // Rev 5 removed Alt+N; `type-filter` claims the number row —
+        // Rev 5 removed Alt+N; `type-filter` claims the number row:
         // digits type, through Alt, in grouped mode and out of it.
         // (Ctrl+N keeps its chord arm.)
         for mode in [KeyMode::Flat, KeyMode::Grouped] {
@@ -10579,7 +10579,7 @@ mod tests {
     fn grouped_key_input_maps_left_right_to_the_tree_walk() {
         // The W3C vertical tree axes: → enters a multi-window app's
         // children, ← exits to the parent. The flat step aliases are
-        // gone in grouped mode — the vertical step axis is ↑/↓ (and
+        // gone in grouped mode; the vertical step axis is ↑/↓ (and
         // Alt+Tab / Alt+Shift+Tab) alone.
         assert_eq!(
             key_input(Keysym::Right, false, false, false, KeyMode::Grouped),
@@ -10615,7 +10615,7 @@ mod tests {
     #[test]
     fn flat_key_input_keeps_the_left_right_step_aliases() {
         // The regression pin: grouping off reproduces today's mapping
-        // byte for byte — Left/Right step like Up/Down, Tab steps rows.
+        // byte for byte: Left/Right step like Up/Down, Tab steps rows.
         assert_eq!(
             key_input(Keysym::Left, false, false, false, KeyMode::Flat),
             GestureInput::Press {
@@ -10641,7 +10641,7 @@ mod tests {
 
     #[test]
     fn grouped_key_input_keeps_the_ctrl_chord() {
-        // Rev 5: Ctrl+N addresses the Nth level-1 entry — the one
+        // Rev 5: Ctrl+N addresses the Nth level-1 entry, the one
         // chord left; Alt+N is gone with the scoped vocabulary. The
         // Enter family still commits and Escape still dismisses,
         // whatever the mode.
@@ -10652,7 +10652,7 @@ mod tests {
                 shift: false
             }
         );
-        // Without Ctrl the digit types into the query — Ctrl is the
+        // Without Ctrl the digit types into the query: Ctrl is the
         // one modifier that wins over typing.
         assert_eq!(
             key_input(Keysym::_3, false, false, false, KeyMode::Grouped),
@@ -10679,8 +10679,8 @@ mod tests {
 
     #[test]
     fn the_grouped_keys_forward_to_the_daemon() {
-        // The machine cannot resolve grouped walks — the daemon holds
-        // the frozen tree and the expansion state — so it forwards
+        // The machine cannot resolve grouped walks (the daemon holds
+        // the frozen tree and the expansion state), so it forwards
         // them while showing, exactly as it forwards arrow steps.
         // Rev 5: Tab forwards as ↓'s twin, the level vocabulary is
         // gone, and only →/← remain as tree keys.
@@ -10714,7 +10714,7 @@ mod tests {
             }),
             GestureOutput::Step(Direction::Previous)
         );
-        // Between sessions nothing forwards — the overlay is unmapped.
+        // Between sessions nothing forwards; the overlay is unmapped.
         let mut gesture = Gesture::default();
         assert_eq!(
             gesture.feed(GestureInput::Press {
@@ -10744,7 +10744,7 @@ mod tests {
     fn every_displayed_hint_is_a_wired_key() {
         // The render twin of the input mapping: the label on row N names
         // the chord that activates row N. The pairing is pinned end to
-        // end so the two tables cannot drift — a hinted-but-unwired row
+        // end so the two tables cannot drift: a hinted-but-unwired row
         // would be a dead key advertised on the card.
         let digits = [
             (Keysym::_1, 0),
@@ -10773,7 +10773,7 @@ mod tests {
                 "row {row}'s digit must name its own chord"
             );
         }
-        // The reserved band fits the longest label exactly — nothing
+        // The reserved band fits the longest label exactly: nothing
         // spare to misalign, nothing clipped.
         assert_eq!(RowHint::Ctrl(9).digit().len(), HINT_COLS as usize);
         assert_eq!(MAX_HINTS, 9, "nine wired entries, nine digits");
@@ -10795,7 +10795,7 @@ mod tests {
         // split across deltas. The residual carries the sub-notch part
         // into the next event: the protocol's own examples are 60+60 = 1
         // notch and 60-60 = 0 notches. Truncating each event on its own
-        // instead dropped split notches entirely — the wheel stepped
+        // instead dropped split notches entirely: the wheel stepped
         // non-linearly.
         assert_eq!(wheel_notches(60, 0, 0), (0, 60));
         assert_eq!(wheel_notches(60, 0, 60), (1, 0));
@@ -10843,7 +10843,7 @@ mod tests {
     #[test]
     fn wheel_notches_survives_a_hostile_value120_bounded_per_event() {
         // A glitching or hostile compositor can deliver an axis value at
-        // the i32 rails — plain `residual + value120` panics a debug
+        // the i32 rails: plain `residual + value120` panics a debug
         // daemon there, and a release daemon freezes enqueueing
         // millions of steps. The contract: no panic, at most ±32 notches
         // per event, residual always sub-notch, and rotation beyond the
@@ -10883,7 +10883,7 @@ mod tests {
     #[test]
     fn wheel_notches_clamps_the_legacy_discrete_step_to_the_same_bound() {
         // Uniform contract: a garbage discrete count is as bounded as a
-        // garbage v120 — the enqueue loop's `unsigned_abs()` never
+        // garbage v120: the enqueue loop's `unsigned_abs()` never
         // meets a freeze-regime count.
         assert_eq!(wheel_notches(0, i32::MIN, 60), (-32, 60));
         assert_eq!(wheel_notches(0, i32::MAX, -60), (32, -60));
@@ -11002,7 +11002,7 @@ mod tests {
 
     #[test]
     fn hover_none_observation_never_selects_but_forgets_the_row() {
-        // A gap motion and a card leave arrive the same way — a None
+        // A gap motion and a card leave arrive the same way: a None
         // observation. Neither selects, but both forget the row, so
         // returning to it re-asserts pointer intent.
         let mut hover = PointerHover::default();
@@ -11014,7 +11014,7 @@ mod tests {
     #[test]
     fn hover_first_contact_in_a_gap_still_counts_as_contact() {
         // First contact can land in a gap seam. Counting it as contact
-        // keeps the seed where it belongs — otherwise moving into a row
+        // keeps the seed where it belongs; otherwise moving into a row
         // would read as the map-time Enter and never select.
         let mut hover = PointerHover::default();
         assert_eq!(hover.observe(None), None);
@@ -11024,8 +11024,8 @@ mod tests {
     #[test]
     fn hover_reset_seeds_the_next_session_from_scratch() {
         // The daemon resets on every overlay end: the next session's
-        // first contact — the cursor resting right where the new card
-        // maps — seeds again instead of selecting.
+        // first contact (the cursor resting right where the new card
+        // maps) seeds again instead of selecting.
         let mut hover = PointerHover::default();
         assert_eq!(hover.observe(Some(2)), None, "first contact seeds");
         assert_eq!(hover.observe(Some(3)), Some(3));
@@ -11038,7 +11038,7 @@ mod tests {
     /// The strip card over [`grouped_snap`]'s tree: `sequence` the
     /// derived strip (tree indices, as the daemon derived it),
     /// `selected` the tree row the session holds, `width_slots` the
-    /// frozen width — the daemon's max of the closed and open shapes.
+    /// frozen width: the daemon's max of the closed and open shapes.
     fn build_strip(
         snap: &Snapshot,
         sequence: &[usize],
@@ -11085,7 +11085,7 @@ mod tests {
     }
 
     /// The grouped fixture's tree indices: [P-a1, C-a1, C-a2, L-b, L-u]
-    /// over [`grouped_snap`] — the closed strip [0, 3, 4] (the level-1
+    /// over [`grouped_snap`]: the closed strip [0, 3, 4] (the level-1
     /// rows), the open strip [1, 2, 3, 4] (a's run at a's slot).
     fn combined_fixture() -> (Snapshot, Vec<usize>, Vec<usize>) {
         let snap = grouped_snap();
@@ -11099,7 +11099,7 @@ mod tests {
     #[test]
     fn the_band_counts_parked_windows_on_the_tile_pips_when_listed() {
         // Flag-on (minimized-listing M2.2): the band's counts read the
-        // frozen tree, and the tree froze the flag-on listing — a
+        // frozen tree, and the tree froze the flag-on listing: a
         // parent's pip count includes its parked children, and an app
         // whose only window is parked still gets its tile. The pip
         // census itself is `count_pips_paint_only_on...`'s pin; this
@@ -11135,7 +11135,7 @@ mod tests {
             active: Some(switcher::WorkspaceId(1)),
         };
         // The flag-on tree: P-a with live a1 then parked a2, and b's
-        // parked-only window as a leaf — rows [P(1), C(1), C(2), L(3)].
+        // parked-only window as a leaf: rows [P(1), C(1), C(2), L(3)].
         let tree = switcher::Grouping::new(
             &snap.toplevels,
             &snap.workspaces,
@@ -11177,7 +11177,7 @@ mod tests {
         // (within the focused band), ↓/↑ the level axis (enter band 2 /
         // exit to the app tile), Tab steps apps (joining the linear
         // walk inside an open run at the daemon), and
-        // Ctrl+N addresses rows — the card's rows are already band 1
+        // Ctrl+N addresses rows: the card's rows are already band 1
         // then band 2 in reading order.
         let combined = key_input(Keysym::Tab, false, false, false, KeyMode::GroupedHorizontal);
         assert_eq!(
@@ -11276,8 +11276,8 @@ mod tests {
     #[test]
     fn grave_works_the_group_in_the_grouped_cards() {
         // The key above Tab (keysym `grave`, ` on US layouts) is the
-        // focused app's key in every grouped card — the strip and the
-        // vertical tree: toggle from the entry, cycle from inside — and
+        // focused app's key in every grouped card (the strip and the
+        // vertical tree: toggle from the entry, cycle from inside), and
         // only there: flat sessions keep typing it into the query, the
         // type-filter contract untouched. The direction still picks the
         // landing window when opening and the cycle's way when inside.
@@ -11300,7 +11300,7 @@ mod tests {
             );
             // The runtime form of Alt+Shift+`: the compositor reports
             // the level-resolved keysym, so the shifted press arrives
-            // as `asciitilde` on US layouts — the arm must match it
+            // as `asciitilde` on US layouts; the arm must match it
             // too, or the backwards press is unreachable (2026-11-09).
             assert_eq!(
                 key_input(Keysym::asciitilde, true, false, false, mode),
@@ -11349,10 +11349,10 @@ mod tests {
 
     #[test]
     fn grave_leaves_the_printable_arm_byte_for_byte() {
-        // The carve-out is the key above Tab — `grave` and its shifted
-        // `asciitilde` twin, and in the grouped cards alone: every other
+        // The carve-out is the key above Tab (`grave` and its shifted
+        // `asciitilde` twin), and in the grouped cards alone: every other
         // printable keysym maps to Type(char) through every mode, exactly
-        // as before — the table pins the neighbors beside grave on the US
+        // as before; the table pins the neighbors beside grave on the US
         // layout and the printable mainstays alike.
         let table = [
             (Keysym::apostrophe, '\''),
@@ -11380,7 +11380,7 @@ mod tests {
     #[test]
     fn strip_model_lays_the_open_run_in_the_app_slot() {
         // The open shape: the selected app's tile is replaced in place
-        // by its window run — window tiles at the app's slot, the other
+        // by its window run: window tiles at the app's slot, the other
         // apps' tiles around it, one selection on the window tile. The
         // strip's height is the single band's.
         let (snap, _closed, open) = combined_fixture();
@@ -11394,7 +11394,7 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                // a's run — C-a1 selected, C-a2 — then the other apps.
+                // a's run (C-a1 selected, C-a2), then the other apps.
                 (crate::switcher::RowKind::Child, Some(Handle(1)), true),
                 (crate::switcher::RowKind::Child, Some(Handle(3)), false),
                 (crate::switcher::RowKind::Leaf, Some(Handle(2)), false),
@@ -11428,8 +11428,8 @@ mod tests {
 
     #[test]
     fn strip_model_keeps_plain_app_tiles_on_a_level1_selection() {
-        // The closed shape: plain app tiles — the parent labelled by its
-        // app_id with its count, the leaves by their titles — and the
+        // The closed shape: plain app tiles (the parent labelled by its
+        // app_id with its count, the leaves by their titles), and the
         // width already frozen at the open shape's: ↓ opens the run
         // inside the same grid, so the card never resizes.
         let (snap, closed, _open) = combined_fixture();
@@ -11460,7 +11460,7 @@ mod tests {
     fn strip_hints_number_the_reading_order_under_nine() {
         // Ctrl+N addresses the strip as shown: hints number the visible
         // content tiles left→right, the `…` tile carries none, and
-        // `content_tile_handle` resolves the same order — the truncated
+        // `content_tile_handle` resolves the same order: the truncated
         // edge under a two-tile budget.
         let (snap, _closed, open) = combined_fixture();
         let model = build_strip(&snap, &open, 1, 2, 2).expect("builds");
@@ -11509,7 +11509,7 @@ mod tests {
     #[test]
     fn strip_model_shows_every_window_once() {
         // The duplicate-tile bug's model-level regression: the strip's
-        // tiles never hold the same window twice — a single-window app
+        // tiles never hold the same window twice: a single-window app
         // is one leaf tile, no run below it.
         let (snap, closed, _open) = combined_fixture();
         let model = build_strip(&snap, &closed, 3, 3, 8).expect("builds");
@@ -11553,7 +11553,7 @@ mod tests {
         let band = Palette::dark().selected_bg;
         let background = Palette::dark().background;
         // The fill probe reads the cell's mid-height at the icon's
-        // inset — ink-free ground on both tiles (the icon's own center
+        // inset: ink-free ground on both tiles (the icon's own center
         // carries the fallback glyph's strokes since the compact
         // re-pin moved the glyph under the old probe).
         let mid_cell = TILE_PAD_Y + TILE_CELL_H / 2;
@@ -11572,7 +11572,7 @@ mod tests {
 
     // --- the System text backend (typography TY3) -------------------------
 
-    /// The committed fixture's text system — a fresh database holding
+    /// The committed fixture's text system: a fresh database holding
     /// only `res/test-fonts`, never the host's fonts.
     fn fixture_text() -> crate::text::TextSystem {
         crate::text::TextSystem::from_dir(
@@ -11593,7 +11593,7 @@ mod tests {
         snapshot(toplevels, Some(1))
     }
 
-    /// The card-width formula's ceiling — the title band can never
+    /// The card-width formula's ceiling: the title band can never
     /// exceed `MAX_COLS × TEXT_W`, so the card can never either.
     fn card_width_ceiling() -> u32 {
         2 * PAD_X + ICON + ICON_GAP + MAX_COLS * TEXT_W + HINT_GAP + HINT_COLS * TEXT_W
@@ -11643,7 +11643,7 @@ mod tests {
         // The fold is the Bitmap floor's degradation, not the System
         // path's: accents and CJK ride the title string un-folded (the
         // fixture db carries Latin; the CJK run shapes through the
-        // empty fallback to nothing — the string itself is the pin).
+        // empty fallback to nothing; the string itself is the pin).
         let snap = titled_snapshot("café — naïve.txt");
         let mut text = fixture_text();
         let model = overlay_model(
@@ -11717,7 +11717,7 @@ mod tests {
 
         // Real ink: full-coverage glyph cores paint the exact text
         // color inside the title band. (A Bitmap render of this
-        // un-folded title would fold the em dash and mark — the
+        // un-folded title would fold the em dash and mark; the
         // backends differ by design.)
         let stride = model.width * 2 * 4;
         let title_x = (PAD_X + ICON + ICON_GAP) * 2;
@@ -11740,7 +11740,7 @@ mod tests {
     #[test]
     fn system_ink_never_crosses_into_the_hint_gap() {
         // A budget-length title is the worst case: its ink must stay
-        // inside the title band so the hint's territory is its own —
+        // inside the title band so the hint's territory is its own:
         // the guard paint_run carries, proven on the strip that has
         // nothing else painting into it.
         let snap = titled_snapshot(&"W".repeat(64));

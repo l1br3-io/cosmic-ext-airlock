@@ -23,7 +23,7 @@ pub enum Command {
     /// Spawn stub: ask the daemon to switch to the previous window with no
     /// overlay at all.
     QuickToggle,
-    /// Take over — or with `--uninstall`, restore — the Alt+Tab keybind.
+    /// Take over (or with `--uninstall`, restore) the Alt+Tab keybind.
     Install { uninstall: bool },
     /// Debug: print toplevels, workspaces, and the active workspace.
     List,

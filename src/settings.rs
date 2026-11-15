@@ -1,6 +1,6 @@
 //! User settings: config parsing and workspace-reference resolution.
 //!
-//! Pure — config bytes in, scope decisions out. No compositor, no daemon,
+//! Pure: config bytes in, scope decisions out. No compositor, no daemon,
 //! no file watching: the daemon owns *when* to read, this module owns
 //! *how* it parses and resolves.
 
@@ -18,8 +18,8 @@ use crate::ui::{
 /// so a pathological file must never stall switching.
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 
-/// The `columns` union's one diagnostic: any bad value — wrong type, a
-/// string that isn't `"auto"`, out of range — names the whole accepted
+/// The `columns` union's one diagnostic: any bad value (wrong type, a
+/// string that isn't `"auto"`, out of range) names the whole accepted
 /// shape (the key is a union; a split message would say the same thing
 /// twice). The range words must track [`ui::COLUMNS_MIN`]/
 /// [`ui::COLUMNS_MAX`]; a test pins the pair.
@@ -28,11 +28,11 @@ const COLUMNS_PROBLEM: &str = "`columns` must be \"auto\" or a whole number betw
 /// The `all_windows_key` diagnostic (all-windows, 2026-11-14; charset
 /// added in the ship-review follow-up): the value names a keysym under
 /// the binding's fixed Alt modifier, and the compositor is the authority
-/// airlock cannot check offline — which *names* exist is its call. The
+/// airlock cannot check offline; which *names* exist is its call. The
 /// name's shape is not: a keysym name is ASCII letters, digits, and `_`
 /// (every canonical X name's charset), and install writes the value
-/// inside a quoted RON map key, where anything else — a quote above all
-/// — breaks the compositor's whole shortcuts file. The shape rejects
+/// inside a quoted RON map key, where anything else (a quote above all
+/// ) breaks the compositor's whole shortcuts file. The shape rejects
 /// here; the name's existence never does.
 const ALL_WINDOWS_KEY_PROBLEM: &str =
     "`all_windows_key` must be a keysym name (letters, digits, or `_`)";
@@ -74,32 +74,32 @@ pub struct Settings {
     /// Windows the card keeps in view on a long list; missing key =
     /// [`ui::DEFAULT_ROWS`], accepted `ui::ROWS_MIN..=ui::ROWS_MAX`.
     pub rows: usize,
-    /// Whether the switcher groups its list by app — the tree view with
+    /// Whether the switcher groups its list by app: the tree view with
     /// parents, children, and linear stepping over the visible rows;
     /// missing key = `false`, the flat list, so the no-config card is
     /// unchanged.
     pub grouping: bool,
     /// Whether the card labels itself with the invoking workspace's
-    /// name (workspace-label, 2026-11-09) — a small line on every card,
+    /// name (workspace-label, 2026-11-09): a small line on every card,
     /// top-left on the vertical ones, bottom-center on the horizontal
     /// ones. Missing key = `false`, no label, so the no-config card is
     /// unchanged.
     pub show_workspace: bool,
     /// Whether the card lists minimized (parked) windows too
-    /// (minimized-listing, 2026-11-15) — in both scopes, after each
+    /// (minimized-listing, 2026-11-15): in both scopes, after each
     /// group's live ones, MRU within each part, no visual marking.
     /// Missing key = `false`: parked windows stay off every listing, so
     /// the no-config card is unchanged.
     pub show_minimized: bool,
     /// Which way the card lays its list out; missing key =
-    /// [`LayoutSetting::Vertical`], today's card, so the no-config
+    /// [`LayoutSetting::Vertical`], the card, so the no-config
     /// card is unchanged.
     pub layout: LayoutSetting,
     /// The horizontal card's tile budget; missing key =
-    /// [`ColumnsSetting::Auto`] — fit to the invoking output. Binds
+    /// [`ColumnsSetting::Auto`]: fit to the invoking output. Binds
     /// `layout = "horizontal"` only; the vertical card ignores it.
     pub columns: ColumnsSetting,
-    /// The card's width floor; missing key = [`WidthSetting::Auto`] —
+    /// The card's width floor; missing key = [`WidthSetting::Auto`]:
     /// the content-sized card. Both layouts read it; a floor below the
     /// card's content width does nothing (nothing ever clips) and the
     /// daemon clamps one past the invoking output.
@@ -114,23 +114,23 @@ pub struct Settings {
     /// over any `theme` value.
     pub pair: Option<(u32, u32)>,
     /// What the selection band is made of; missing key =
-    /// [`SelectionSetting::Accent`] — the follow, the desktop's accent
+    /// [`SelectionSetting::Accent`]: the follow, the desktop's accent
     /// at 20 % over the effective card. `Neutral` is the shipped band.
     pub selection: SelectionSetting,
     /// Which family the card's titles paint in; missing key =
-    /// [`text::FontSetting::Default`] — the COSMIC interface font's
+    /// [`text::FontSetting::Default`]: the COSMIC interface font's
     /// family. Any string is valid syntax; resolution (and its
     /// diagnostics) happen at open, never at parse.
     pub font: crate::text::FontSetting,
     /// The card's text size in logical pixels; missing key =
     /// [`ui::DEFAULT_FONT_SIZE`], accepted
     /// `ui::FONT_SIZE_MIN..=ui::FONT_SIZE_MAX`. Every text-derived
-    /// metric — title band, query strip, caption line, band height —
+    /// metric (title band, query strip, caption line, band height)
     /// resolves from it at open.
     pub font_size: u32,
     /// The key the all-windows binding holds under its fixed Alt
-    /// modifier (all-windows, 2026-11-14): a keysym name — canonical X
-    /// names like "Escape", "grave", "Tab" — the compositor resolves, so
+    /// modifier (all-windows, 2026-11-14): a keysym name (canonical X
+    /// names like "Escape", "grave", "Tab") the compositor resolves, so
     /// any non-empty name parses and only the shape rejects. The
     /// `-previous` twin adds Shift, and a key whose keysym changes under
     /// Shift (letters, digits) makes that twin unreliable. Missing key =
@@ -189,7 +189,7 @@ pub fn scope_for(active: ActiveWorkspace<'_>, settings: &Settings) -> Scope {
         .map_or(Scope::CurrentWorkspace, WorkspaceRule::scope)
 }
 
-/// Last rule satisfying `matches` — the duplicate-resolution rule.
+/// Last rule satisfying `matches`: the duplicate-resolution rule.
 fn last_matching(
     settings: &Settings,
     matches: impl Fn(&WorkspaceRule) -> bool,
@@ -385,7 +385,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
     let all_windows_key = match root.get("all_windows_key") {
         None => "Escape".to_owned(),
         Some(value) => {
-            // Shape only: a keysym name the compositor resolves —
+            // Shape only: a keysym name the compositor resolves:
             // airlock holds no table to check names against offline.
             // The shape is the keysym charset (see
             // [`ALL_WINDOWS_KEY_PROBLEM`]); a padded name trims so the
@@ -473,7 +473,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
 
 /// One of the paired color keys, as `0x00RRGGBB`: `None` when the key
 /// is absent, a 6-digit hex color (`#` optional, case-insensitive)
-/// otherwise. `not_string` and `not_hex` are the key's own problems —
+/// otherwise. `not_string` and `not_hex` are the key's own problems:
 /// the messages name their key; alpha never parses (the 8-digit
 /// `#RRGGBBAA` form is `not_hex` by construction).
 fn color_key(
@@ -494,15 +494,15 @@ fn color_key(
     ))
 }
 
-/// The `width` union's one diagnostic: any bad value — wrong type, a
-/// percentage past 100, a zero — names the key and the whole domain.
+/// The `width` union's one diagnostic: any bad value (wrong type, a
+/// percentage past 100, a zero) names the key and the whole domain.
 const WIDTH_PROBLEM: &str =
     "`width` must be \"auto\", a percentage like \"100%\" (1–100), or a pixel count (1 at least)";
 /// `min-width`'s twin of [`WIDTH_PROBLEM`].
 const MIN_WIDTH_PROBLEM: &str = "`min-width` must be \"auto\", a percentage like \"100%\" (1–100), or a pixel count (1 at least)";
 
 /// Parses one card-width key: `"auto"`, a whole number of pixels, or a
-/// percentage like `"100%"` — the percentage 1..=100 (the card is
+/// percentage like `"100%"`: the percentage 1..=100 (the card is
 /// centered, so 100 is the whole output) and the pixel count 1 at
 /// least (a floor of zero sizes nothing). A missing key is `auto`.
 fn width_key(
@@ -675,7 +675,7 @@ pub enum Reload {
 /// Why reading the config from disk did not produce [`Settings`].
 #[derive(Debug)]
 pub enum ReadError {
-    /// No config file — defaults apply silently.
+    /// No config file: defaults apply silently.
     Missing,
     /// The file exceeds [`MAX_CONFIG_BYTES`]; defaults apply.
     TooLarge,
@@ -707,11 +707,11 @@ impl std::error::Error for ReadError {}
 /// without a watcher dependency.
 ///
 /// The comparison is **content, never metadata** (2026-11-09): an mtime
-/// alone misses edits on filesystems with coarse or stale timestamps —
-/// VM shares (9p, virtiofs) are the known offenders — and a boolean
+/// alone misses edits on filesystems with coarse or stale timestamps;
+/// VM shares (9p, virtiofs) are the known offenders; and a boolean
 /// flip like `grouping = true` → `false` never moves a byte count
 /// either. Worse, a filesystem whose `modified()` reads as an error
-/// used to count as *absence*, resetting every gesture to defaults.
+/// cannot count as *absence*: the loaded settings stand.
 /// Bytes cannot lie; the config is a few hundred of them, read at
 /// session open where icon rasterization already costs more.
 pub struct SettingsSource {
@@ -721,7 +721,7 @@ pub struct SettingsSource {
 
 impl SettingsSource {
     /// Source at the user's config path (`$XDG_CONFIG_HOME` absolute else
-    /// `$HOME/.config`, then `airlock/config.toml` — the same rule as the
+    /// `$HOME/.config`, then `airlock/config.toml`: the same rule as the
     /// installer). `None` path when the environment names neither: every
     /// check reports [`Reload::NotPresent`] and defaults apply forever.
     pub fn new() -> Self {
@@ -749,7 +749,7 @@ impl SettingsSource {
     /// One-read reload check. Remembers the bytes it reads, so an
     /// unchanged file is cheap to compare and a malformed re-read keeps
     /// last-good settings until the file actually changes again. A
-    /// transient I/O error reads as [`Reload::Unchanged`] — the next
+    /// transient I/O error reads as [`Reload::Unchanged`]: the next
     /// check retries, and settings never churn on a flaky read.
     pub fn check(&mut self) -> Reload {
         let Some(path) = self.path.as_deref() else {
@@ -797,7 +797,7 @@ impl SettingsSource {
     }
 }
 
-/// The file's first [`MAX_CONFIG_BYTES`] bytes — all the change
+/// The file's first [`MAX_CONFIG_BYTES`] bytes, all the change
 /// detection needs: every config the parse accepts is smaller, and an
 /// oversize file's prefix still moves when its bytes do (the parse
 /// keeps rejecting it either way).
@@ -912,7 +912,7 @@ isolated = false
             settings.font,
             crate::text::FontSetting::Family("Fira Sans".to_owned())
         );
-        // Any string is valid syntax — resolution is paint-time by
+        // Any string is valid syntax: resolution is paint-time by
         // design, so even a family nothing installs parses.
         let settings = Settings::parse(b"font = \"Not Installed\"\n").expect("valid");
         assert_eq!(
@@ -942,7 +942,7 @@ isolated = false
     #[test]
     fn parse_a_bad_font_beside_valid_keys_fails_the_whole_file() {
         // The `theme`/`rows` half is fine on its own; one bad `font`
-        // rejects the file, same as every other key — last-good holds.
+        // rejects the file, same as every other key; last-good holds.
         let error = Settings::parse(b"theme = \"dark\"\nrows = 6\nfont = true\n")
             .expect_err("the file fails whole");
         assert!(matches!(error, SettingsError::InvalidFile { .. }));
@@ -1049,7 +1049,7 @@ isolated = false
     #[test]
     fn parse_reads_keysym_names_verbatim() {
         // The compositor is the keysym authority airlock cannot check
-        // offline — airlock validates only the name's shape, the charset
+        // offline; airlock validates only the name's shape, the charset
         // every canonical X keysym name shares. Whitespace trims: a
         // padded name would bind a padded keysym.
         for (config, key) in [
@@ -1110,7 +1110,7 @@ isolated = false
 
     #[test]
     fn parse_rejects_key_names_outside_the_keysym_charset() {
-        // A keysym name is ASCII letters, digits, and `_` — the shape
+        // A keysym name is ASCII letters, digits, and `_`: the shape
         // every canonical X name shares. Anything else is a typo or a
         // mistake, and install writes the value inside a quoted RON map
         // key, where a quote breaks the compositor's whole file: the
@@ -1374,7 +1374,7 @@ isolated = false
     #[test]
     fn parse_without_a_rows_key_defaults_to_the_windowing_budget() {
         // An empty file and a rules-only file alike: no `rows`, the
-        // default budget — the no-config card is unchanged.
+        // default budget: the no-config card is unchanged.
         assert_eq!(Settings::parse(b"").expect("empty").rows, ui::DEFAULT_ROWS);
         let rules_only = Settings::parse(b"[[workspace]]\nindex = 1\n").expect("rules");
         assert_eq!(rules_only.rows, ui::DEFAULT_ROWS);
@@ -1464,7 +1464,7 @@ isolated = false
     #[test]
     fn parse_without_a_grouping_key_defaults_to_false() {
         // An empty file and a rules-only file alike: no `grouping`, the
-        // flat list — the no-config card is unchanged.
+        // flat list: the no-config card is unchanged.
         assert!(!Settings::parse(b"").expect("empty").grouping);
         let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
         assert!(!rules_only.grouping);
@@ -1571,13 +1571,13 @@ isolated = false
     #[test]
     fn scoped_cycling_is_an_ignored_unknown_key() {
         // Rev 5 removed the setting: a config still carrying it parses
-        // to the defaults for every other key — unknown keys are
+        // to the defaults for every other key: unknown keys are
         // ignored, so old configs never break.
         assert_eq!(
             Settings::parse(b"scoped_cycling = true\n").expect("parses"),
             Settings::default()
         );
-        // Beside live keys, too — the unknown rides along silently.
+        // Beside live keys, too: the unknown rides along silently.
         let config = b"theme = \"light\"\ngrouping = true\nscoped_cycling = true\n";
         let settings = Settings::parse(config).expect("valid config");
         assert_eq!(settings.theme, ThemeSetting::Light);
@@ -1612,7 +1612,7 @@ isolated = false
     #[test]
     fn parse_without_either_color_key_leaves_no_pair() {
         // An empty file and a rules-only file alike: no `card`, no
-        // `text` — the `theme` key keeps deciding the card.
+        // `text`: the `theme` key keeps deciding the card.
         assert_eq!(Settings::parse(b"").expect("empty").pair, None);
         let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
         assert_eq!(rules_only.pair, None);
@@ -1637,7 +1637,7 @@ isolated = false
 
     #[test]
     fn parse_rejects_colors_that_are_not_6_hex_digits() {
-        // 3/4/8 digits, non-hex — the 8-digit rejection is the alpha
+        // 3/4/8 digits, non-hex; the 8-digit rejection is the alpha
         // guard: a `#RRGGBBAA` value has no path in.
         for (config, key) in [
             (&b"card = \"#F2F\"\ntext = \"#F2F4F8\"\n"[..], "card"),
@@ -1716,7 +1716,7 @@ isolated = false
 
     #[test]
     fn the_contrast_floor_boundary_accepts() {
-        // #767676 on #FFFFFF measures ~4.54:1 — the WCAG AA boundary
+        // #767676 on #FFFFFF measures ~4.54:1, the WCAG AA boundary
         // gray, a hair over the floor: the floor rejects below, not at.
         let config = b"card = \"#FFFFFF\"\ntext = \"#767676\"\n";
         let settings = Settings::parse(config).expect("just over the floor");
@@ -1727,7 +1727,7 @@ isolated = false
     fn a_bad_pair_fails_the_whole_file() {
         // The last-good contract: a below-floor pair beside otherwise
         // valid keys yields no settings at all, never a partial set.
-        // Top-level keys ride before the `[[workspace]]` table — in
+        // Top-level keys ride before the `[[workspace]]` table: in
         // TOML, keys after it belong to the entry.
         let config = b"theme = \"light\"\nrows = 6\ngrouping = true\ncard = \"#FFFFFF\"\ntext = \"#ADADAD\"\n\n[[workspace]]\nname = \"code\"\n";
         assert!(Settings::parse(config).is_err());
@@ -1800,7 +1800,7 @@ isolated = false
     #[test]
     fn parse_without_a_layout_key_defaults_to_vertical() {
         // An empty file and a rules-only file alike: no `layout`, the
-        // vertical card — the no-config card is unchanged.
+        // vertical card: the no-config card is unchanged.
         assert_eq!(
             Settings::parse(b"").expect("empty").layout,
             LayoutSetting::Vertical
@@ -1867,7 +1867,7 @@ isolated = false
     #[test]
     fn parse_without_a_columns_key_defaults_to_auto() {
         // An empty file and a rules-only file alike: no `columns`, the
-        // responsive band — the no-config card is unchanged.
+        // responsive band: the no-config card is unchanged.
         assert_eq!(
             Settings::parse(b"").expect("empty").columns,
             ColumnsSetting::Auto
@@ -1902,7 +1902,7 @@ isolated = false
     #[test]
     fn parse_rejects_columns_shapes_that_are_neither_auto_nor_a_whole_number() {
         // A string that isn't "auto", a float, a bool, an array, a
-        // table — the union names its whole accepted shape.
+        // table: the union names its whole accepted shape.
         for config in [
             &b"columns = \"many\"\n"[..],
             b"columns = \"8\"\n",
@@ -1998,7 +1998,7 @@ isolated = false
     #[test]
     fn parse_without_width_keys_defaults_to_auto() {
         // An empty file and a rules-only file alike: no width keys, the
-        // content-sized card — the no-config card is unchanged.
+        // content-sized card: the no-config card is unchanged.
         assert_eq!(
             Settings::parse(b"").expect("empty").width,
             WidthSetting::Auto
@@ -2012,7 +2012,7 @@ isolated = false
     #[test]
     fn parse_rejects_width_values_out_of_domain() {
         // A percentage past 100, a zero of either form, a negative, a
-        // quoted pixel count, a float, a bool — named per key, never
+        // quoted pixel count, a float, a bool: named per key, never
         // clamped.
         for (config, problem) in [
             (&b"width = \"101%\"\n"[..], WIDTH_PROBLEM),
@@ -2399,7 +2399,7 @@ isolated = false
     #[test]
     fn check_compares_bytes_not_metadata() {
         // The reload trigger is content (2026-11-09): rewriting
-        // identical bytes — a fresh mtime over the old content — stays
+        // identical bytes (a fresh mtime over the old content) stays
         // Unchanged, while a same-length edit, the boolean flip that
         // never moves a byte count or a coarse timestamp, still reports
         // Changed. An mtime-only check missed both classes on
