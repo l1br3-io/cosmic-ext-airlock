@@ -33,7 +33,7 @@
         <strong>current workspace</strong>, so nothing you parked elsewhere
         leaks into your focus.</p>
         <div class="quick-install">
-          <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/scripts/install.sh | sh</code></pre>
+          <div class="cmd"><pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/scripts/install.sh | sh</code></pre><button class="copy" type="button" aria-label="Copy the install command">copy</button></div>
           <p class="fine">One command: downloads the prebuilt x86_64 binary,
           verifies its sha256, and runs the setup. Needs a COSMIC desktop
           session: no Rust, no sudo, no shell rc edits.
@@ -205,7 +205,7 @@
     <section id="install" class="row-section">
       <h2>Install</h2>
       <div>
-        <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/scripts/install.sh | sh</code></pre>
+        <div class="cmd"><pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/scripts/install.sh | sh</code></pre><button class="copy" type="button" aria-label="Copy the install command">copy</button></div>
         <p>Requires a COSMIC Epoch desktop session. The script downloads the
         prebuilt x86_64 binary, verifies its sha256, installs it into a
         directory on your <code>PATH</code>, and runs
@@ -264,5 +264,37 @@
     <a href="https://github.com/l1br3-io/cosmic-ext-airlock/releases">releases</a></p>
   </div>
 </footer>
+<script>
+// The copy buttons on the two install commands: one label, one state —
+// "copy" while waiting, "copied" for a beat after. Falls back to a
+// selection-based copy where the clipboard API is unavailable.
+document.querySelectorAll('.copy').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var code = b.parentElement.querySelector('pre code');
+    var done = function () {
+      b.textContent = 'copied';
+      b.classList.add('did');
+      setTimeout(function () {
+        b.textContent = 'copy';
+        b.classList.remove('did');
+      }, 1600);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code.textContent).then(done, function () { fallback(); });
+    } else {
+      fallback();
+    }
+    function fallback() {
+      var r = document.createRange();
+      r.selectNodeContents(code);
+      var s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+      try { if (document.execCommand('copy')) done(); } catch (e) {}
+      s.removeAllRanges();
+    }
+  });
+});
+</script>
 </body>
 </html>

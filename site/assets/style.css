@@ -35,6 +35,13 @@
 
 ::selection { background: var(--selected-bg); }
 
+/* Inside the band's own fills the selection band would disappear: pre and
+   kbd paint the same --selected-bg the selection uses, so highlighted
+   command text looked unselectable. There the selection inverts — the
+   text fill with the card's letters — still only the site's own colors. */
+
+pre ::selection, kbd::selection { background: var(--text); color: var(--background); }
+
 :focus-visible {
   outline: 2px solid var(--muted);
   outline-offset: 2px;
@@ -357,6 +364,32 @@ pre {
 }
 
 pre code { font-size: 0.875rem; }
+
+/* The install commands carry one affordance: a copy button riding the
+   band's own fill, top-right, out of the command's first line. The label
+   states the action and the outcome — no icon, no motion, the same text
+   swap the CLI spends. The radius is the band's own 8 px rung, not the
+   card's 12. */
+.cmd { position: relative; }
+
+.copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--selected-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.copy:hover, .copy.did { color: var(--text); }
+
+.copy:focus-visible { outline: 1px solid var(--text); outline-offset: 1px; }
 
 /* The demo video takes the pre's frame: one hairline and the 12 px
    radius. It holds the prose measure, not the full column — a five-minute
