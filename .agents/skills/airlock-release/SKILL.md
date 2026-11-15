@@ -1,6 +1,6 @@
 ---
 name: airlock-release
-description: The owner-run release ritual for Airlock — walking a version through gate, notes, tag, GitHub Release, and crates.io publish with a verification checkpoint at every step, where the three public commands are always typed by the human, never the agent. Use whenever asked to release, publish, ship, or cut a version, when a tag or GitHub Release needs moving, or when verifying a publish after the fact.
+description: The owner-run release ritual for Airlock — walking a version through gate, notes, tag, GitHub Release, prebuilt artifacts, and crates.io publish with a verification checkpoint at every step, where the four public commands are always typed by the human, never the agent. Use whenever asked to release, publish, ship, or cut a version, when a tag or GitHub Release needs moving, or when verifying a publish after the fact.
 ---
 
 <!-- Forged in the release-pipeline module's first exercise (2026-11-06);
@@ -11,8 +11,8 @@ description: The owner-run release ritual for Airlock — walking a version thro
 
 A release is three public artifacts telling one story — an annotated
 `v<version>` tag, a GitHub Release carrying that version's changelog
-section, and the crate on crates.io. Two of the five recipes that
-produce them are safe for you to run; the three that touch the public
+section, and the crate on crates.io. Two of the six recipes that
+produce them are safe for you to run; the four that touch the public
 world are typed by the human, every time. Your job is the part around
 their typing: gates before, presentation during, verification after.
 
@@ -101,7 +101,20 @@ URL survives) and creates it otherwise. After: `gh release view v<ver>`
 — the notes are the step-2 file, the title is `Airlock <ver>`, and it
 is marked latest. Anything else, stop and report.
 
-**5 — Publish (public, irreversible).** The one step with no undo.
+**5 — Artifacts (public).** Present after step 4 (the upload needs
+the release to exist):
+
+```
+just release-artifacts <ver>
+```
+
+It builds the x86_64-unknown-linux-gnu release binary and uploads
+`airlock-<target>-v<ver>.tgz` — the archive `cargo binstall`
+downloads, so the name and `[package.metadata.binstall]` in Cargo.toml
+must agree. After: `gh release view v<ver> --json assets` names
+exactly that file with a nonzero size.
+
+**6 — Publish (public, irreversible).** The one step with no undo.
 Before presenting it, say exactly that: crates.io versions are
 immutable; this is the point of no return. Confirm the human wants it
 now, then present:
@@ -123,7 +136,7 @@ The User-Agent is load-bearing: crates.io drops UA-less requests to an
 empty body, which a bare grep reports as "not indexed" — a false red
 (observed 2026-11-09 during the v0.4.0 run).
 
-**6 — Post-publish verification.** The README's install promise is now
+**7 — Post-publish verification.** The README's install promise is now
 true; prove it without touching the desktop's own install:
 
 ```
