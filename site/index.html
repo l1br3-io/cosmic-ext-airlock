@@ -14,6 +14,7 @@
   <div class="wrap">
     <a class="brand" href="index.html"><img src="assets/favicon.svg" width="18" height="18" alt="">Airlock</a>
     <nav>
+      <a href="#demo">Demo</a>
       <a href="how-it-works.html">How it works</a>
       <a href="settings.html">Settings</a>
       <a href="troubleshooting.html">Troubleshooting</a>
@@ -32,11 +33,10 @@
         <strong>current workspace</strong>, so nothing you parked elsewhere
         leaks into your focus.</p>
         <div class="quick-install">
-          <pre><code class="language-bash">cargo install cosmic-ext-airlock
-airlock install</code></pre>
-          <p class="fine">Requires a COSMIC Epoch desktop session and Rust
-          1.93+, plus pkg-config and the Wayland/xkbcommon headers to build
-          (per-distro list in the <a href="https://github.com/l1br3-io/cosmic-ext-airlock#install">README</a>).
+          <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/scripts/install.sh | sh</code></pre>
+          <p class="fine">One command: downloads the prebuilt x86_64 binary,
+          verifies its sha256, and runs the setup. Needs a COSMIC desktop
+          session: no Rust, no sudo, no shell rc edits.
           <a href="#install">What the installer writes</a>, and how to
           undo it.</p>
         </div>
@@ -59,7 +59,17 @@ airlock install</code></pre>
         <figure class="demo-video">
           <video controls preload="none" loading="lazy" poster="assets/demo-poster.jpg" width="1920" height="1080">
             <source src="assets/demo.webm" type="video/webm">
+            <source src="assets/demo.mp4" type="video/mp4">
+            <p>The recording can't play here. Download it:
+            <a href="assets/demo.webm">WebM (9.4 MB)</a> or
+            <a href="assets/demo.mp4">MP4 (15 MB)</a>.</p>
           </video>
+          <figcaption class="fine">The recording, as text: hold
+          <kbd>Alt</kbd>, tap <kbd>Tab</kbd> to raise the card — the current
+          workspace's windows, most recently used first — keep tapping
+          <kbd>Tab</kbd> to step through the rows, type to narrow the list,
+          then release <kbd>Alt</kbd> to switch; <kbd>Alt</kbd>+<kbd>-</kbd>
+          closes the selected row's window from the card.</figcaption>
         </figure>
       </div>
     </section>
@@ -195,21 +205,50 @@ airlock install</code></pre>
     <section id="install" class="row-section">
       <h2>Install</h2>
       <div>
-        <pre><code class="language-bash">cargo install cosmic-ext-airlock
-airlock install</code></pre>
-        <p>Requires a COSMIC Epoch desktop session and Rust 1.93+.
-        <code>cargo install</code> compiles from source and cannot install
-        system libraries — add the build packages once. On
-        Pop!_OS/Debian/Ubuntu:
-        <code>sudo apt install build-essential pkg-config libwayland-dev
-        libxkbcommon-dev</code>; other distros are listed in the
-        <a href="https://github.com/l1br3-io/cosmic-ext-airlock#install">README</a>.
-        On another compositor the daemon exits with a diagnostic naming the
-        missing protocol. <code>airlock install</code> is the complete
-        setup (keybind takeover, app icon, desktop entry, commented starter
-        config, all user-level);
-        <code>airlock install --uninstall</code> restores the built-in
-        switcher byte-for-byte.</p>
+        <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/scripts/install.sh | sh</code></pre>
+        <p>Requires a COSMIC Epoch desktop session. The script downloads the
+        prebuilt x86_64 binary, verifies its sha256, installs it into a
+        directory on your <code>PATH</code>, and runs
+        <code>airlock install</code>, with no sudo and no shell rc edits. If that
+        directory is not on <code>PATH</code>, it prints the line to add and
+        stops before the takeover. To read it
+        first, save the file, inspect it, then run it; with
+        <code>AIRLOCK_NO_INTEGRATION=1</code> it installs the binary alone.</p>
+        <div class="rows">
+          <div class="row">
+            <h3>With cargo</h3>
+            <p><code>cargo binstall cosmic-ext-airlock</code> downloads the
+            prebuilt binary (cargo-binstall itself:
+            <code>cargo install cargo-binstall</code>); the prebuilt archive
+            needs none of the packages below. <code>cargo install
+            cosmic-ext-airlock</code> (Rust 1.93+) compiles, and does need
+            them.</p>
+          </div>
+          <div class="row">
+            <h3>Build dependencies</h3>
+            <p><code>cargo install</code> compiles and cannot install system
+            libraries: the build needs a C toolchain, pkg-config, and the
+            Wayland/xkbcommon headers. On Pop!_OS:
+            <code>sudo apt install build-essential pkg-config libwayland-dev
+            libxkbcommon-dev</code>. From a checkout, <code>just install</code>
+            checks these and installs only the missing ones for you.</p>
+          </div>
+          <div class="row">
+            <h3>What <code>airlock install</code> writes</h3>
+            <p>The complete setup: keybind takeover, app icon, desktop entry,
+            commented starter config — all user-level. A key already bound to
+            one of your own shortcuts is skipped and named in the output.</p>
+          </div>
+          <div class="row">
+            <h3>Undo</h3>
+            <p><code>airlock install --uninstall</code> restores the built-in
+            switcher byte-for-byte; then remove the binary
+            (<code>rm ~/.local/bin/airlock</code>, or
+            <code>cargo uninstall cosmic-ext-airlock</code>). On another
+            compositor the daemon exits with a diagnostic naming the missing
+            protocol.</p>
+          </div>
+        </div>
       </div>
     </section>
   </div>

@@ -6,16 +6,20 @@ elsewhere leaks into your focus.
 
 <img src="https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/docs/img/overlay-card.png" width="316" alt="Airlock's Alt+Tab overlay with grouping on: a dark rounded card listing apps as entries — chevron, window-count pips, and a Ctrl digit per app — the selected app expanded to its window titles, ellipsis row below">
 
-The [five-minute demo](https://l1br3-io.github.io/cosmic-ext-airlock/#demo)
-plays the whole gesture on a real COSMIC desktop: switching, type-to-filter,
-closing from the card, the horizontal band.
-
 > Airlock is third-party software for the COSMIC™ desktop. It is not official
 > COSMIC software and is not affiliated with or endorsed by System76.
 
 **Status:** [v0.4.4](https://github.com/l1br3-io/cosmic-ext-airlock/releases/tag/v0.4.4) ·
 released 2026-11-15 · early, actively developed — the core Alt+Tab gesture is
 solid; same-app cycling and pointer input are newer.
+
+## Demo
+
+[<img src="https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/site/assets/demo-poster.jpg" width="640" alt="Demo poster: Airlock's Alt+Tab overlay card open over a real COSMIC desktop, listing the current workspace's windows — app icons, titles, and a Ctrl digit per row — above the '…' row">](https://l1br3-io.github.io/cosmic-ext-airlock/#demo)
+
+Click on the thumbnail to watch the demo on the project website: the
+five-minute video plays the whole gesture on a real COSMIC desktop —
+switching, type-to-filter, closing from the card, the horizontal band.
 
 ## Why
 
@@ -70,6 +74,8 @@ reaches any window regardless of the rules.
   that closes on click
 - **Pointer input** — hover moves the selection, click switches, the
   wheel steps; the pointing-hand cursor marks every click target
+- **Cycle within app group** — **Alt+`** steps through the app's group windows, then
+  the next app; **Alt+Shift+`** steps backwards
 
 ### Layout and appearance
 
@@ -99,8 +105,27 @@ measurements:
 
 ## Install
 
-Requires a COSMIC desktop session (epoch) and Rust 1.93+. On another
-compositor the daemon exits with a diagnostic naming the missing protocol.
+Requires a COSMIC desktop session (epoch). One command, prebuilt binary,
+no Rust:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/scripts/install.sh | sh
+```
+
+It downloads the x86_64 binary, verifies its sha256, installs it into a
+directory on your `PATH`, and runs `airlock install`. If that directory is
+not on `PATH`, it prints the line to add and stops before the takeover.
+No sudo, no shell rc edits. To read the script before running it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/scripts/install.sh -o airlock-install.sh
+less airlock-install.sh
+sh airlock-install.sh   # AIRLOCK_NO_INTEGRATION=1 installs the binary alone
+```
+
+### With cargo
+
+Rust 1.93+:
 
 ```sh
 cargo install cosmic-ext-airlock   # from crates.io → ~/.cargo/bin/airlock
@@ -109,16 +134,15 @@ airlock install                    # the complete setup: keybind takeover
                                     # + commented starter config
 ```
 
+### Build dependencies
+
 `cargo install` compiles from source, and cargo cannot install system
 libraries — the build needs a C toolchain, pkg-config, and the
 Wayland/xkbcommon headers (the runtime libraries ship with every COSMIC
 system; these are build-time packages). Install them once:
 
 ```sh
-sudo apt install build-essential pkg-config libwayland-dev libxkbcommon-dev   # Debian/Ubuntu/Pop!_OS
-sudo dnf install gcc gcc-c++ make pkgconf-pkg-config wayland-devel libxkbcommon-devel   # Fedora
-sudo pacman -S --needed base-devel pkgconf wayland libxkbcommon               # Arch
-sudo zypper install gcc gcc-c++ make pkg-config wayland-devel libxkbcommon-devel   # openSUSE
+sudo apt install build-essential pkg-config libwayland-dev libxkbcommon-dev
 ```
 
 Or skip the build: the releases carry a prebuilt x86_64 Linux binary,
@@ -157,7 +181,9 @@ The takeover touches only user-level files in
 airlock install --uninstall   # restore the previous switcher and remove
                               # the app icon, desktop entry, and unedited
                               # starter config
-cargo uninstall cosmic-ext-airlock   # optional: remove the binary
+
+rm ~/.local/bin/airlock                # remove the binary (installer path)
+cargo uninstall cosmic-ext-airlock     # or, if cargo installed it
 ```
 
 - Backups live inside the config files; the pre-install state returns
@@ -175,7 +201,8 @@ cargo uninstall cosmic-ext-airlock   # optional: remove the binary
 
 - **Alt+Tab does nothing.** First press may be starting the daemon (~340 ms
   cold) — press again. If it persists, `airlock list` names any missing
-  protocol; check `~/.cargo/bin` is on your session `PATH`.
+  protocol; check the directory holding `airlock` is on your session
+  `PATH`.
 - **Another tool fights over WindowSwitcher.** The user-level override is
   one slot; last writer wins. Re-run `airlock install`.
 
@@ -199,7 +226,8 @@ for method):
 On [crates.io](https://crates.io/crates/cosmic-ext-airlock) as
 `cosmic-ext-airlock`;
 [releases](https://github.com/l1br3-io/cosmic-ext-airlock/releases) carry
-the tags and notes. App ID `io.github.l1br3-io.Airlock` — the hyphen matches
+the tags, notes, and the prebuilt archive with its checksum and
+one-command installer. App ID `io.github.l1br3-io.Airlock` — the hyphen matches
 the GitHub org. A Launchpad PPA and Flathub are on the roadmap without dates
 (see the [research index](https://github.com/l1br3-io/cosmic-ext-airlock/blob/main/docs/research/README.md)).
 

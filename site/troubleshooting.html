@@ -28,26 +28,29 @@
     <h1>Troubleshooting</h1>
     <ul>
       <li><strong>Every shortcut reset to defaults right after installing
-      (0.1.0).</strong> Airlock 0.1.0 wrote its extra bindings with a keysym
-      form COSMIC rejects (<code>key: Some(..)</code> instead of
-      <code>key: "grave"</code>), so cosmic-comp discarded the whole
-      <code>custom</code> shortcuts file and ran factory defaults; that file
-      holds <em>all</em> your customizations, so everything looked reset.
-      <strong>Nothing was deleted</strong>: your entries are still on disk,
-      and either fix restores them immediately, no re-login:
-        <ul>
-          <li><code>airlock install --uninstall</code> puts your file back
-          byte-exactly, or</li>
-          <li>upgrade to 0.1.1 and re-run <code>airlock install</code>; it
-          replaces 0.1.0's malformed entries and leaves yours untouched.</li>
-        </ul>
-      The one exception: a save in Settings → Shortcuts while the session
-      showed defaults overwrote the file with what the screen showed.</li>
+      (0.1.0).</strong> 0.1.0 wrote its extra bindings in a form COSMIC
+      rejected, so the shortcuts file was discarded and factory defaults
+      ran. <strong>Nothing was deleted</strong>: either
+      <code>airlock install --uninstall</code>, which puts your file back
+      byte-exactly, or upgrade to 0.1.1 and re-run <code>airlock
+      install</code>. One exception: a save in Settings → Shortcuts while
+      the session showed defaults overwrote the file with what the screen
+      showed.</li>
       <li><strong><kbd>Alt</kbd>+<kbd>Tab</kbd> does nothing.</strong> The
       first press starts the daemon (about 340 ms when cold); press again.
       If it persists, <code>airlock list</code> names any missing protocol;
-      check that <code>~/.cargo/bin</code> is on your session
+      check the directory holding <code>airlock</code>
+      (<code>~/.local/bin</code> from the one-command installer,
+      <code>~/.cargo/bin</code> from cargo) is on your session
       <code>PATH</code>.</li>
+      <li><strong>The one-command installer stops before
+      finishing.</strong> It names the reason. A checksum mismatch means a
+      corrupt download: re-run it, and if it repeats, do not install and
+      report it. A missing prebuilt binary means your architecture has
+      none: build from source instead. A <code>PATH</code> warning means
+      the takeover was withheld on purpose: add the printed <code>export
+      PATH=...</code> line to your shell startup, open a new terminal, then
+      run <code>airlock install</code>.</li>
       <li><strong>Another tool fights over WindowSwitcher.</strong> The
       user-level override is one slot; last writer wins. Re-run
       <code>airlock install</code> to take it back; <code>--uninstall</code>

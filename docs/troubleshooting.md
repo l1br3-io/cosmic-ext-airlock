@@ -17,7 +17,16 @@
   screen showed.
 - **Alt+Tab does nothing.** First press may be starting the daemon (~340 ms
   cold) — press again. If it persists, `airlock list` names any missing
-  protocol; check `~/.cargo/bin` is on your session `PATH`.
+  protocol; check the directory holding `airlock` (`~/.local/bin` from the
+  one-command installer, `~/.cargo/bin` from cargo) is on your session
+  `PATH`.
+- **The one-command installer stops before finishing.** It names the
+  reason. A checksum mismatch means a corrupt download: re-run it, and if
+  it repeats, do not install and report it. A missing prebuilt binary
+  means your architecture has none: build from source instead. A `PATH`
+  warning means the takeover was withheld on purpose: add the printed
+  `export PATH=...` line to your shell startup, open a new terminal, then
+  run `airlock install`.
 - **Another tool fights over WindowSwitcher.** The user-level override is
   one slot; last writer wins. Re-run `airlock install` to take it back;
   `--uninstall` then restores whatever Airlock itself backed up.

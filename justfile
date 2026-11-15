@@ -1,5 +1,5 @@
 # Airlock build recipes. Verification gate: `just test`; quality gates:
-# `just check` (clippy -D warnings) and `just fmt-check`.
+# `just check` (clippy -D warnings, shell syntax) and `just fmt-check`.
 #
 # Recipes are silent on success and announce only on failure (AGENTS.md):
 # `set quiet` stops just from echoing each recipe line, and agent-facing
@@ -26,7 +26,7 @@ quietly command:
 	rm -f "$out"
 
 # A rustup bootstrapped by `deps` must be usable by `install` (and any
-# cargo recipe) in the same invocation — each recipe runs its own
+# cargo recipe) in the same invocation: each recipe runs its own
 # shell, so CARGO_HOME/bin is prepended for every recipe. A nonexistent
 # PATH entry is harmless.
 export PATH := env('CARGO_HOME', home_directory() / '.cargo') / 'bin' + ':' + env('PATH', '')
@@ -40,8 +40,12 @@ build: (quietly "cargo build")
 # Release build (COSMIC justfile convention).
 release: (quietly "cargo build --release")
 
-# Quality gate: clippy with warnings denied.
-check: (quietly "cargo clippy --all-targets --all-features --locked -- -D warnings")
+# Quality gate: clippy with warnings denied; the shell scripts parse
+# (install.sh must stay POSIX sh: it is piped to `sh`; vm.sh is bash).
+check:
+	{{just_executable()}} quietly 'cargo clippy --all-targets --all-features --locked -- -D warnings'
+	sh -n scripts/install.sh
+	bash -n scripts/vm.sh
 
 # Write formatting.
 fmt:
@@ -55,7 +59,7 @@ fmt-check:
 test: (quietly "cargo test --all-targets --all-features")
 
 # Dev loop: build and run the daemon from the dev tree (foreground). Only
-# one daemon can run at a time — if the installed daemon is serving, stop
+# one daemon can run at a time: if the installed daemon is serving, stop
 # it first with `just stop` or this exits "already running".
 run:
     cargo run -- daemon
@@ -76,7 +80,7 @@ stop:
 # floor). Card 316x584 logical px = 632x1168 device; offsets
 # x = gutter = 64, y = 64 + singles(2128) + query(952) + close(880)
 # + workspace-label(1656) + long-list(7056) + grouped(2128) = 14864
-# — the grouped family's windowed 12-row tree — re-derive from
+# (the grouped family's windowed 12-row tree); re-derive from
 # examples/overlay-preview.rs if
 # the scenario list changes. The card's rounded-corner cutouts reveal
 # the dark backdrop (46,46,50); -transparent turns them back into the
@@ -93,17 +97,17 @@ readme-image:
 # Prerequisite gate, shared by `install` (and runnable alone): checks
 # the C toolchain, pkg-config, the pkg-config modules behind the system
 # libraries the daemon links at build time (wayland-client and xkbcommon
-# — cosmic-client-toolkit's Wayland stack), and cargo, installing only
+# cosmic-client-toolkit's Wayland stack), and cargo, installing only
 # what is missing through the distro's package manager
 # (apt/dnf/pacman/zypper). Airlock targets the COSMIC desktop, so
 # anything that is not Linux fails with the reason instead of a package
 # guessing game. Rust comes via rustup (stable, minimal profile) when
-# cargo is absent — never as root, so `sudo just install` never writes a
+# cargo is absent, never as root, so `sudo just install` never writes a
 # root-owned toolchain into /root. With everything present the gate is a
 # silent no-op that touches neither sudo nor the network.
 deps:
 	#!/usr/bin/env bash
-	# pipefail: the rustup bootstrap is a `curl | sh` pipeline — without
+	# pipefail: the rustup bootstrap is a `curl | sh` pipeline; without
 	# it, a dead curl hands sh an EOF, sh exits 0, and deps reports
 	# success with cargo never installed.
 	set -euo pipefail
@@ -162,7 +166,7 @@ deps:
 		esac
 	fi
 
-	# Rust side (never as root — see the recipe comment).
+	# Rust side (never as root, see the recipe comment).
 	if [ "$(id -u)" -ne 0 ] && ! command -v cargo >/dev/null 2>&1; then
 		echo "deps: cargo not found — installing Rust (rustup, stable, minimal profile)"
 		if command -v rustup >/dev/null 2>&1; then
@@ -175,8 +179,8 @@ deps:
 	fi
 
 # Install the release binary into ~/.cargo/bin, checking the build
-# prerequisites first (see deps — a no-op once they exist). The
-# installed copy is self-contained — the spawn stub re-executes the
+# prerequisites first (see deps, a no-op once they exist). The
+# installed copy is self-contained: the spawn stub re-executes the
 # daemon from its own path, so daily use never touches the dev tree.
 install: deps
 	{{just_executable()}} quietly 'cargo install --path .'
@@ -184,7 +188,7 @@ install: deps
 # --- Release runbook (release-pipeline module; owner-run) ---
 # release-check is the gate: green means the tree is releasable. The
 # other four are the public steps, invoked by the owner in order after
-# CP-RP1 and the CP-PK walk — never by the agent, and nothing here
+# CP-RP1 and the CP-PK walk, never by the agent, and nothing here
 # pushes or publishes except those owner-run recipes (plus the publish
 # dry-run inside the gate).
 
@@ -192,7 +196,7 @@ install: deps
 # preview. Coherence: Cargo.toml version == the CHANGELOG's top
 # section == the metainfo <release>, and the two dates agree; a
 # v<version> tag may be absent, at HEAD, or awaiting release-tag's
-# documented re-cut force-move — all pass, because the gate runs
+# documented re-cut force-move, all pass, because the gate runs
 # before the move and release-tag refuses a version the tree does not
 # carry. The metainfo must validate with nothing beyond the one
 # documented hyphen warning (README Packaging: the app ID matches the
@@ -230,7 +234,7 @@ release-check:
 		|| fail "CHANGELOG date $cl_date ≠ metainfo date $mi_date"
 
 	# Metainfo validation: appstreamcli exits 3 on any warning, so judge
-	# the findings, not the code — everything but the documented hyphen
+	# the findings, not the code: everything but the documented hyphen
 	# cid warning is a failure.
 	command -v appstreamcli >/dev/null 2>&1 \
 		|| fail "appstreamcli not found (Debian package: appstream)"
@@ -252,7 +256,7 @@ release-check:
 	rm -f "$out"
 
 # Extract one version's CHANGELOG section (sans its header) to
-# target/release-notes-<ver>.md — the text release-gh attaches to the
+# target/release-notes-<ver>.md: the text release-gh attaches to the
 # GitHub Release verbatim. CP-RP1 approves this text; the extraction
 # is mechanical so the approved words are the published words.
 [group('release')]
@@ -273,7 +277,7 @@ release-notes ver:
 	fi
 
 # Annotated tag v<ver> at HEAD, then push. Re-cut mode: an existing
-# tag is force-moved (OQ3 — accepted; the version was never on
+# tag is force-moved (OQ3: accepted; the version was never on
 # crates.io, and the GitHub Release follows the tag ref). Owner-run,
 # after release-check: the tag and the tree must carry one version.
 [group('release')]
@@ -312,13 +316,16 @@ release-gh ver:
 	fi
 
 # Build the x86_64-unknown-linux-gnu release binary and upload its
-# .tgz to the v<ver> GitHub Release — the archive cargo-binstall
+# .tgz to the v<ver> GitHub Release: the archive cargo-binstall
 # downloads ([package.metadata.binstall] in Cargo.toml names this
-# exact file; the two change together). The triple is explicit so a
-# non-x86_64 build host fails loudly instead of mislabeling the
-# artifact. Owner-run, after release-gh creates the release (upload
-# needs it to exist); --clobber keeps re-cut mode working by
-# replacing same-named assets.
+# exact file; the two change together). Also publishes the archive's
+# .sha256 and a per-release installer: scripts/install.sh with this
+# version and hash baked into its three bake points
+# (docs/research/one-command-install.md records the contract). The
+# triple is explicit so a non-x86_64 build host fails loudly instead
+# of mislabeling the artifact. Owner-run, after release-gh creates the
+# release (upload needs it to exist); --clobber keeps re-cut mode
+# working by replacing same-named assets.
 [group('release')]
 release-artifacts ver:
 	#!/usr/bin/env bash
@@ -326,10 +333,22 @@ release-artifacts ver:
 	archive="airlock-x86_64-unknown-linux-gnu-v{{ver}}.tgz"
 	{{just_executable()}} quietly 'cargo build --release --locked --target x86_64-unknown-linux-gnu'
 	tar -C target/x86_64-unknown-linux-gnu/release -czf "target/$archive" airlock
-	gh release upload "v{{ver}}" "target/$archive" --clobber
+	sha="$(sha256sum "target/$archive" | cut -d' ' -f1)"
+	printf '%s  %s\n' "$sha" "$archive" > "target/$archive.sha256"
+	sed -e "s|^airlock_version_default=.*|airlock_version_default=\"{{ver}}\"|" \
+		-e "s|^airlock_baked_version=.*|airlock_baked_version=\"{{ver}}\"|" \
+		-e "s|^airlock_baked_sha256=.*|airlock_baked_sha256=\"$sha\"|" \
+		scripts/install.sh > target/install.sh
+	grep -q "^airlock_version_default=\"{{ver}}\"$" target/install.sh &&
+		grep -q "^airlock_baked_version=\"{{ver}}\"$" target/install.sh &&
+		grep -q "^airlock_baked_sha256=\"$sha\"$" target/install.sh ||
+		{ echo "release-artifacts: install.sh bake failed" >&2; exit 1; }
+	sh -n target/install.sh
+	gh release upload "v{{ver}}" \
+		"target/$archive" "target/$archive.sha256" "target/install.sh" --clobber
 
 # Publish the crate to crates.io, built exactly as the committed
-# Cargo.lock pins it. Owner-run only — the invocation is the consent,
+# Cargo.lock pins it. Owner-run only: the invocation is the consent,
 # tokens never live in this repo, and crates.io versions are
 # immutable: this is the one unretractable step of the runbook.
 [group('release')]
@@ -338,7 +357,7 @@ release-publish: (quietly "cargo publish --locked")
 # --- CP4 VM rehearsal plumbing (delegates to scripts/vm.sh) ---
 # Guest-side actions ride the QEMU guest agent: install it in the VM once
 # with `sudo apt install qemu-guest-agent`. The keypress rehearsal itself
-# stays human — see docs/vm-development.md.
+# stays human; see docs/vm-development.md.
 
 # Rehearsal VM name and guest username. Every VM variable (these two plus
 # VM_HOME, VM_BIN, BRIDGE_IP, PORT), the override forms, and the run order:
@@ -392,7 +411,7 @@ vm-status:
 # Link/asset integrity gate for site/: every local href/src resolves
 # inside site/, anchors exist on their target page, imgs carry
 # alt/width/height, and assets stay self-contained. The commit gate for
-# anything touching site/ — silent on success, loud on breakage.
+# anything touching site/ (silent on success, loud on breakage).
 site-check: (quietly "python3 scripts/check-site-links.py site")
 
 # Serve site/ at http://localhost:8080 for local preview (Ctrl+C stops).

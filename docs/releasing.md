@@ -85,11 +85,15 @@ survives), creates it otherwise, marks it latest. Needs `gh` logged
 in.
 
 **`release-artifacts <ver>`** builds the x86_64-unknown-linux-gnu
-release binary and uploads `airlock-<target>-v<ver>.tgz` to the
-release — the archive `cargo binstall` downloads
-(`[package.metadata.binstall]` in Cargo.toml names this exact file;
-the two change together). Run after `release-gh` (the upload needs
-the release to exist). Needs `gh` logged in.
+release binary and uploads three files to the release: the archive
+`airlock-<target>-v<ver>.tgz` that `cargo binstall` downloads
+(`[package.metadata.binstall]` in Cargo.toml names this exact file; the
+two change together), its `.sha256`, and a per-release `install.sh`:
+`scripts/install.sh` with the version and archive hash baked in, so the
+pinned release script verifies against a hash that ships inside the
+script it runs. Run after `release-gh` (the upload needs the release to exist).
+Needs `gh` logged in. The installer's contract and its surveyed
+precedent: [research/one-command-install.md](research/one-command-install.md).
 
 **`release-publish`** is `cargo publish --locked` — the crate built
 exactly as the committed `Cargo.lock` pins it. This is the one step you
@@ -139,4 +143,5 @@ announces it; `release-gh` keeps the release URL.
 | `release-notes <ver>` | no | — |
 | `release-tag <ver>` | yes — pushes the tag | push access |
 | `release-gh <ver>` | yes — release page | `gh auth login` |
+| `release-artifacts <ver>` | yes — release assets (archive, `.sha256`, `install.sh`) | `gh auth login` |
 | `release-publish` | yes — crates.io, irreversible | `cargo login` |
