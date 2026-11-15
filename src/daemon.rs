@@ -5034,6 +5034,7 @@ mod tests {
             rows: DEFAULT_ROWS,
             grouping: false,
             show_workspace: false,
+            show_minimized: false,
             layout: crate::ui::LayoutSetting::Vertical,
             columns: crate::ui::ColumnsSetting::Auto,
             width: crate::ui::WidthSetting::Auto,

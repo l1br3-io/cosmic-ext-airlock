@@ -85,6 +85,12 @@ pub struct Settings {
     /// ones. Missing key = `false`, no label, so the no-config card is
     /// unchanged.
     pub show_workspace: bool,
+    /// Whether the card lists minimized (parked) windows too
+    /// (minimized-listing, 2026-11-15) — in both scopes, after each
+    /// group's live ones, MRU within each part, no visual marking.
+    /// Missing key = `false`: parked windows stay off every listing, so
+    /// the no-config card is unchanged.
+    pub show_minimized: bool,
     /// Which way the card lays its list out; missing key =
     /// [`LayoutSetting::Vertical`], today's card, so the no-config
     /// card is unchanged.
@@ -140,6 +146,7 @@ impl Default for Settings {
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             show_workspace: false,
+            show_minimized: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -272,6 +279,12 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         None => false,
         Some(value) => value.as_bool().ok_or(SettingsError::InvalidFile {
             problem: "`show_workspace` must be a boolean",
+        })?,
+    };
+    let show_minimized = match root.get("show_minimized") {
+        None => false,
+        Some(value) => value.as_bool().ok_or(SettingsError::InvalidFile {
+            problem: "`show_minimized` must be a boolean",
         })?,
     };
     let layout = match root.get("layout") {
@@ -416,6 +429,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
             rows,
             grouping,
             show_workspace,
+            show_minimized,
             layout,
             columns,
             width,
@@ -443,6 +457,7 @@ fn parse_root(root: &toml::Value) -> Result<Settings, SettingsError> {
         rows,
         grouping,
         show_workspace,
+        show_minimized,
         layout,
         columns,
         width,
@@ -832,6 +847,7 @@ isolated = false
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
                 show_workspace: false,
+                show_minimized: false,
                 layout: LayoutSetting::Vertical,
                 columns: ColumnsSetting::Auto,
                 width: WidthSetting::Auto,
@@ -1515,6 +1531,41 @@ isolated = false
         }
     }
 
+    // --- The show_minimized key (minimized-listing M1.1) ------------------
+
+    #[test]
+    fn parse_without_a_show_minimized_key_defaults_to_false() {
+        // No key, parked windows stay off every listing: the no-config
+        // card is unchanged.
+        assert!(!Settings::parse(b"").expect("empty").show_minimized);
+        let rules_only = Settings::parse(b"[[workspace]]\nname = \"a\"\n").expect("valid");
+        assert!(!rules_only.show_minimized);
+        assert!(!Settings::default().show_minimized);
+    }
+
+    #[test]
+    fn parse_reads_the_show_minimized_key() {
+        let on = Settings::parse(b"show_minimized = true\n").expect("valid");
+        assert!(on.show_minimized);
+        let off = Settings::parse(b"show_minimized = false\n").expect("valid");
+        assert!(!off.show_minimized);
+    }
+
+    #[test]
+    fn parse_rejects_a_non_boolean_show_minimized() {
+        for config in [&b"show_minimized = 1\n"[..], b"show_minimized = \"yes\"\n"] {
+            let error = Settings::parse(config).expect_err("non-boolean show_minimized");
+            assert_eq!(
+                error,
+                SettingsError::InvalidFile {
+                    problem: "`show_minimized` must be a boolean"
+                },
+                "{}",
+                String::from_utf8_lossy(config)
+            );
+        }
+    }
+
     // --- Scoped cycling (removed rev 5) -----------------------------------
 
     #[test]
@@ -2016,6 +2067,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             show_workspace: false,
+            show_minimized: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -2044,6 +2096,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             show_workspace: false,
+            show_minimized: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -2073,6 +2126,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             show_workspace: false,
+            show_minimized: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -2104,6 +2158,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             show_workspace: false,
+            show_minimized: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -2132,6 +2187,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             show_workspace: false,
+            show_minimized: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -2160,6 +2216,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             show_workspace: false,
+            show_minimized: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -2191,6 +2248,7 @@ isolated = false
             rows: ui::DEFAULT_ROWS,
             grouping: false,
             show_workspace: false,
+            show_minimized: false,
             layout: LayoutSetting::Vertical,
             columns: ColumnsSetting::Auto,
             width: WidthSetting::Auto,
@@ -2391,6 +2449,7 @@ isolated = false
                 rows: ui::DEFAULT_ROWS,
                 grouping: false,
                 show_workspace: false,
+                show_minimized: false,
                 layout: LayoutSetting::Vertical,
                 columns: ColumnsSetting::Auto,
                 width: WidthSetting::Auto,
