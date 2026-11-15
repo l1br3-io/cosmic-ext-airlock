@@ -358,6 +358,22 @@ pre {
 
 pre code { font-size: 0.875rem; }
 
+/* The demo video takes the pre's frame: one hairline and the 12 px
+   radius. preload="none" and the poster keep the section free until the
+   visitor presses play — the 9.4 MB recording never loads by accident. */
+
+.demo-video { margin: 16px 0 0; }
+
+.demo-video video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+}
+
 /* Keycaps: the row-hint keycaps — mono, the selection band behind, the
    hairline around, a deeper bottom edge for the cap's depth. */
 
