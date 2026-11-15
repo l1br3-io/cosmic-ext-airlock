@@ -4,7 +4,10 @@
 # directory part of PATH for future shells when it is not, and run
 # `airlock install` (the Alt+Tab takeover). User-level only: no sudo; the
 # writes are the binary, one guarded PATH export line per shell startup
-# file, and whatever `airlock install` reports.
+# file, and whatever `airlock install` reports. The takeover keybinds
+# hold the binary's absolute path, so the switcher works the moment
+# install finishes and never waits on the session PATH; the export line
+# exists so typing `airlock` in a terminal works.
 #
 # Inspect before running: fetch this file, read it, then run it:
 #   curl -fsSL .../install.sh -o install.sh && less install.sh && sh install.sh
@@ -13,8 +16,7 @@
 #   AIRLOCK_VERSION=0.4.4      release to install (default: latest)
 #   AIRLOCK_INSTALL_DIR=DIR    binary destination (default: a PATH dir)
 #   AIRLOCK_NO_MODIFY_PATH=1   print the PATH line instead of appending it
-#                              to shell startup files (the takeover is then
-#                              withheld until 'airlock' resolves)
+#                              to shell startup files
 #   AIRLOCK_NO_INTEGRATION=1   binary only; run `airlock install` yourself
 #
 # Uninstall: `airlock install --uninstall`, then remove the binary and the
@@ -195,16 +197,13 @@ note "installed airlock v$version to $dir/airlock"
 
 if ! on_path "$dir"; then
     if [ "${AIRLOCK_NO_MODIFY_PATH:-0}" = "1" ]; then
-        note "warning: $dir is not on PATH and AIRLOCK_NO_MODIFY_PATH=1; add it to your shell startup:"
+        note "warning: $dir is not on PATH and AIRLOCK_NO_MODIFY_PATH=1; add it to your shell startup to type 'airlock' directly:"
         note "  export PATH=\"$dir:\$PATH\""
-        note "the takeover's keybinds call 'airlock' from PATH; add the line above,"
-        note "open a new terminal, then finish with: airlock install"
-        exit 0
+    else
+        note "$dir is not on PATH; adding it to your shell startup files"
+        add_to_path "$dir"
+        note "new terminals find 'airlock' from here on"
     fi
-    note "$dir is not on PATH; adding it to your shell startup files"
-    add_to_path "$dir"
-    added_to_path=1
-    note "new terminals find 'airlock' from here on; the session PATH updates at next login"
 fi
 
 if [ "${AIRLOCK_NO_INTEGRATION:-0}" = "1" ]; then
@@ -215,9 +214,6 @@ fi
 note "running: $dir/airlock install"
 if "$dir/airlock" install; then
     note "done; press Alt+Tab inside COSMIC"
-    if [ "${added_to_path:-0}" = "1" ]; then
-        note "if Alt+Tab does not fire in this session, log out and back in once"
-    fi
     note "undo: airlock install --uninstall && rm $dir/airlock"
     exit 0
 fi

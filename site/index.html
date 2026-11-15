@@ -209,12 +209,13 @@
         <p>Requires a COSMIC Epoch desktop session. The script downloads the
         prebuilt x86_64 binary, verifies its sha256, installs it into a
         directory on your <code>PATH</code>, and runs
-        <code>airlock install</code>, with no sudo. If that
-        directory is not on <code>PATH</code>, it appends an export line
-        to <code>~/.bashrc</code> and <code>~/.profile</code> (zsh:
-        <code>~/.zshrc</code>; fish: it prints the
-        <code>fish_add_path</code> line) so new terminals find
-        <code>airlock</code>, and still runs the takeover. To read it
+        <code>airlock install</code>, with no sudo. The keybinds hold the
+        binary's absolute path, so the switcher works the moment install
+        finishes. If that directory is not on <code>PATH</code>, it
+        appends an export line to <code>~/.bashrc</code> and
+        <code>~/.profile</code> (zsh: <code>~/.zshrc</code>; fish: it
+        prints the <code>fish_add_path</code> line) so typing
+        <code>airlock</code> in a new terminal works. To read it
         first, save the file, inspect it, then run it; with
         <code>AIRLOCK_NO_INTEGRATION=1</code> it installs the binary alone,
         and <code>AIRLOCK_NO_MODIFY_PATH=1</code> prints the PATH line
@@ -246,12 +247,16 @@
           </div>
           <div class="row">
             <h3>Undo</h3>
-            <p><code>airlock install --uninstall</code> restores the built-in
-            switcher byte-for-byte; then remove the binary
-            (<code>rm ~/.local/bin/airlock</code>, or
-            <code>cargo uninstall cosmic-ext-airlock</code>). On another
-            compositor the daemon exits with a diagnostic naming the missing
-            protocol.</p>
+            <ul>
+              <li><code>airlock install --uninstall</code> — restores the
+              built-in switcher byte-for-byte, and removes the app icon,
+              desktop entry, and unedited starter config.</li>
+              <li>Remove the binary: <code>rm ~/.local/bin/airlock</code> if
+              the installer put it there, or
+              <code>cargo uninstall cosmic-ext-airlock</code> if cargo did.</li>
+              <li>On another compositor, the daemon exits with a diagnostic
+              naming the missing protocol.</li>
+            </ul>
           </div>
         </div>
       </div>

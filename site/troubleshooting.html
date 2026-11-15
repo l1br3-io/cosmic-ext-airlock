@@ -38,22 +38,20 @@
       showed.</li>
       <li><strong><kbd>Alt</kbd>+<kbd>Tab</kbd> does nothing.</strong> The
       first press starts the daemon (about 340 ms when cold); press again.
-      If it persists, <code>airlock list</code> names any missing protocol;
-      check the directory holding <code>airlock</code>
-      (<code>~/.local/bin</code> from the one-command installer,
-      <code>~/.cargo/bin</code> from cargo) is on your session
-      <code>PATH</code>. The installer appends it to
-      <code>~/.bashrc</code> and <code>~/.profile</code> when it is not;
-      the session picks that up at next login.</li>
+      If it persists, <code>airlock list</code> names any missing protocol.
+      Since 0.4.6 the keybinds hold the binary's absolute path, so the
+      switcher itself never depends on <code>PATH</code>; the installer
+      adds the binary's directory to <code>~/.bashrc</code> and
+      <code>~/.profile</code> only so typing <code>airlock</code>
+      works.</li>
       <li><strong>The one-command installer stops before
       finishing.</strong> It names the reason. A checksum mismatch means a
       corrupt download: re-run it, and if it repeats, do not install and
       report it. A missing prebuilt binary means your architecture has
       none: build from source instead. A <code>PATH</code> warning means
-      you ran with <code>AIRLOCK_NO_MODIFY_PATH=1</code> (or the startup
-      files were not writable) and the takeover was withheld: add the
-      printed <code>export PATH=...</code> line to your shell startup,
-      open a new terminal, then run <code>airlock install</code>.</li>
+      you ran with <code>AIRLOCK_NO_MODIFY_PATH=1</code>: the takeover
+      still completed; add the printed <code>export PATH=...</code> line
+      to your shell startup to type <code>airlock</code> yourself.</li>
       <li><strong>Another tool fights over WindowSwitcher.</strong> The
       user-level override is one slot; last writer wins. Re-run
       <code>airlock install</code> to take it back; <code>--uninstall</code>

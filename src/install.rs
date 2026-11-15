@@ -1,10 +1,11 @@
 //! User-level shortcut takeover: `airlock install` points COSMIC's
 //! `WindowSwitcher`/`WindowSwitcherPrevious` system actions at this binary
-//! and claims four bindings in the sibling `custom` shortcuts file:
-//! `Alt+grave`, `Alt+Shift+grave`, and the all-windows family under the
-//! configured `all_windows_key` (`Alt+Escape` / `Alt+Shift+Escape` by
-//! default), spawning the same-app and all-windows stubs;
-//! `airlock install --uninstall` puts the pre-install state back
+//! by its absolute path, so the switcher works without `airlock` on the
+//! session PATH, and claims four bindings in the sibling `custom`
+//! shortcuts file: `Alt+grave`, `Alt+Shift+grave`, and the all-windows
+//! family under the configured `all_windows_key` (`Alt+Escape` /
+//! `Alt+Shift+Escape` by default), spawning the same-app and all-windows
+//! stubs; `airlock install --uninstall` puts the pre-install state back
 //! byte-exactly. The 0.4-era `Alt+Esc` quick-toggle binding is retired:
 //! a re-run of install migrates it to the new command (all-windows
 //! A3.1, 2026-11-14); quick-toggle stays available as a CLI stub, bound
@@ -36,24 +37,44 @@ use std::path::{Path, PathBuf};
 const SWITCHER_KEY: &str = "WindowSwitcher";
 /// COSMIC's action key for Shift+Alt+Tab.
 const SWITCHER_PREV_KEY: &str = "WindowSwitcherPrevious";
-/// Command install binds to [`SWITCHER_KEY`].
-const NEXT_CMD: &str = "airlock alt-tab";
-/// Command install binds to [`SWITCHER_PREV_KEY`].
-const PREV_CMD: &str = "airlock shift-alt-tab";
-/// Command the Alt+grave custom binding spawns.
-const SAME_APP_CMD: &str = "airlock same-app";
-/// Command the Alt+Shift+grave custom binding spawns.
-const SAME_APP_PREV_CMD: &str = "airlock same-app-previous";
-/// Command the Alt+Esc custom binding spawns. Retired from the default
+/// Argument tail [`SWITCHER_KEY`] spawns, after the binary path.
+const NEXT_ARGS: &str = "alt-tab";
+/// Argument tail [`SWITCHER_PREV_KEY`] spawns, after the binary path.
+const PREV_ARGS: &str = "shift-alt-tab";
+/// Argument tail the Alt+grave custom binding spawns.
+const SAME_APP_ARGS: &str = "same-app";
+/// Argument tail the Alt+Shift+grave custom binding spawns.
+const SAME_APP_PREV_ARGS: &str = "same-app-previous";
+/// Command the Alt+Esc custom binding spawned. Retired from the default
 /// bindings (all-windows, 2026-11-14): the CLI stub remains, bound
-/// nowhere by default: README documents binding it by hand.
+/// nowhere by default: README documents binding it by hand. Only the
+/// bare form ever shipped, so recognition keeps the full string.
 const QUICK_TOGGLE_CMD: &str = "airlock quick-toggle";
-/// Command the Alt+`all_windows_key` custom binding spawns.
-const SHOW_ALL_CMD: &str = "airlock show-all-windows";
-/// Command the Alt+Shift+`all_windows_key` custom binding spawns.
-const SHOW_ALL_PREV_CMD: &str = "airlock show-all-windows-previous";
+/// Argument tail the Alt+`all_windows_key` custom binding spawns.
+const SHOW_ALL_ARGS: &str = "show-all-windows";
+/// Argument tail the Alt+Shift+`all_windows_key` custom binding spawns.
+const SHOW_ALL_PREV_ARGS: &str = "show-all-windows-previous";
 /// Prefix of every backup marker line install writes.
 const MARKER_PREFIX: &str = "// airlock-v1 ";
+
+/// The bare `airlock <args>` form pre-0.4.6 installs wrote. Still
+/// recognized so a re-install migrates those entries to the absolute form
+/// and an uninstall owns them.
+fn legacy(args: &str) -> String {
+    format!("airlock {args}")
+}
+
+/// The spawn string one binding writes: the binary's absolute path plus
+/// `args`. A path holding whitespace is double-quoted so the shell split
+/// cosmic performs still yields one argv[0].
+fn spawn_command(bin: &Path, args: &str) -> String {
+    let bin = bin.to_string_lossy();
+    if bin.contains(char::is_whitespace) {
+        format!("\"{bin}\" {args}")
+    } else {
+        format!("{bin} {args}")
+    }
+}
 /// Marker value when no user file existed before install.
 const MARKER_ABSENT_FILE: &str = "absent-file";
 /// Marker value when the file existed but had no entry for the key.
@@ -85,6 +106,9 @@ pub struct Locations {
     /// The starter config's path: [`DEFAULT_CONFIG`]'s destination, written
     /// only while absent.
     pub config: PathBuf,
+    /// The binary the shortcut commands spawn: the running executable's
+    /// absolute path in [`default_locations`], explicit in tests.
+    pub bin: PathBuf,
 }
 
 /// What uninstall did to the user file.
@@ -150,7 +174,7 @@ fn manage_system_actions(uninstall: bool, locations: &Locations) -> Result<Strin
             ));
         };
         let system_default = read_system_default(locations)?;
-        return match uninstall_content(&user, &system_default)? {
+        return match uninstall_content(&user, &system_default, &locations.bin)? {
             UninstallOutcome::Restored {
                 content,
                 best_effort,
@@ -191,7 +215,7 @@ fn manage_system_actions(uninstall: bool, locations: &Locations) -> Result<Strin
     let system_default = read_system_default(locations)?;
     let user = read_optional(&locations.system_actions)?;
     let fresh = user.is_none();
-    let content = install_content(user.as_deref(), &system_default)?;
+    let content = install_content(user.as_deref(), &system_default, &locations.bin)?;
     if let Some(dir) = locations.system_actions.parent() {
         fs::create_dir_all(dir)
             .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
@@ -244,7 +268,7 @@ fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, Strin
                 locations.custom.display()
             ));
         };
-        return match custom_uninstall_content(&current, &all_windows_key)? {
+        return match custom_uninstall_content(&current, &all_windows_key, &locations.bin)? {
             CustomUninstall::Restored { content } => {
                 write_atomic(&locations.custom, content.as_bytes())?;
                 Ok(format!(
@@ -268,7 +292,7 @@ fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, Strin
         };
     }
 
-    let plan = custom_install_content(current.as_deref(), &all_windows_key)?;
+    let plan = custom_install_content(current.as_deref(), &all_windows_key, &locations.bin)?;
     if let Some(dir) = locations.custom.parent() {
         fs::create_dir_all(dir)
             .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
@@ -294,7 +318,8 @@ fn manage_custom(uninstall: bool, locations: &Locations) -> Result<String, Strin
     }
     for retired in &plan.migrated {
         report.push_str(&format!(
-            "; migrated {retired} — quick-toggle retired, rebound to {SHOW_ALL_CMD}"
+            "; migrated {retired} — quick-toggle retired, rebound to {}",
+            legacy(SHOW_ALL_ARGS)
         ));
     }
     for stale in &plan.orphaned {
@@ -441,6 +466,9 @@ fn manage_config(uninstall: bool, locations: &Locations) -> Result<String, Strin
 fn default_locations() -> Result<Locations, String> {
     let config = xdg_dir("XDG_CONFIG_HOME", ".config")?;
     let data = xdg_dir("XDG_DATA_HOME", ".local/share")?;
+    // current_exe reads /proc/self/exe on Linux; a failure (an exotic
+    // /proc-less sandbox) degrades to the bare name, the pre-0.4.6 form.
+    let bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("airlock"));
     Ok(Locations {
         system_actions: config
             .join("cosmic/com.system76.CosmicSettings.Shortcuts/v1/system_actions"),
@@ -451,6 +479,7 @@ fn default_locations() -> Result<Locations, String> {
         icon: data.join("icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg"),
         desktop: data.join("applications/io.github.l1br3-io.Airlock.desktop"),
         config: config.join("airlock/config.toml"),
+        bin,
     })
 }
 
@@ -515,7 +544,7 @@ fn read_system_default(locations: &Locations) -> Result<String, String> {
 ///
 /// Returns a diagnostic when a switcher key is missing and the file has no
 /// closing `}` to append it to (empty or malformed content is left alone).
-fn install_content(user: Option<&str>, system_default: &str) -> Result<String, String> {
+fn install_content(user: Option<&str>, system_default: &str, bin: &Path) -> Result<String, String> {
     let (body, markers) = match user {
         Some(content) => {
             let lines = split_lines(content);
@@ -531,7 +560,7 @@ fn install_content(user: Option<&str>, system_default: &str) -> Result<String, S
             (MarkerValue::AbsentFile, MarkerValue::AbsentFile),
         ),
     };
-    let installed = apply_override(&body)?;
+    let installed = apply_override(&body, bin)?;
     Ok(format!(
         "{}{}{}",
         marker_line(SWITCHER_KEY, &markers.0),
@@ -563,9 +592,11 @@ fn original_marker_value(lines: &[&str], key: &str) -> MarkerValue {
 ///
 /// Returns a diagnostic when an entry is missing and the file has no closing
 /// `}` to append it to.
-fn apply_override(body: &str) -> Result<String, String> {
+fn apply_override(body: &str, bin: &Path) -> Result<String, String> {
     let mut lines: Vec<String> = body.split_inclusive('\n').map(str::to_string).collect();
-    for (key, command) in [(SWITCHER_KEY, NEXT_CMD), (SWITCHER_PREV_KEY, PREV_CMD)] {
+    let next = spawn_command(bin, NEXT_ARGS);
+    let prev = spawn_command(bin, PREV_ARGS);
+    for (key, command) in [(SWITCHER_KEY, &next), (SWITCHER_PREV_KEY, &prev)] {
         if let Some(index) = key_line_index(&lines, key) {
             let newline = if lines[index].ends_with('\n') {
                 "\n"
@@ -594,10 +625,14 @@ fn apply_override(body: &str) -> Result<String, String> {
 ///
 /// Returns a diagnostic when a best-effort restore is needed but the system
 /// default lacks the entry, or a marker line is corrupt.
-fn uninstall_content(user: &str, system_default: &str) -> Result<UninstallOutcome, String> {
+fn uninstall_content(
+    user: &str,
+    system_default: &str,
+    bin: &Path,
+) -> Result<UninstallOutcome, String> {
     let lines = split_lines(user);
     let Some((switcher, previous)) = parse_markers(&lines)? else {
-        return restore_without_markers(&lines, system_default);
+        return restore_without_markers(&lines, system_default, bin);
     };
     if matches!(switcher, MarkerValue::AbsentFile) || matches!(previous, MarkerValue::AbsentFile) {
         return Ok(UninstallOutcome::RemoveFile);
@@ -638,15 +673,22 @@ fn uninstall_content(user: &str, system_default: &str) -> Result<UninstallOutcom
 fn restore_without_markers(
     lines: &[&str],
     system_default: &str,
+    bin: &Path,
 ) -> Result<UninstallOutcome, String> {
     let defaults = split_lines(system_default);
     let mut restored: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
     let mut airlock_owned = false;
-    for (key, command) in [(SWITCHER_KEY, NEXT_CMD), (SWITCHER_PREV_KEY, PREV_CMD)] {
+    // An airlock entry is recognized in this install's absolute form or
+    // in the bare form pre-0.4.6 wrote.
+    let next = [
+        (spawn_command(bin, NEXT_ARGS), legacy(NEXT_ARGS)),
+        (spawn_command(bin, PREV_ARGS), legacy(PREV_ARGS)),
+    ];
+    for (key, (absolute, bare)) in [(SWITCHER_KEY, &next[0]), (SWITCHER_PREV_KEY, &next[1])] {
         let Some(index) = key_line_index(lines, key) else {
             continue;
         };
-        if !lines[index].contains(command) {
+        if !(lines[index].contains(absolute) || lines[index].contains(bare)) {
             // Someone else's entry: never a byte of it moves.
             continue;
         }
@@ -859,18 +901,38 @@ struct CustomBinding {
     /// so its entries must be matched by the legacy name to uninstall or
     /// heal a 0.1.0 machine.
     legacy_keys: Vec<&'static str>,
-    /// Command the binding spawns.
-    command: &'static str,
+    /// Argument tail this binding spawns, after the binary path.
+    args: &'static str,
+    /// What this install writes: [`spawn_command`] over [`CustomBinding::args`].
+    command: String,
+    /// The bare `airlock <args>` form pre-0.4.6 installs wrote, for
+    /// recognition.
+    legacy_command: String,
     /// Description cosmic-settings shows for the entry.
     description: String,
+}
+
+impl CustomBinding {
+    /// Whether `entry` spawns this binding's command: the absolute form
+    /// this install writes or the bare form an earlier release wrote.
+    fn spawned_by(&self, entry: &CustomEntry) -> bool {
+        entry.spawns(&self.command) || entry.spawns(&self.legacy_command)
+    }
+
+    /// Whether this binding is part of the all-windows family, the only
+    /// one whose key the `all_windows_key` setting moves.
+    fn is_show_all(&self) -> bool {
+        self.args == SHOW_ALL_ARGS || self.args == SHOW_ALL_PREV_ARGS
+    }
 }
 
 /// The bindings an install claims: the static grave pair plus the
 /// all-windows family under `all_windows_key` (all-windows A3.1,
 /// 2026-11-14). Built per run because the key is the user's config
-/// value; the legacy `"Esc"` name counts only while the configured key
+/// value and the commands embed the binary's absolute path; the legacy
+/// `"Esc"` name counts only while the configured key
 /// is the canonical `"Escape"` it once mis-serialized as.
-fn custom_bindings(all_windows_key: &str) -> Vec<CustomBinding> {
+fn custom_bindings(all_windows_key: &str, bin: &Path) -> Vec<CustomBinding> {
     let esc_legacy = if all_windows_key == "Escape" {
         vec!["Esc"]
     } else {
@@ -882,7 +944,9 @@ fn custom_bindings(all_windows_key: &str) -> Vec<CustomBinding> {
             modifiers: &["Alt"],
             key: "grave".to_owned(),
             legacy_keys: Vec::new(),
-            command: SAME_APP_CMD,
+            args: SAME_APP_ARGS,
+            command: spawn_command(bin, SAME_APP_ARGS),
+            legacy_command: legacy(SAME_APP_ARGS),
             description: "Airlock: same app windows".to_owned(),
         },
         CustomBinding {
@@ -890,7 +954,9 @@ fn custom_bindings(all_windows_key: &str) -> Vec<CustomBinding> {
             modifiers: &["Alt", "Shift"],
             key: "grave".to_owned(),
             legacy_keys: Vec::new(),
-            command: SAME_APP_PREV_CMD,
+            args: SAME_APP_PREV_ARGS,
+            command: spawn_command(bin, SAME_APP_PREV_ARGS),
+            legacy_command: legacy(SAME_APP_PREV_ARGS),
             description: "Airlock: same app windows, backwards".to_owned(),
         },
         CustomBinding {
@@ -898,7 +964,9 @@ fn custom_bindings(all_windows_key: &str) -> Vec<CustomBinding> {
             modifiers: &["Alt"],
             key: all_windows_key.to_owned(),
             legacy_keys: esc_legacy,
-            command: SHOW_ALL_CMD,
+            args: SHOW_ALL_ARGS,
+            command: spawn_command(bin, SHOW_ALL_ARGS),
+            legacy_command: legacy(SHOW_ALL_ARGS),
             description: "Airlock: every workspace's windows".to_owned(),
         },
         CustomBinding {
@@ -906,7 +974,9 @@ fn custom_bindings(all_windows_key: &str) -> Vec<CustomBinding> {
             modifiers: &["Alt", "Shift"],
             key: all_windows_key.to_owned(),
             legacy_keys: Vec::new(),
-            command: SHOW_ALL_PREV_CMD,
+            args: SHOW_ALL_PREV_ARGS,
+            command: spawn_command(bin, SHOW_ALL_PREV_ARGS),
+            legacy_command: legacy(SHOW_ALL_PREV_ARGS),
             description: "Airlock: every workspace's windows, backwards".to_owned(),
         },
     ]
@@ -1052,7 +1122,9 @@ impl CustomEntry {
     /// moves: a hand-bound `airlock quick-toggle` on some other key
     /// (README documents the recipe) survives untouched.
     fn is_orphaned_ours(&self, bindings: &[CustomBinding]) -> bool {
-        (self.spawns(SHOW_ALL_CMD) || self.spawns(SHOW_ALL_PREV_CMD))
+        bindings
+            .iter()
+            .any(|binding| binding.is_show_all() && binding.spawned_by(self))
             && !bindings.iter().any(|binding| self.holds(binding))
     }
 
@@ -1200,7 +1272,7 @@ fn opening_brace_index(lines: &[&str]) -> Option<usize> {
 fn entry_is_ours(entry: &CustomEntry, bindings: &[CustomBinding]) -> bool {
     bindings
         .iter()
-        .any(|binding| entry.holds(binding) && entry.spawns(binding.command))
+        .any(|binding| entry.holds(binding) && binding.spawned_by(entry))
         || entry.is_retired_ours()
         || entry.is_orphaned_ours(bindings)
 }
@@ -1220,8 +1292,9 @@ fn entry_is_ours(entry: &CustomEntry, bindings: &[CustomBinding]) -> bool {
 fn custom_install_content(
     current: Option<&str>,
     all_windows_key: &str,
+    bin: &Path,
 ) -> Result<CustomInstall, String> {
-    let bindings = custom_bindings(all_windows_key);
+    let bindings = custom_bindings(all_windows_key, bin);
     let Some(current) = current else {
         let mut content = format!("{CUSTOM_ABSENT_MARKER}\n{{\n");
         for binding in &bindings {
@@ -1250,8 +1323,9 @@ fn custom_install_content(
     for binding in &bindings {
         match entries.iter().find(|entry| entry.holds(binding)) {
             // A previous airlock install (possibly re-serialized by
-            // cosmic-settings): refreshed at the canonical position.
-            Some(entry) if entry.spawns(binding.command) => in_place.push(binding.display.clone()),
+            // cosmic-settings, possibly bare-command): refreshed at the
+            // canonical position with this install's absolute command.
+            Some(entry) if binding.spawned_by(entry) => in_place.push(binding.display.clone()),
             // A stale retired entry (the 0.4 quick-toggle) holds the key:
             // the rebuild drops it and the new binding lands in its place.
             Some(entry) if entry.is_retired_ours() => in_place.push(binding.display.clone()),
@@ -1322,8 +1396,9 @@ fn custom_install_content(
 fn custom_uninstall_content(
     current: &str,
     all_windows_key: &str,
+    bin: &Path,
 ) -> Result<CustomUninstall, String> {
-    let bindings = custom_bindings(all_windows_key);
+    let bindings = custom_bindings(all_windows_key, bin);
     let lines = split_lines(current);
     let entries = parse_custom_entries(&lines);
     let marker_line = lines

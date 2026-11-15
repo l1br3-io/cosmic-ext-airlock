@@ -81,10 +81,11 @@ just vm-uninstall                    # stock switcher restored
 just vm-restore pre-airlock          # optional: rewind to the snapshot
 ```
 
-After the **first** staging only, log out/in inside the VM — `.profile`
-stamps the session PATH the compositor uses to find `airlock alt-tab`.
-Verify with `which airlock` in the guest. Later pushes to the same path
-need no re-login.
+Since the keybinds hold the binary's absolute path, no re-login is needed
+for the switcher after staging. `which airlock` in the guest only proves
+terminal convenience: the guest shell reads `~/.profile` at login, so a
+log out/in is needed once if you want the bare command. Later pushes to
+the same path need nothing.
 
 ### Manual bootstrap (before the guest agent exists)
 

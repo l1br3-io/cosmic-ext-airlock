@@ -1,6 +1,15 @@
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// The fake binary the tests bind: an absolute path, space-free so the
+/// emitted spawn lines stay readable.
+const TEST_BIN: &str = "/opt/airlock/airlock";
+
+/// The spawn string install emits for `args` under [`TEST_BIN`].
+fn cmd(args: &str) -> String {
+    format!("{TEST_BIN} {args}")
+}
+
 /// Faithful test replica of cosmic's `custom` shortcuts schema
 /// (cosmic-settings-daemon `config/src/shortcuts/{binding.rs,sym.rs,
 /// action.rs}`): `Binding` denies unknown fields and its `key` field uses a
@@ -179,14 +188,14 @@ const CUSTOM_LEGACY_0_1_0: &str = concat!(
 
 #[test]
 fn fresh_install_overrides_system_default_and_marks_absent_file() {
-    let installed = install_content(None, SYSTEM_DEFAULT).expect("install");
+    let installed = install_content(None, SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("install");
 
     assert!(
-        installed.contains(&format!("WindowSwitcher: \"{NEXT_CMD}\"")),
+        installed.contains(&format!("WindowSwitcher: \"{}\"", cmd(NEXT_ARGS))),
         "WindowSwitcher not overridden:\n{installed}"
     );
     assert!(
-        installed.contains(&format!("WindowSwitcherPrevious: \"{PREV_CMD}\"")),
+        installed.contains(&format!("WindowSwitcherPrevious: \"{}\"", cmd(PREV_ARGS))),
         "WindowSwitcherPrevious not overridden:\n{installed}"
     );
     // Unrelated entries and comments survive the copy.
@@ -208,8 +217,8 @@ fn fresh_install_overrides_system_default_and_marks_absent_file() {
 
 #[test]
 fn fresh_install_uninstall_removes_file() {
-    let installed = install_content(None, SYSTEM_DEFAULT).expect("install");
-    match uninstall_content(&installed, SYSTEM_DEFAULT).expect("uninstall") {
+    let installed = install_content(None, SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("install");
+    match uninstall_content(&installed, SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("uninstall") {
         UninstallOutcome::RemoveFile => {}
         other => panic!("expected RemoveFile, got {other:?}"),
     }
@@ -217,7 +226,8 @@ fn fresh_install_uninstall_removes_file() {
 
 #[test]
 fn install_preserves_unrelated_lines_and_formatting() {
-    let installed = install_content(Some(USER_EXISTING), SYSTEM_DEFAULT).expect("install");
+    let installed =
+        install_content(Some(USER_EXISTING), SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("install");
 
     // The unrelated entry survives byte-for-byte, comments and all.
     assert!(
@@ -237,8 +247,9 @@ fn install_preserves_unrelated_lines_and_formatting() {
 
 #[test]
 fn install_then_uninstall_restores_exact_bytes() {
-    let installed = install_content(Some(USER_EXISTING), SYSTEM_DEFAULT).expect("install");
-    match uninstall_content(&installed, SYSTEM_DEFAULT).expect("uninstall") {
+    let installed =
+        install_content(Some(USER_EXISTING), SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("install");
+    match uninstall_content(&installed, SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("uninstall") {
         UninstallOutcome::Restored {
             content,
             best_effort,
@@ -252,24 +263,27 @@ fn install_then_uninstall_restores_exact_bytes() {
 
 #[test]
 fn second_install_is_byte_identical_and_keeps_original_markers() {
-    let once = install_content(Some(USER_EXISTING), SYSTEM_DEFAULT).expect("install");
+    let once =
+        install_content(Some(USER_EXISTING), SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("install");
     // The markers in `once` still name cosmic-launcher; a second run must
     // not re-embed the now-installed airlock state as the "original".
     assert!(once.contains("cosmic-launcher alt-tab"));
 
-    let twice = install_content(Some(&once), SYSTEM_DEFAULT).expect("reinstall");
+    let twice =
+        install_content(Some(&once), SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("reinstall");
     assert_eq!(once, twice, "second install changed the file");
 }
 
 #[test]
 fn install_appends_missing_key_and_uninstall_removes_it() {
-    let installed = install_content(Some(USER_MISSING_PREV), SYSTEM_DEFAULT).expect("install");
+    let installed = install_content(Some(USER_MISSING_PREV), SYSTEM_DEFAULT, Path::new(TEST_BIN))
+        .expect("install");
     assert!(
-        installed.contains(&format!("WindowSwitcherPrevious: \"{PREV_CMD}\"")),
+        installed.contains(&format!("WindowSwitcherPrevious: \"{}\"", cmd(PREV_ARGS))),
         "missing key not appended:\n{installed}"
     );
 
-    match uninstall_content(&installed, SYSTEM_DEFAULT).expect("uninstall") {
+    match uninstall_content(&installed, SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("uninstall") {
         UninstallOutcome::Restored {
             content,
             best_effort,
@@ -286,7 +300,9 @@ fn install_appends_missing_key_and_uninstall_removes_it() {
 
 #[test]
 fn uninstall_of_hand_edited_takeover_restores_system_default_values() {
-    match uninstall_content(USER_HAND_EDITED, SYSTEM_DEFAULT).expect("uninstall") {
+    match uninstall_content(USER_HAND_EDITED, SYSTEM_DEFAULT, Path::new(TEST_BIN))
+        .expect("uninstall")
+    {
         UninstallOutcome::Restored {
             content,
             best_effort,
@@ -312,7 +328,9 @@ fn uninstall_of_hand_edited_takeover_restores_system_default_values() {
 
 #[test]
 fn markerless_one_key_takeover_leaves_third_party_sibling_untouched() {
-    match uninstall_content(USER_ONE_KEY_TAKEOVER, SYSTEM_DEFAULT).expect("uninstall") {
+    match uninstall_content(USER_ONE_KEY_TAKEOVER, SYSTEM_DEFAULT, Path::new(TEST_BIN))
+        .expect("uninstall")
+    {
         UninstallOutcome::Restored {
             content,
             best_effort,
@@ -338,12 +356,13 @@ fn markerless_one_key_takeover_leaves_third_party_sibling_untouched() {
 
 #[test]
 fn uninstall_after_marker_strip_restores_builtin_switcher() {
-    let installed = install_content(Some(USER_EXISTING), SYSTEM_DEFAULT).expect("install");
+    let installed =
+        install_content(Some(USER_EXISTING), SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("install");
     // A cosmic-settings rewrite keeps the body but drops the leading
     // marker comments: the realistic degradation while installed.
     let stripped: String = installed.split_inclusive('\n').skip(2).collect();
 
-    match uninstall_content(&stripped, SYSTEM_DEFAULT).expect("uninstall") {
+    match uninstall_content(&stripped, SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("uninstall") {
         UninstallOutcome::Restored {
             content,
             best_effort,
@@ -370,7 +389,8 @@ fn uninstall_after_marker_strip_restores_builtin_switcher() {
 
 #[test]
 fn uninstall_without_airlock_values_reports_not_installed() {
-    match uninstall_content(USER_EXISTING, SYSTEM_DEFAULT).expect("uninstall") {
+    match uninstall_content(USER_EXISTING, SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("uninstall")
+    {
         UninstallOutcome::NotInstalled => {}
         other => panic!("expected NotInstalled, got {other:?}"),
     }
@@ -378,8 +398,9 @@ fn uninstall_without_airlock_values_reports_not_installed() {
 
 #[test]
 fn marker_escaping_survives_backslashes_and_carriage_returns() {
-    let installed = install_content(Some(USER_BACKSLASH_CR), SYSTEM_DEFAULT).expect("install");
-    match uninstall_content(&installed, SYSTEM_DEFAULT).expect("uninstall") {
+    let installed = install_content(Some(USER_BACKSLASH_CR), SYSTEM_DEFAULT, Path::new(TEST_BIN))
+        .expect("install");
+    match uninstall_content(&installed, SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("uninstall") {
         UninstallOutcome::Restored {
             content,
             best_effort,
@@ -393,7 +414,7 @@ fn marker_escaping_survives_backslashes_and_carriage_returns() {
 
 #[test]
 fn empty_user_file_is_rejected() {
-    let result = install_content(Some(""), SYSTEM_DEFAULT);
+    let result = install_content(Some(""), SYSTEM_DEFAULT, Path::new(TEST_BIN));
     assert!(
         result.is_err(),
         "empty file must be rejected, got {result:?}"
@@ -404,7 +425,7 @@ fn empty_user_file_is_rejected() {
 
 #[test]
 fn custom_fresh_install_creates_marked_file_and_uninstall_removes_it() {
-    let install = custom_install_content(None, "Escape").expect("install");
+    let install = custom_install_content(None, "Escape", Path::new(TEST_BIN)).expect("install");
     assert_eq!(
         install.in_place,
         [
@@ -422,15 +443,17 @@ fn custom_fresh_install_creates_marked_file_and_uninstall_removes_it() {
         "missing absent-file marker:\n{}",
         install.content
     );
-    for command in [
-        SAME_APP_CMD,
-        SAME_APP_PREV_CMD,
-        SHOW_ALL_CMD,
-        SHOW_ALL_PREV_CMD,
+    for args in [
+        SAME_APP_ARGS,
+        SAME_APP_PREV_ARGS,
+        SHOW_ALL_ARGS,
+        SHOW_ALL_PREV_ARGS,
     ] {
         assert!(
-            install.content.contains(&format!("Spawn(\"{command}\")")),
-            "{command} not bound:\n{}",
+            install
+                .content
+                .contains(&format!("Spawn(\"{}\")", cmd(args))),
+            "{args} not bound:\n{}",
             install.content
         );
     }
@@ -442,10 +465,13 @@ fn custom_fresh_install_creates_marked_file_and_uninstall_removes_it() {
     );
 
     // Re-install over the fresh file is a byte-identical no-op.
-    let again = custom_install_content(Some(&install.content), "Escape").expect("reinstall");
+    let again = custom_install_content(Some(&install.content), "Escape", Path::new(TEST_BIN))
+        .expect("reinstall");
     assert_eq!(again.content, install.content);
 
-    match custom_uninstall_content(&install.content, "Escape").expect("uninstall") {
+    match custom_uninstall_content(&install.content, "Escape", Path::new(TEST_BIN))
+        .expect("uninstall")
+    {
         CustomUninstall::RemoveFile => {}
         other => panic!("expected RemoveFile, got {other:?}"),
     }
@@ -453,7 +479,8 @@ fn custom_fresh_install_creates_marked_file_and_uninstall_removes_it() {
 
 #[test]
 fn custom_install_preserves_user_entries_and_uninstall_restores_bytes() {
-    let install = custom_install_content(Some(CUSTOM_USER_FILE), "Escape").expect("install");
+    let install = custom_install_content(Some(CUSTOM_USER_FILE), "Escape", Path::new(TEST_BIN))
+        .expect("install");
     assert_eq!(install.in_place.len(), 4);
     assert!(
         install.content.contains("): Spawn(\"xeyes\"),\n"),
@@ -461,7 +488,9 @@ fn custom_install_preserves_user_entries_and_uninstall_restores_bytes() {
         install.content
     );
 
-    match custom_uninstall_content(&install.content, "Escape").expect("uninstall") {
+    match custom_uninstall_content(&install.content, "Escape", Path::new(TEST_BIN))
+        .expect("uninstall")
+    {
         CustomUninstall::Restored { content } => assert_eq!(content, CUSTOM_USER_FILE),
         other => panic!("expected Restored, got {other:?}"),
     }
@@ -478,14 +507,14 @@ fn custom_install_output_parses_as_cosmic_shortcut_map() {
         (
             "fresh install",
             4,
-            custom_install_content(None, "Escape")
+            custom_install_content(None, "Escape", Path::new(TEST_BIN))
                 .expect("fresh install")
                 .content,
         ),
         (
             "over a cosmic-written user file",
             5,
-            custom_install_content(Some(CUSTOM_USER_FILE), "Escape")
+            custom_install_content(Some(CUSTOM_USER_FILE), "Escape", Path::new(TEST_BIN))
                 .expect("install over user file")
                 .content,
         ),
@@ -505,7 +534,7 @@ fn custom_install_output_parses_as_cosmic_shortcut_map() {
 
 #[test]
 fn emitted_bindings_use_bare_keysyms_and_canonical_names() {
-    let install = custom_install_content(None, "Escape").expect("install");
+    let install = custom_install_content(None, "Escape", Path::new(TEST_BIN)).expect("install");
     assert!(
         install.content.contains("key: \"grave\""),
         "keysym must be a bare string:\n{}",
@@ -529,7 +558,8 @@ fn legacy_0_1_0_file_is_healed_by_reinstall() {
     // Some-form entries with valid ones: a repair path for bitten users.
     // The 0.1.0 quick-toggle entry on "Esc" is retired-ours: dropped and
     // counted as a migration, not left as a duplicate or a skip.
-    let healed = custom_install_content(Some(CUSTOM_LEGACY_0_1_0), "Escape").expect("reinstall");
+    let healed = custom_install_content(Some(CUSTOM_LEGACY_0_1_0), "Escape", Path::new(TEST_BIN))
+        .expect("reinstall");
     assert_eq!(healed.in_place.len(), 4, "{:?}", healed.in_place);
     assert_eq!(healed.migrated, ["Alt+Esc"], "{:?}", healed.migrated);
     let parsed: cosmic_schema::Shortcuts =
@@ -552,7 +582,9 @@ fn legacy_0_1_0_file_uninstalls_and_restores_user_bytes() {
         "    (\n        modifiers: [\n            Super,\n        ],\n        key: \"A\",\n    ): Spawn(\"xeyes\"),\n",
         "}",
     );
-    match custom_uninstall_content(legacy_with_user, "Escape").expect("uninstall") {
+    match custom_uninstall_content(legacy_with_user, "Escape", Path::new(TEST_BIN))
+        .expect("uninstall")
+    {
         CustomUninstall::Restored { content } => assert_eq!(
             content,
             concat!(
@@ -567,7 +599,9 @@ fn legacy_0_1_0_file_uninstalls_and_restores_user_bytes() {
 
     // The pure 0.1.0 fresh-install file: only airlock owned it (grave
     // pair plus the retired quick-toggle), so the marker path deletes it.
-    match custom_uninstall_content(CUSTOM_LEGACY_0_1_0, "Escape").expect("uninstall") {
+    match custom_uninstall_content(CUSTOM_LEGACY_0_1_0, "Escape", Path::new(TEST_BIN))
+        .expect("uninstall")
+    {
         CustomUninstall::RemoveFile => {}
         other => panic!("expected RemoveFile, got {other:?}"),
     }
@@ -575,7 +609,8 @@ fn legacy_0_1_0_file_uninstalls_and_restores_user_bytes() {
 
 #[test]
 fn custom_install_skips_user_held_binding_and_names_it() {
-    let install = custom_install_content(Some(CUSTOM_HELD_GRAVE), "Escape").expect("install");
+    let install = custom_install_content(Some(CUSTOM_HELD_GRAVE), "Escape", Path::new(TEST_BIN))
+        .expect("install");
     assert_eq!(install.skipped, ["Alt+grave"]);
     assert_eq!(
         install.in_place,
@@ -588,7 +623,9 @@ fn custom_install_skips_user_held_binding_and_names_it() {
     );
 
     // The held entry survives the round-trip untouched.
-    match custom_uninstall_content(&install.content, "Escape").expect("uninstall") {
+    match custom_uninstall_content(&install.content, "Escape", Path::new(TEST_BIN))
+        .expect("uninstall")
+    {
         CustomUninstall::Restored { content } => assert_eq!(content, CUSTOM_HELD_GRAVE),
         other => panic!("expected Restored, got {other:?}"),
     }
@@ -596,8 +633,10 @@ fn custom_install_skips_user_held_binding_and_names_it() {
 
 #[test]
 fn custom_reinstall_is_byte_identical() {
-    let once = custom_install_content(Some(CUSTOM_USER_FILE), "Escape").expect("install");
-    let twice = custom_install_content(Some(&once.content), "Escape").expect("reinstall");
+    let once = custom_install_content(Some(CUSTOM_USER_FILE), "Escape", Path::new(TEST_BIN))
+        .expect("install");
+    let twice = custom_install_content(Some(&once.content), "Escape", Path::new(TEST_BIN))
+        .expect("reinstall");
     assert_eq!(
         once.content, twice.content,
         "second install changed the file"
@@ -606,12 +645,13 @@ fn custom_reinstall_is_byte_identical() {
 
 #[test]
 fn custom_install_after_cosmic_rewrite_refreshes_without_duplicates() {
-    let install = custom_install_content(Some(CUSTOM_REWRITTEN), "Escape").expect("install");
+    let install = custom_install_content(Some(CUSTOM_REWRITTEN), "Escape", Path::new(TEST_BIN))
+        .expect("install");
     assert_eq!(install.in_place.len(), 4);
     assert_eq!(
         install
             .content
-            .matches(&format!("Spawn(\"{SAME_APP_CMD}\")"))
+            .matches(&format!("Spawn(\"{}\")", cmd(SAME_APP_ARGS)))
             .count(),
         1,
         "duplicate same-app binding:\n{}",
@@ -620,7 +660,9 @@ fn custom_install_after_cosmic_rewrite_refreshes_without_duplicates() {
 
     // Uninstall still recognizes the re-serialized entry and restores the
     // user-only file byte-exactly.
-    match custom_uninstall_content(&install.content, "Escape").expect("uninstall") {
+    match custom_uninstall_content(&install.content, "Escape", Path::new(TEST_BIN))
+        .expect("uninstall")
+    {
         CustomUninstall::Restored { content } => assert_eq!(content, CUSTOM_USER_FILE),
         other => panic!("expected Restored, got {other:?}"),
     }
@@ -628,7 +670,9 @@ fn custom_install_after_cosmic_rewrite_refreshes_without_duplicates() {
 
 #[test]
 fn custom_uninstall_without_airlock_entries_reports_not_installed() {
-    match custom_uninstall_content(CUSTOM_USER_FILE, "Escape").expect("uninstall") {
+    match custom_uninstall_content(CUSTOM_USER_FILE, "Escape", Path::new(TEST_BIN))
+        .expect("uninstall")
+    {
         CustomUninstall::NotInstalled => {}
         other => panic!("expected NotInstalled, got {other:?}"),
     }
@@ -639,7 +683,8 @@ fn custom_disable_action_on_our_key_is_held_not_clobbered() {
     // Hand-written compact file: the user disabled Alt+Escape themselves.
     // Bare keysym in cosmic's real form (canonical "Escape" name).
     let held = "{\n    (modifiers: [Alt], key: \"Escape\"): Disable,\n}";
-    let install = custom_install_content(Some(held), "Escape").expect("install");
+    let install =
+        custom_install_content(Some(held), "Escape", Path::new(TEST_BIN)).expect("install");
     assert_eq!(install.skipped, ["Alt+Escape"]);
     // The Shift twin is free and installs; only the held key is skipped.
     assert_eq!(
@@ -663,7 +708,7 @@ fn custom_modifier_order_and_compact_forms_are_recognized() {
         "}\n",
     );
     assert_eq!(
-        custom_install_content(Some(bare), "Escape")
+        custom_install_content(Some(bare), "Escape", Path::new(TEST_BIN))
             .expect("install")
             .skipped,
         ["Alt+Shift+grave"]
@@ -675,7 +720,7 @@ fn custom_modifier_order_and_compact_forms_are_recognized() {
         "}\n",
     );
     assert_eq!(
-        custom_install_content(Some(legacy_some), "Escape")
+        custom_install_content(Some(legacy_some), "Escape", Path::new(TEST_BIN))
             .expect("install")
             .skipped,
         ["Alt+Shift+grave"]
@@ -697,7 +742,8 @@ fn custom_description_with_paren_colon_does_not_break_parsing() {
         "    ): Spawn(\"xeyes\"),\n",
         "}\n",
     );
-    let install = custom_install_content(Some(nasty), "Escape").expect("install");
+    let install =
+        custom_install_content(Some(nasty), "Escape", Path::new(TEST_BIN)).expect("install");
     assert_eq!(install.in_place.len(), 4);
     assert!(
         install.content.contains("launch thing ): carefully"),
@@ -714,9 +760,12 @@ fn custom_description_with_paren_colon_does_not_break_parsing() {
 
 #[test]
 fn custom_empty_map_file_gains_entries_and_uninstalls_to_empty_map() {
-    let install = custom_install_content(Some("{}"), "Escape").expect("install");
+    let install =
+        custom_install_content(Some("{}"), "Escape", Path::new(TEST_BIN)).expect("install");
     assert_eq!(install.in_place.len(), 4);
-    match custom_uninstall_content(&install.content, "Escape").expect("uninstall") {
+    match custom_uninstall_content(&install.content, "Escape", Path::new(TEST_BIN))
+        .expect("uninstall")
+    {
         CustomUninstall::Restored { content } => assert_eq!(content, "{}"),
         other => panic!("expected Restored, got {other:?}"),
     }
@@ -728,7 +777,7 @@ fn custom_empty_map_file_gains_entries_and_uninstalls_to_empty_map() {
 fn custom_install_binds_the_esc_family_with_the_configured_key() {
     // The default and a configured key alike: both twins written, the
     // configured name verbatim.
-    let default = custom_install_content(None, "Escape").expect("default key");
+    let default = custom_install_content(None, "Escape", Path::new(TEST_BIN)).expect("default key");
     assert_eq!(
         default.in_place,
         [
@@ -745,7 +794,7 @@ fn custom_install_binds_the_esc_family_with_the_configured_key() {
         default.content
     );
 
-    let tab = custom_install_content(None, "Tab").expect("configured key");
+    let tab = custom_install_content(None, "Tab", Path::new(TEST_BIN)).expect("configured key");
     assert_eq!(
         tab.in_place,
         ["Alt+grave", "Alt+Shift+grave", "Alt+Tab", "Alt+Shift+Tab"]
@@ -763,7 +812,8 @@ fn custom_install_binds_the_esc_family_with_the_configured_key() {
         "    (modifiers: [Alt], key: Some(\"Esc\")): Spawn(\"airlock quick-toggle\"),\n",
         "}\n",
     );
-    let over_legacy = custom_install_content(Some(legacy), "Tab").expect("install");
+    let over_legacy =
+        custom_install_content(Some(legacy), "Tab", Path::new(TEST_BIN)).expect("install");
     assert!(over_legacy.skipped.is_empty(), "{:?}", over_legacy.skipped);
     assert_eq!(over_legacy.migrated, ["Alt+Esc"]);
 }
@@ -791,7 +841,8 @@ fn custom_install_migrates_a_retired_quick_toggle_entry() {
             ),
         ),
     ] {
-        let install = custom_install_content(Some(entry), "Escape").expect("install migrates");
+        let install = custom_install_content(Some(entry), "Escape", Path::new(TEST_BIN))
+            .expect("install migrates");
         assert_eq!(
             install.migrated,
             ["Alt+Esc"],
@@ -817,7 +868,7 @@ fn custom_install_migrates_a_retired_quick_toggle_entry() {
         assert!(
             install
                 .content
-                .contains(&format!("Spawn(\"{SHOW_ALL_CMD}\")")),
+                .contains(&format!("Spawn(\"{}\")", cmd(SHOW_ALL_ARGS))),
             "{label}: the new command must be bound:\n{}",
             install.content
         );
@@ -834,7 +885,8 @@ fn custom_install_skips_a_foreign_entry_on_the_esc_key() {
         "    (modifiers: [Alt], key: \"Escape\"): Spawn(\"xeyes\"),\n",
         "}\n",
     );
-    let install = custom_install_content(Some(held), "Escape").expect("install");
+    let install =
+        custom_install_content(Some(held), "Escape", Path::new(TEST_BIN)).expect("install");
     assert_eq!(install.skipped, ["Alt+Escape"]);
     assert!(
         install.migrated.is_empty(),
@@ -849,7 +901,7 @@ fn custom_install_skips_a_foreign_entry_on_the_esc_key() {
     assert!(
         !install
             .content
-            .contains(&format!("Spawn(\"{SHOW_ALL_CMD}\")")),
+            .contains(&format!("Spawn(\"{}\")", cmd(SHOW_ALL_ARGS))),
         "a held key must not gain the new binding:\n{}",
         install.content
     );
@@ -864,8 +916,10 @@ fn a_previous_all_windows_keys_family_is_dropped_not_orphaned() {
     // this install's bindings: airlock-owned, dropped by the rebuild, and
     // named in the report. Before the fix it survived forever and
     // uninstall could never remove it.
-    let previous = custom_install_content(None, "Escape").expect("previous install");
-    let rekeyed = custom_install_content(Some(&previous.content), "Tab").expect("re-keyed");
+    let previous =
+        custom_install_content(None, "Escape", Path::new(TEST_BIN)).expect("previous install");
+    let rekeyed = custom_install_content(Some(&previous.content), "Tab", Path::new(TEST_BIN))
+        .expect("re-keyed");
     assert_eq!(
         rekeyed.in_place,
         ["Alt+grave", "Alt+Shift+grave", "Alt+Tab", "Alt+Shift+Tab"]
@@ -909,9 +963,12 @@ fn uninstall_removes_a_previous_keys_stale_family() {
     // with user entries the stale family goes, while entries airlock
     // cannot own, a foreign command, and a hand-bound quick-toggle on
     // a foreign key (README documents the recipe), survive untouched.
-    let previous = custom_install_content(None, "Escape").expect("previous install");
+    let previous =
+        custom_install_content(None, "Escape", Path::new(TEST_BIN)).expect("previous install");
 
-    match custom_uninstall_content(&previous.content, "Tab").expect("uninstall bare") {
+    match custom_uninstall_content(&previous.content, "Tab", Path::new(TEST_BIN))
+        .expect("uninstall bare")
+    {
         CustomUninstall::RemoveFile => {}
         other => panic!("expected RemoveFile, got {other:?}"),
     }
@@ -920,7 +977,9 @@ fn uninstall_removes_a_previous_keys_stale_family() {
         "{}    (modifiers: [Ctrl], key: \"t\"): Spawn(\"airlock quick-toggle\"),\n    (modifiers: [Alt], key: \"F1\"): Spawn(\"xeyes\"),\n}}",
         previous.content.trim_end_matches('}')
     );
-    match custom_uninstall_content(&with_user, "Tab").expect("uninstall with user entries") {
+    match custom_uninstall_content(&with_user, "Tab", Path::new(TEST_BIN))
+        .expect("uninstall with user entries")
+    {
         CustomUninstall::Restored { content } => {
             assert!(
                 content.contains("Spawn(\"airlock quick-toggle\")"),
@@ -931,11 +990,12 @@ fn uninstall_removes_a_previous_keys_stale_family() {
                 "a user entry survives:\n{content}"
             );
             assert!(
-                !content.contains(SHOW_ALL_CMD) && !content.contains(SHOW_ALL_PREV_CMD),
+                !content.contains(&cmd(SHOW_ALL_ARGS))
+                    && !content.contains(&cmd(SHOW_ALL_PREV_ARGS)),
                 "the stale family must be gone:\n{content}"
             );
             assert!(
-                !content.contains(SAME_APP_CMD),
+                !content.contains(&cmd(SAME_APP_ARGS)),
                 "the current grave pair goes with it:\n{content}"
             );
         }
@@ -988,6 +1048,7 @@ fn locations_for(dir: &Path) -> Locations {
         icon: data.join("icons/hicolor/scalable/apps/io.github.l1br3-io.Airlock.svg"),
         desktop: data.join("applications/io.github.l1br3-io.Airlock.desktop"),
         config: dir.join("config/airlock/config.toml"),
+        bin: PathBuf::from(TEST_BIN),
     }
 }
 
@@ -1004,10 +1065,10 @@ fn run_at_installs_and_restores_both_files_touching_nothing_else() {
     let report = run_at(false, &locations).expect("install");
     assert!(report.contains("custom"), "report skips custom: {report}");
     let installed_actions = read_file(&locations.system_actions);
-    assert!(installed_actions.contains(&format!("WindowSwitcher: \"{NEXT_CMD}\"")));
+    assert!(installed_actions.contains(&format!("WindowSwitcher: \"{}\"", cmd(NEXT_ARGS))));
     let installed_custom = read_file(&locations.custom);
     assert!(
-        installed_custom.contains(&format!("Spawn(\"{SHOW_ALL_CMD}\")")),
+        installed_custom.contains(&format!("Spawn(\"{}\")", cmd(SHOW_ALL_ARGS))),
         "show-all-windows not installed:\n{installed_custom}"
     );
     assert!(
@@ -1049,11 +1110,12 @@ fn run_at_creates_missing_config_dirs_on_fresh_install() {
     run_at(false, &locations).expect("fresh install");
     assert!(locations.system_actions.is_file(), "user file not created");
     assert!(
-        read_file(&locations.system_actions).contains(&format!("WindowSwitcher: \"{NEXT_CMD}\""))
+        read_file(&locations.system_actions)
+            .contains(&format!("WindowSwitcher: \"{}\"", cmd(NEXT_ARGS)))
     );
     assert!(locations.custom.is_file(), "custom file not created");
     assert!(
-        read_file(&locations.custom).contains(&format!("Spawn(\"{SAME_APP_CMD}\")")),
+        read_file(&locations.custom).contains(&format!("Spawn(\"{}\")", cmd(SAME_APP_ARGS))),
         "same-app not installed"
     );
     assert!(
@@ -1396,5 +1458,54 @@ fn uninstall_without_assets_still_restores_the_shortcut_files() {
     assert!(
         !locations.desktop.exists(),
         "uninstall must not create a file"
+    );
+}
+
+#[test]
+fn install_over_a_bare_takeover_binds_absolute_commands_and_keeps_the_backup() {
+    // A pre-0.4.6 takeover (bare `airlock alt-tab`) re-installed: the two
+    // lines are rebound to the absolute form and the markers record the
+    // bare originals, so uninstall still restores the exact pre-install
+    // bytes.
+    let installed = install_content(Some(USER_HAND_EDITED), SYSTEM_DEFAULT, Path::new(TEST_BIN))
+        .expect("install");
+    assert!(
+        installed.contains(&format!("WindowSwitcher: \"{}\"", cmd(NEXT_ARGS))),
+        "next not rebound to the absolute form:\n{installed}"
+    );
+    assert!(
+        installed.contains(&format!("WindowSwitcherPrevious: \"{}\"", cmd(PREV_ARGS))),
+        "previous not rebound to the absolute form:\n{installed}"
+    );
+    assert!(
+        installed.contains(&format!(
+            "{MARKER_PREFIX}{SWITCHER_KEY}=    WindowSwitcher: \"airlock alt-tab\","
+        )),
+        "the bare original must be the recorded backup:\n{installed}"
+    );
+    match uninstall_content(&installed, SYSTEM_DEFAULT, Path::new(TEST_BIN)).expect("uninstall") {
+        UninstallOutcome::Restored {
+            content,
+            best_effort,
+        } => {
+            assert!(!best_effort, "marked restore should be exact");
+            assert_eq!(content, USER_HAND_EDITED);
+        }
+        other => panic!("expected Restored, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_binary_path_with_whitespace_is_quoted_in_the_spawn_string() {
+    // The Spawn string is shell-split by cosmic: a path holding whitespace
+    // must stay one argv[0], so it is double-quoted.
+    let bin = Path::new("/home/some user/bin/airlock");
+    assert_eq!(
+        spawn_command(bin, NEXT_ARGS),
+        "\"/home/some user/bin/airlock\" alt-tab"
+    );
+    assert_eq!(
+        spawn_command(Path::new("/opt/airlock"), SHOW_ALL_ARGS),
+        "/opt/airlock show-all-windows"
     );
 }

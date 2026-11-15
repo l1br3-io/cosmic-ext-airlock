@@ -113,11 +113,12 @@ curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/sc
 ```
 
 It downloads the x86_64 binary, verifies its sha256, installs it into a
-directory on your `PATH`, and runs `airlock install`. If that directory is
-not on `PATH`, it appends an export line to `~/.bashrc` and `~/.profile`
-(zsh: `~/.zshrc`; fish: it prints the `fish_add_path` line) so new
-terminals find `airlock`, then still runs the takeover. No sudo. To read
-the script before running it:
+directory on your `PATH`, and runs `airlock install`. The keybinds hold
+the binary's absolute path, so the switcher works the moment install
+finishes. If that directory is not on `PATH`, it appends an export line
+to `~/.bashrc` and `~/.profile` (zsh: `~/.zshrc`; fish: it prints the
+`fish_add_path` line) so typing `airlock` in a new terminal works. No
+sudo. To read the script before running it:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/scripts/install.sh -o airlock-install.sh
@@ -170,8 +171,10 @@ that exists is yours ([settings](docs/settings.md)).
 The takeover touches only user-level files in
 `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1`:
 
-- `WindowSwitcher` / `WindowSwitcherPrevious` point at `airlock alt-tab` /
-  `airlock shift-alt-tab`
+- `WindowSwitcher` / `WindowSwitcherPrevious` point at the binary's
+  absolute path (`~/.local/bin/airlock alt-tab` /
+  `~/.local/bin/airlock shift-alt-tab`), so the switcher never waits on
+  the session `PATH`
 - Four marked custom bindings are added for the extra keys; a 0.4-era
   `Alt+Esc` quick-toggle entry is migrated to the new command, never
   skipped

@@ -3,6 +3,22 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
+## [0.4.6] — 2026-11-15
+
+### Fixed
+
+- **The one-command install left some users without the `airlock`
+  command.** When the install directory was not on `PATH`, the script
+  printed a line to add by hand, and Alt+Tab stayed dead between
+  install and the next login. Now the script appends the export line to
+  `~/.bashrc` and `~/.profile` itself (zsh: `~/.zshrc`; fish: it prints
+  the `fish_add_path` line; opt-out with `AIRLOCK_NO_MODIFY_PATH=1`),
+  and `airlock install` writes the binary's absolute path into the
+  keybinds, so the switcher works the moment install finishes and never
+  depends on the session `PATH`. Older installs heal on re-run:
+  bare-command entries migrate to the absolute form, and uninstall
+  still recognizes them.
+
 ## [0.4.5] — 2026-11-15
 
 ### Added
