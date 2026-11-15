@@ -13,7 +13,7 @@ use cctk::sctk::seat::keyboard::Keysym;
 use cosmic_client_toolkit as cctk;
 
 use crate::ipc::Direction;
-use crate::switcher::{self, Handle, Scope, Snapshot};
+use crate::switcher::{self, Handle, Listing, Snapshot};
 use crate::theme::{Density, Style};
 
 pub use crate::switcher::RowKind;
@@ -1821,12 +1821,13 @@ pub fn band_window(len: usize, sel: usize, tiles: usize, prev: Option<Viewport>)
 }
 
 /// Builds the flat overlay contents for `snapshot` with `selected`
-/// highlighted, listing windows under `scope`, with app icons from
+/// highlighted, listing windows under `listing`, with app icons from
 /// `icons` prepared at `scale` for the card `palette` paints, windowed
 /// by `windowing` — the session's `rows` budget and the sticky viewport
 /// it carries (`None` at open) — composing titles through `text` (the
 /// backend the session froze; see [`TextBackend`]). Rows follow
-/// [`switcher::eligible`] order (workspace-major under [`Scope::All`],
+/// [`switcher::eligible`] order (workspace-major under
+/// [`switcher::Scope::All`],
 /// MRU otherwise); every row hints its Ctrl+N chord ([`RowHint::Ctrl`]).
 ///
 /// One list, one budget: window per [`visible_window`], a continuation
@@ -1840,7 +1841,7 @@ pub fn band_window(len: usize, sel: usize, tiles: usize, prev: Option<Viewport>)
 pub fn overlay_model(
     snapshot: &Snapshot,
     selected: Handle,
-    scope: Scope,
+    listing: impl Into<Listing>,
     icons: &crate::icons::Cache,
     scale: u32,
     palette: &Palette,
@@ -1849,7 +1850,7 @@ pub fn overlay_model(
     mut text: TextBackend<'_>,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
-    let entries = switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, scope);
+    let entries = switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, listing);
     if entries.is_empty() {
         return None;
     }
@@ -1902,7 +1903,7 @@ pub fn overlay_model(
 pub fn overlay_model_horizontal(
     snapshot: &Snapshot,
     selected: Handle,
-    scope: Scope,
+    listing: impl Into<Listing>,
     icons: &crate::icons::Cache,
     scale: u32,
     palette: &Palette,
@@ -1911,7 +1912,7 @@ pub fn overlay_model_horizontal(
     mut text: TextBackend<'_>,
 ) -> Option<OverlayModel> {
     let active = snapshot.active?;
-    let entries = switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, scope);
+    let entries = switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, listing);
     if entries.is_empty() {
         return None;
     }
@@ -4585,7 +4586,7 @@ const FONT: [[u8; 8]; 95] = [
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::switcher;
+    use crate::switcher::{self, Scope};
     use std::time::Instant;
 
     /// A snapshot builder; toplevels get consecutive MRU order by their

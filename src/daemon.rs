@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::ipc::{self, Direction, IpcError};
 use crate::settings::{self, ReadError, Reload, SettingsSource};
-use crate::switcher::{self, Handle, Scope, Snapshot, State, Toplevel, WorkspaceId};
+use crate::switcher::{self, Handle, Listing, Scope, Snapshot, State, Toplevel, WorkspaceId};
 use crate::ui::{Gesture, GestureInput, GestureOutput, PointerHover, PointerInput};
 use crate::wayland;
 
@@ -346,14 +346,14 @@ pub fn commit_target(open: &Switch, snapshot: &Snapshot) -> Option<Handle> {
 }
 
 /// The window a quick toggle should activate: the second window of
-/// [`switcher::eligible`]'s order under `scope` — the same target one
+/// [`switcher::eligible`]'s order under `listing` — the same target one
 /// quick Alt+Tab tap reaches — or `None` when fewer than two windows are
 /// eligible, which makes the toggle a silent no-op. No session, no
 /// overlay: the caller activates the target immediately or does nothing
 /// at all.
-pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> {
+pub fn quick_toggle_target(snapshot: &Snapshot, listing: impl Into<Listing>) -> Option<Handle> {
     let active = snapshot.active?;
-    switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, scope)
+    switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, listing)
         .get(1)
         .copied()
 }
@@ -369,7 +369,7 @@ pub fn quick_toggle_target(snapshot: &Snapshot, scope: Scope) -> Option<Handle> 
 /// parity). Later
 /// presses reuse the same frozen selection basis instead of rebuilding
 /// it: walking three windows takes three presses, unlike T4's
-/// per-press rebuild which toggled between the front two. `scope`,
+/// per-press rebuild which toggled between the front two. `listing`,
 /// `palette`, `profile`, `rows`, `grouping`,
 /// `layout`, `columns`, and `text` are consumed only when the session
 /// opens; an already-open session keeps the ones it was built with.
@@ -380,7 +380,7 @@ pub fn ring_step(
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
     direction: Direction,
-    scope: Scope,
+    listing: impl Into<Listing>,
     palette: crate::ui::Palette,
     profile: crate::ui::StyleProfile,
     rows: usize,
@@ -393,13 +393,15 @@ pub fn ring_step(
 ) -> Option<Handle> {
     if open.is_none() {
         let active = snapshot.active?;
+        let listing = listing.into();
         // A grouped session opens on the frozen tree with its selection
         // on row 0 — the focused window's entry, its app's parent when
         // the app is multi-window — and the opening press is the first
         // linear step past the active window's rows. Flat sessions keep
         // the eligible-list ring, no tree. The frozen window set — the
         // query's narrow domain — is the eligible list in both shapes.
-        let eligible = switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, scope);
+        let eligible =
+            switcher::eligible(&snapshot.toplevels, &snapshot.workspaces, active, listing);
         let (handles, tree) = if grouping {
             (
                 Vec::new(), // grouped selections live on the tree, not a ring
@@ -407,7 +409,7 @@ pub fn ring_step(
                     &snapshot.toplevels,
                     &snapshot.workspaces,
                     active,
-                    scope,
+                    listing,
                 )),
             )
         } else {
@@ -419,7 +421,7 @@ pub fn ring_step(
             // Filled in by the serve loop beside the width floor the
             // moment this session opens — see the field's note.
             workspace_label: String::new(),
-            scope,
+            scope: listing.scope,
             app: None,
             palette,
             rows,
@@ -485,7 +487,7 @@ pub fn session_step(
     open: &mut Option<Switch>,
     snapshot: &Snapshot,
     direction: Direction,
-    scope: Scope,
+    listing: impl Into<Listing>,
     same_app: bool,
     palette: crate::ui::Palette,
     profile: crate::ui::StyleProfile,
@@ -508,7 +510,7 @@ pub fn session_step(
         };
     }
     // An open grouped session steps its visible rows (Tab, ↓/↑, and
-    // the wheel share the one linear walk); the snapshot, scope,
+    // the wheel share the one linear walk); the snapshot, listing,
     // palette, rows, and grouping only matter when a session opens.
     // Plain opens go straight through. The combined card's step is
     // within-band, not the linear walk.
@@ -522,17 +524,18 @@ pub fn session_step(
         }
         return session.selected_handle();
     }
+    let listing = listing.into();
     if open.is_some() || !same_app {
         return ring_step(
-            open, snapshot, direction, scope, palette, profile, rows, grouping, text, layout,
+            open, snapshot, direction, listing, palette, profile, rows, grouping, text, layout,
             columns, tiles, expanded,
         );
     }
     // A new same-app session: anchor, narrow, and hold the two-window
     // floor — one window of the app is nothing to cycle.
     let active = snapshot.active?;
-    let app = switcher::app_anchor(&snapshot.toplevels, &snapshot.workspaces, active, scope)?;
-    let view = switcher::app_view(snapshot, &app, scope);
+    let app = switcher::app_anchor(&snapshot.toplevels, &snapshot.workspaces, active, listing)?;
+    let view = switcher::app_view(snapshot, &app, listing);
     if view.toplevels.len() < 2 {
         return None;
     }
@@ -540,8 +543,8 @@ pub fn session_step(
     // app-scoped and renders flat, so it opens on the app's eligible
     // windows with no tree whatever the `grouping` setting says.
     let selected = ring_step(
-        open, &view, direction, scope, palette, profile, rows, false, text, layout, columns, tiles,
-        expanded,
+        open, &view, direction, listing, palette, profile, rows, false, text, layout, columns,
+        tiles, expanded,
     );
     // ring_step stored the session on the filtered ring; freeze the anchor
     // into it so later steps re-filter by it.
@@ -725,16 +728,17 @@ fn step_visible(
 fn strip_windows(
     tree: &switcher::Grouping,
     snapshot: &Snapshot,
-    scope: Scope,
+    listing: impl Into<Listing>,
     app: usize,
 ) -> Vec<usize> {
+    let listing = listing.into();
     let indices = match tree.rows().get(app).map(|row| row.kind) {
         Some(switcher::RowKind::Parent) => tree.children_of(app),
         _ => vec![app],
     };
     indices
         .into_iter()
-        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, scope))
+        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, listing))
         .collect()
 }
 

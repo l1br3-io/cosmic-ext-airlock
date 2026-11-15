@@ -72,9 +72,36 @@ pub enum Scope {
     /// the v1 behavior and the default for workspaces without a setting.
     #[default]
     CurrentWorkspace,
-    /// Every non-minimized window across all workspaces, workspace-major
-    /// order (see [`eligible`]).
+    /// Every workspace's windows, workspace-major order (see
+    /// [`eligible`]). Which windows a listing admits — minimized
+    /// included or not — is [`Listing`]'s call, not the scope's.
     All,
+}
+
+/// The one listing decision every consumer inherits
+/// (minimized-listing, 2026-11-15): the scope plus the minimized flag,
+/// one argument instead of a growing pair, so a future listing key
+/// threads as a field. [`From<Scope>`] is the flag-off listing — the
+/// degenerate conversion every pre-flag caller inherits, so a bare
+/// scope keeps excluding minimized windows exactly as it always did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Listing {
+    /// Which workspace's windows the listing covers.
+    pub scope: Scope,
+    /// Whether minimized (parked) windows list too — after each group's
+    /// live ones, MRU within each part, no visual marking. `false`:
+    /// they are excluded before they reach the sort key, so the
+    /// listing is byte-identical to the flag's absence.
+    pub minimized: bool,
+}
+
+impl From<Scope> for Listing {
+    fn from(scope: Scope) -> Self {
+        Listing {
+            scope,
+            minimized: false,
+        }
+    }
 }
 
 /// Positions of `workspaces` in workspace order — coordinates sorted
@@ -98,7 +125,7 @@ fn workspace_positions(workspaces: &[Workspace]) -> HashMap<WorkspaceId, usize> 
 }
 
 /// The workspace-major sort key of one toplevel: `(tier, workspace
-/// position, Reverse(last_activated))`, ascending.
+/// position, minimized rank, Reverse(last_activated))`, ascending.
 ///
 /// Tier 0 is the invoking workspace — members and sticky alike (sticky is
 /// visible on every workspace, so it is part of this one by the same rule
@@ -107,17 +134,22 @@ fn workspace_positions(workspaces: &[Workspace]) -> HashMap<WorkspaceId, usize> 
 /// decision 5: a window on several workspaces groups by the invoking
 /// workspace if it is a member, else by its earliest member in workspace
 /// order). Tier 2 is membership empty or entirely unlisted — not part of
-/// the workspace, always at the bottom. MRU is the tiebreak everywhere, so
-/// under `Scope::CurrentWorkspace` — where every eligible window is tier 0
-/// — the key degenerates to pure MRU and the default view's output is
-/// byte-identical (the degenerate case is the safety).
+/// the workspace, always at the bottom. The minimized rank
+/// (minimized-listing, 2026-11-15) is 0 live / 1 parked, one rank
+/// between workspace position and MRU: each group runs its live windows'
+/// MRU, then that group's parked MRU. MRU is the tiebreak everywhere, so
+/// under `Scope::CurrentWorkspace` — where every eligible window is
+/// tier 0 — and a flag-off listing — where every listed window is
+/// rank 0 — the key degenerates to pure MRU and the default view's
+/// output is byte-identical (the degenerate case is the safety).
 fn group_key(
     toplevel: &Toplevel,
     positions: &HashMap<WorkspaceId, usize>,
     active: WorkspaceId,
-) -> (u8, usize, std::cmp::Reverse<u64>) {
+) -> (u8, usize, u8, std::cmp::Reverse<u64>) {
+    let parked = u8::from(toplevel.state.contains(State::MINIMIZED));
     if toplevel.state.contains(State::STICKY) || toplevel.workspaces.contains(&active) {
-        (0, 0, std::cmp::Reverse(toplevel.last_activated))
+        (0, 0, parked, std::cmp::Reverse(toplevel.last_activated))
     } else {
         toplevel
             .workspaces
@@ -125,16 +157,25 @@ fn group_key(
             .filter_map(|id| positions.get(id).copied())
             .min()
             .map_or(
-                (2, 0, std::cmp::Reverse(toplevel.last_activated)),
-                |position| (1, position, std::cmp::Reverse(toplevel.last_activated)),
+                (2, 0, parked, std::cmp::Reverse(toplevel.last_activated)),
+                |position| {
+                    (
+                        1,
+                        position,
+                        parked,
+                        std::cmp::Reverse(toplevel.last_activated),
+                    )
+                },
             )
     }
 }
 
-/// Windows eligible for switching on `active` under `scope`: visible there
-/// for [`Scope::CurrentWorkspace`] (sticky counts — it is visible on every
-/// workspace per zcosmic_toplevel_info_v1), or anywhere at all for
-/// [`Scope::All`].
+/// Windows eligible for switching on `active` under `listing`'s scope:
+/// visible there for [`Scope::CurrentWorkspace`] (sticky counts — it is
+/// visible on every workspace per zcosmic_toplevel_info_v1), or anywhere
+/// at all for [`Scope::All`]. Minimized (parked) windows list only when
+/// `listing.minimized` — after each group's live ones, never instead of
+/// them.
 ///
 /// Returns handles in the switcher's listing order, and every consumer —
 /// ring, overlay, commit paths — treats it like any other. Under
@@ -143,18 +184,19 @@ fn group_key(
 /// workspace-major (2026-11-14): the invoking workspace's windows first
 /// (sticky among them), the other workspaces in workspace order
 /// (coordinates sorted, id breaking ties — the `format_snapshot`
-/// convention), workspace-less windows last; MRU within each group, ties
-/// keep snapshot order.
+/// convention), workspace-less windows last; MRU within each group's
+/// live-then-parked run, ties keep snapshot order.
 pub fn eligible(
     toplevels: &[Toplevel],
     workspaces: &[Workspace],
     active: WorkspaceId,
-    scope: Scope,
+    listing: impl Into<Listing>,
 ) -> Vec<Handle> {
+    let listing = listing.into();
     let positions = workspace_positions(workspaces);
     let mut matches: Vec<&Toplevel> = toplevels
         .iter()
-        .filter(|toplevel| is_switchable(toplevel, active, scope))
+        .filter(|toplevel| is_switchable(toplevel, active, listing))
         .collect();
     // Stable sort: equal keys keep snapshot order, the existing
     // convention.
@@ -165,14 +207,19 @@ pub fn eligible(
         .collect()
 }
 
-/// Whether one toplevel can be switched to on `active` under `scope`: not
-/// minimized, and — for [`Scope::CurrentWorkspace`] — visible there,
-/// directly or by being sticky. The per-window half of [`eligible`],
-/// reused by the daemon to re-validate a selection against live state
-/// mid-gesture.
-pub fn is_switchable(toplevel: &Toplevel, active: WorkspaceId, scope: Scope) -> bool {
-    !toplevel.state.contains(State::MINIMIZED)
-        && match scope {
+/// Whether one toplevel can be switched to on `active` under `listing`:
+/// not minimized unless `listing.minimized` admits parked windows, and —
+/// for [`Scope::CurrentWorkspace`] — visible there, directly or by being
+/// sticky. The per-window half of [`eligible`], reused by the daemon to
+/// re-validate a selection against live state mid-gesture.
+pub fn is_switchable(
+    toplevel: &Toplevel,
+    active: WorkspaceId,
+    listing: impl Into<Listing>,
+) -> bool {
+    let listing = listing.into();
+    (!toplevel.state.contains(State::MINIMIZED) || listing.minimized)
+        && match listing.scope {
             Scope::CurrentWorkspace => {
                 toplevel.state.contains(State::STICKY) || toplevel.workspaces.contains(&active)
             }
@@ -182,19 +229,20 @@ pub fn is_switchable(toplevel: &Toplevel, active: WorkspaceId, scope: Scope) -> 
 
 /// Whether `handle` names a window that can be switched to right now:
 /// present in `snapshot` and [`is_switchable`] on the active workspace
-/// under `scope`. A missing active workspace switches to nothing under
+/// under `listing`. A missing active workspace switches to nothing under
 /// every scope.
-pub fn switchable(snapshot: &Snapshot, handle: Handle, scope: Scope) -> bool {
+pub fn switchable(snapshot: &Snapshot, handle: Handle, listing: impl Into<Listing>) -> bool {
+    let listing = listing.into();
     let Some(active) = snapshot.active else {
         return false;
     };
     snapshot
         .toplevels
         .iter()
-        .any(|toplevel| toplevel.handle == handle && is_switchable(toplevel, active, scope))
+        .any(|toplevel| toplevel.handle == handle && is_switchable(toplevel, active, listing))
 }
 
-/// The app a same-app session on `active` under `scope` anchors to: the
+/// The app a same-app session on `active` under `listing` anchors to: the
 /// app_id of the frontmost window of [`eligible`]'s order — the invoking
 /// workspace's front under [`Scope::All`] (2026-11-14: here outranks
 /// recent), the MRU front under [`Scope::CurrentWorkspace`]. An empty
@@ -205,9 +253,10 @@ pub fn app_anchor(
     toplevels: &[Toplevel],
     workspaces: &[Workspace],
     active: WorkspaceId,
-    scope: Scope,
+    listing: impl Into<Listing>,
 ) -> Option<String> {
-    eligible(toplevels, workspaces, active, scope)
+    let listing = listing.into();
+    eligible(toplevels, workspaces, active, listing)
         .iter()
         .find_map(|handle| {
             toplevels
@@ -218,13 +267,14 @@ pub fn app_anchor(
 }
 
 /// A same-app session's view of `snapshot`: the toplevels [`eligible`]
-/// would list on the active workspace under `scope`, narrowed to `app`.
+/// would list on the active workspace under `listing`, narrowed to `app`.
 ///
 /// The result is an ordinary snapshot, so the ring, overlay, and commit
 /// paths treat it like any other. Order follows [`eligible`] exactly
 /// (workspace-major under [`Scope::All`], MRU otherwise); an empty `app` —
 /// like an empty app_id — groups nothing.
-pub fn app_view(snapshot: &Snapshot, app: &str, scope: Scope) -> Snapshot {
+pub fn app_view(snapshot: &Snapshot, app: &str, listing: impl Into<Listing>) -> Snapshot {
+    let listing = listing.into();
     let Some(active) = snapshot.active else {
         return Snapshot {
             toplevels: Vec::new(),
@@ -232,7 +282,7 @@ pub fn app_view(snapshot: &Snapshot, app: &str, scope: Scope) -> Snapshot {
             active: None,
         };
     };
-    let toplevels = eligible(&snapshot.toplevels, &snapshot.workspaces, active, scope)
+    let toplevels = eligible(&snapshot.toplevels, &snapshot.workspaces, active, listing)
         .iter()
         .filter_map(|handle| {
             snapshot
@@ -404,16 +454,16 @@ pub struct Grouping {
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl Grouping {
-    /// Partitions [`eligible`]'s list on `active` under `scope` (over
+    /// Partitions [`eligible`]'s list on `active` under `listing` (over
     /// `workspaces`, workspace-major under [`Scope::All`]) into the grouped
     /// row sequence.
     pub fn new(
         toplevels: &[Toplevel],
         workspaces: &[Workspace],
         active: WorkspaceId,
-        scope: Scope,
+        listing: impl Into<Listing>,
     ) -> Self {
-        let handles = eligible(toplevels, workspaces, active, scope);
+        let handles = eligible(toplevels, workspaces, active, listing);
         // App of each eligible handle, parallel to `handles`; empty for
         // windows the compositor cannot attribute.
         let apps: Vec<String> = handles
@@ -756,6 +806,115 @@ mod tests {
         ];
         let handles = eligible(&toplevels, &[], WorkspaceId(1), Scope::All);
         assert_eq!(handles, vec![Handle(2)]);
+    }
+
+    // --- Minimized listing (minimized-listing M1.2) ----------------------
+
+    #[test]
+    fn current_workspace_with_minimized_listed_parks_members_after_live() {
+        // Flag on: the invoking workspace's parked members list after all
+        // its live ones, MRU within each part. Sticky parked counts as
+        // membership, as sticky does — and it lands in the parked part,
+        // never among the live.
+        let toplevels = vec![
+            toplevel(1, &[1], State::default(), 10),
+            toplevel(2, &[1], State::default(), 30),
+            toplevel(3, &[1], State::MINIMIZED, 50),
+            toplevel(4, &[1], State::MINIMIZED, 20),
+            toplevel(5, &[2], State::MINIMIZED.union(State::STICKY), 60),
+            // Parked non-member and parked workspace-less stay out: the
+            // membership half is untouched.
+            toplevel(6, &[2], State::MINIMIZED, 90),
+            toplevel(7, &[], State::MINIMIZED, 80),
+        ];
+        let listing = Listing {
+            scope: Scope::CurrentWorkspace,
+            minimized: true,
+        };
+        let handles = eligible(&toplevels, &[], WorkspaceId(1), listing);
+        assert_eq!(
+            handles,
+            vec![Handle(2), Handle(1), Handle(5), Handle(3), Handle(4)]
+        );
+    }
+
+    #[test]
+    fn all_scope_with_minimized_listed_keeps_workspace_major_live_first() {
+        // Flag on under All: the groups keep coordinates order and each
+        // runs live MRU then parked MRU — the parked rank sits between
+        // workspace position and MRU, so parked windows never cross into
+        // another workspace's group however recent they are.
+        let workspaces = vec![workspace(1, &[0, 0]), workspace(2, &[1, 0])];
+        let toplevels = vec![
+            toplevel(1, &[1], State::default(), 10),
+            toplevel(2, &[1], State::MINIMIZED, 70),
+            toplevel(3, &[2], State::default(), 5),
+            toplevel(4, &[2], State::MINIMIZED, 40),
+            toplevel(5, &[2], State::MINIMIZED, 25),
+        ];
+        let listing = Listing {
+            scope: Scope::All,
+            minimized: true,
+        };
+        let handles = eligible(&toplevels, &workspaces, WorkspaceId(9), listing);
+        assert_eq!(
+            handles,
+            vec![Handle(1), Handle(2), Handle(3), Handle(4), Handle(5)]
+        );
+    }
+
+    #[test]
+    fn all_scope_with_minimized_listed_parks_workspace_less_last() {
+        // The workspace-less tier: live MRU first, parked MRU after —
+        // even when the parked one is globally the most recent.
+        let toplevels = vec![
+            toplevel(1, &[], State::default(), 10),
+            toplevel(2, &[], State::MINIMIZED, 60),
+            toplevel(3, &[], State::default(), 30),
+        ];
+        let listing = Listing {
+            scope: Scope::All,
+            minimized: true,
+        };
+        let handles = eligible(&toplevels, &[], WorkspaceId(1), listing);
+        assert_eq!(handles, vec![Handle(3), Handle(1), Handle(2)]);
+    }
+
+    #[test]
+    fn minimized_listing_breaks_mru_ties_by_snapshot_order() {
+        // Equal keys within the parked part keep snapshot order, the
+        // existing convention.
+        let toplevels = vec![
+            toplevel(1, &[1], State::MINIMIZED, 50),
+            toplevel(2, &[1], State::MINIMIZED, 50),
+        ];
+        let listing = Listing {
+            scope: Scope::CurrentWorkspace,
+            minimized: true,
+        };
+        let handles = eligible(&toplevels, &[], WorkspaceId(1), listing);
+        assert_eq!(handles, vec![Handle(1), Handle(2)]);
+    }
+
+    #[test]
+    fn is_switchable_lifts_the_minimized_rejection_only_for_the_listing() {
+        let parked_member = toplevel(1, &[1], State::MINIMIZED, 0);
+        let parked_elsewhere = toplevel(2, &[2], State::MINIMIZED, 0);
+        let on = Listing {
+            scope: Scope::CurrentWorkspace,
+            minimized: true,
+        };
+        assert!(is_switchable(&parked_member, WorkspaceId(1), on));
+        // Membership is the listing's other half and stays untouched:
+        // parked elsewhere never switches here, flag or not.
+        assert!(!is_switchable(&parked_elsewhere, WorkspaceId(1), on));
+        // A bare scope is the flag-off listing — the conversion every
+        // existing Scope caller inherits keeps the rejection.
+        assert!(!is_switchable(
+            &parked_member,
+            WorkspaceId(1),
+            Scope::CurrentWorkspace
+        ));
     }
 
     /// Like [`toplevel`], with the app under test's choosing.
