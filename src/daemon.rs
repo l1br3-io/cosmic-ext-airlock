@@ -100,7 +100,12 @@ pub struct Switch {
     /// loop the moment the session opens, exactly the `width_floor`
     /// pattern: `ring_step` never sees the settings.
     workspace_label: String,
-    scope: Scope,
+    /// The listing this session froze at open — the workspace scope and
+    /// the minimized flag (minimized-listing, 2026-11-15), resolved once
+    /// from the same settings read and frozen beside the label: an edit
+    /// landing mid-gesture changes nothing until the next press.
+    /// Mid-gesture re-validation reads this, never the settings.
+    listing: Listing,
     /// The app a same-app session lists windows of, or `None` for a plain
     /// Alt+Tab session. Chosen once at open and never re-derived: fresh
     /// snapshots are re-filtered by it, but a mid-gesture press never
@@ -320,7 +325,7 @@ fn grouped_visible(
     };
     tree.visible(expanded)
         .into_iter()
-        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, session.scope))
+        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, session.listing))
         .collect()
 }
 
@@ -332,7 +337,7 @@ pub fn session_holds(open: &Switch, snapshot: &Snapshot) -> bool {
     snapshot.active == Some(open.workspace)
         && open
             .selected_handle()
-            .is_some_and(|handle| switcher::switchable(snapshot, handle, open.scope))
+            .is_some_and(|handle| switcher::switchable(snapshot, handle, open.listing))
 }
 
 /// The handle a commit should activate: the session's selection, but only
@@ -342,7 +347,7 @@ pub fn session_holds(open: &Switch, snapshot: &Snapshot) -> bool {
 /// session may legitimately activate a window on another workspace.
 pub fn commit_target(open: &Switch, snapshot: &Snapshot) -> Option<Handle> {
     open.selected_handle()
-        .filter(|&handle| switcher::switchable(snapshot, handle, open.scope))
+        .filter(|&handle| switcher::switchable(snapshot, handle, open.listing))
 }
 
 /// The window a quick toggle should activate: the second window of
@@ -421,7 +426,7 @@ pub fn ring_step(
             // Filled in by the serve loop beside the width floor the
             // moment this session opens — see the field's note.
             workspace_label: String::new(),
-            scope: listing.scope,
+            listing,
             app: None,
             palette,
             rows,
@@ -636,7 +641,7 @@ fn enter_group(
     let children: Vec<usize> = tree
         .children_of(parent)
         .into_iter()
-        .filter(|index| switcher::switchable(snapshot, tree.rows()[*index].handle, session.scope))
+        .filter(|index| switcher::switchable(snapshot, tree.rows()[*index].handle, session.listing))
         .collect();
     let Some(front) = children.first().copied() else {
         return false; // every child died mid-gesture: nothing to enter
@@ -751,7 +756,7 @@ fn strip_level1(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
     };
     tree.visible(&HashSet::new())
         .into_iter()
-        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, session.scope))
+        .filter(|&index| switcher::switchable(snapshot, tree.rows()[index].handle, session.listing))
         .collect()
 }
 
@@ -780,7 +785,7 @@ fn strip_sequence(session: &Switch, snapshot: &Snapshot) -> Vec<usize> {
         .filter(|row| row.kind == switcher::RowKind::Child)
         .and_then(|_| tree.parent_of(session.tree_sel))
         .and_then(|parent| {
-            let windows = strip_windows(tree, snapshot, session.scope, parent);
+            let windows = strip_windows(tree, snapshot, session.listing, parent);
             (windows.len() >= 2).then_some((parent, windows))
         });
     let Some((parent, windows)) = run else {
@@ -810,7 +815,7 @@ fn coerce_shrunk_run(session: &mut Switch, snapshot: &Snapshot) -> bool {
     else {
         return false;
     };
-    if strip_windows(tree, snapshot, session.scope, parent).len() >= 2 {
+    if strip_windows(tree, snapshot, session.listing, parent).len() >= 2 {
         return false;
     }
     session.tree_sel = parent;
@@ -825,7 +830,7 @@ fn opens_run(session: &Switch, snapshot: &Snapshot, app: usize) -> bool {
     let Some(tree) = session.tree.as_ref() else {
         return false;
     };
-    strip_windows(tree, snapshot, session.scope, app).len() >= 2
+    strip_windows(tree, snapshot, session.listing, app).len() >= 2
 }
 
 /// The strip's render inputs: the derived sequence beside the width
@@ -850,7 +855,7 @@ fn strip_render(session: &Switch, snapshot: &Snapshot) -> (Vec<usize>, usize) {
         _ => Some(session.tree_sel),
     };
     let open_len = app.map_or(level1.len(), |app| {
-        level1.len() + strip_windows(tree, snapshot, session.scope, app).len()
+        level1.len() + strip_windows(tree, snapshot, session.listing, app).len()
             - usize::from(level1.contains(&app))
     });
     let slots = level1
@@ -930,7 +935,7 @@ fn enter_band(session: &mut Switch, snapshot: &Snapshot) -> bool {
     if !opens_run(session, snapshot, session.tree_sel) {
         return false; // the ≥2 rule
     }
-    let Some(&front) = strip_windows(tree, snapshot, session.scope, session.tree_sel).first()
+    let Some(&front) = strip_windows(tree, snapshot, session.listing, session.tree_sel).first()
     else {
         return false;
     };
@@ -1018,7 +1023,7 @@ fn toggle_or_cycle(
         .get(focused)
         .filter(|row| row.kind == switcher::RowKind::Parent)
         .map(|row| row.app_id.clone());
-    let windows = strip_windows(tree, snapshot, session.scope, focused);
+    let windows = strip_windows(tree, snapshot, session.listing, focused);
     if on_window {
         if windows.is_empty() {
             return false;
@@ -1197,7 +1202,7 @@ fn advance_off_doomed(
     for step in 1..=len {
         let handle = sequence[(position + step) % len];
         if handle != doomed
-            && switcher::switchable(snapshot, handle, session.scope)
+            && switcher::switchable(snapshot, handle, session.listing)
             && select_fresh(session, snapshot, expanded, handle)
         {
             return true;
@@ -1426,17 +1431,22 @@ impl LiveSettings {
     }
 }
 
-/// Scope for a session starting on this snapshot: the active workspace's
-/// name and coordinates-sorted position looked up in `settings`. Anything
-/// unresolvable — no active workspace, or one missing from the workspace
-/// list — keeps the v1 default.
-fn resolve_scope(snapshot: &Snapshot, settings: &settings::Settings) -> Scope {
-    snapshot
-        .active
-        .and_then(|active| settings::active_workspace(&snapshot.workspaces, active))
-        .map_or(Scope::CurrentWorkspace, |active| {
-            settings::scope_for(active, settings)
-        })
+/// Listing for a session starting on this snapshot (minimized-listing,
+/// 2026-11-15): the active workspace's scope — name and
+/// coordinates-sorted position looked up in `settings` — beside the
+/// minimized flag from the same settings read, so one call resolves what
+/// the session freezes. Anything unresolvable — no active workspace, or
+/// one missing from the workspace list — keeps the v1 default scope.
+fn resolve_scope(snapshot: &Snapshot, settings: &settings::Settings) -> Listing {
+    Listing {
+        scope: snapshot
+            .active
+            .and_then(|active| settings::active_workspace(&snapshot.workspaces, active))
+            .map_or(Scope::CurrentWorkspace, |active| {
+                settings::scope_for(active, settings)
+            }),
+        minimized: settings.show_minimized,
+    }
 }
 
 /// The label's mark for numbered workspaces (workspace-label W7,
@@ -1986,8 +1996,10 @@ pub fn run() -> Result<(), RunError> {
                                 // the MRU-second window — or nothing, when
                                 // there is nothing to toggle to.
                                 settings.refresh();
-                                let scope = resolve_scope(&snapshot, &settings.settings);
-                                if let Some(handle) = quick_toggle_target(&snapshot, scope) {
+                                // Fresh per press, as scope is: a reload
+                                // between presses changes the next toggle.
+                                let listing = resolve_scope(&snapshot, &settings.settings);
+                                if let Some(handle) = quick_toggle_target(&snapshot, listing) {
                                     session.activate(handle).map_err(RunError::Session)?;
                                 }
                             }
@@ -2102,9 +2114,9 @@ fn step_and_show(
         Some(open) => open.workspace_label.clone(),
         None => String::new(),
     };
-    let (scope, palette, profile, rows, grouping, layout, columns, tiles, text) = match open {
+    let (listing, palette, profile, rows, grouping, layout, columns, tiles, text) = match open {
         Some(open) => (
-            open.scope,
+            open.listing,
             open.palette,
             open.profile,
             open.rows,
@@ -2190,12 +2202,17 @@ fn step_and_show(
             // reads; frozen onto the session below like every
             // open-path value.
             label = workspace_label(snapshot, &settings.settings);
+            let mut listing = resolve_scope(snapshot, &settings.settings);
+            // The all-windows invoke bypasses the rules: its forced
+            // scope stands, resolve_scope only answers for the paths
+            // that consult it (all-windows A1.3, 2026-11-14). The
+            // minimized flag rides from the settings either way — the
+            // bypass widens the scope, not the listing.
+            if let Some(scope) = step.scope_override {
+                listing.scope = scope;
+            }
             (
-                // The all-windows invoke bypasses the rules: its forced
-                // scope stands, resolve_scope only answers for the paths
-                // that consult it (all-windows A1.3, 2026-11-14).
-                step.scope_override
-                    .unwrap_or_else(|| resolve_scope(snapshot, &settings.settings)),
+                listing,
                 palette,
                 profile,
                 rows,
@@ -2211,7 +2228,7 @@ fn step_and_show(
         open,
         snapshot,
         step.direction,
-        scope,
+        listing,
         step.same_app,
         palette,
         profile,
@@ -2400,7 +2417,7 @@ fn show_selection(
                         crate::ui::overlay_model_horizontal(
                             &pruned,
                             handle,
-                            current.scope,
+                            current.listing,
                             icons,
                             scale,
                             &palette,
@@ -2416,7 +2433,7 @@ fn show_selection(
                         crate::ui::overlay_model(
                             &pruned,
                             handle,
-                            current.scope,
+                            current.listing,
                             icons,
                             scale,
                             &palette,
@@ -2483,7 +2500,7 @@ fn show_selection(
             // module's, not this card's).
             _ => {
                 let list = match current.app.as_deref() {
-                    Some(app) => switcher::app_view(snapshot, app, current.scope),
+                    Some(app) => switcher::app_view(snapshot, app, current.listing),
                     None => snapshot.clone(),
                 };
                 current.ring.selected().and_then(|handle| {
@@ -2491,7 +2508,7 @@ fn show_selection(
                         crate::ui::overlay_model_horizontal(
                             &list,
                             handle,
-                            current.scope,
+                            current.listing,
                             icons,
                             scale,
                             &palette,
@@ -2507,7 +2524,7 @@ fn show_selection(
                         crate::ui::overlay_model(
                             &list,
                             handle,
-                            current.scope,
+                            current.listing,
                             icons,
                             scale,
                             &palette,
@@ -3179,6 +3196,136 @@ mod tests {
             Some(1),
         );
         assert!(!session_holds(&open, &minimized));
+    }
+
+    #[test]
+    fn session_holds_when_the_selection_parks_under_a_minimized_listing() {
+        // The flag-on twin of the void pin above (minimized-listing
+        // M2.1): a session whose frozen listing admits parked windows
+        // holds when its selection parks mid-gesture — still there,
+        // still listed — and commits to it.
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::default(), 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Listing {
+                scope: Scope::CurrentWorkspace,
+                minimized: true,
+            },
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Vertical,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut HashSet::new(),
+        );
+        let open = open.expect("session opened");
+        assert_eq!(open.selected_handle(), Some(Handle(2)));
+
+        let parked = snapshot(
+            vec![
+                toplevel(1, &[1], State::default(), 30),
+                toplevel(2, &[1], State::MINIMIZED, 20),
+            ],
+            Some(1),
+        );
+        assert!(session_holds(&open, &parked));
+        assert_eq!(commit_target(&open, &parked), Some(Handle(2)));
+    }
+
+    #[test]
+    fn an_open_session_keeps_its_frozen_listing_across_a_settings_reload() {
+        // Open with the flag off: the parked window is not on the card.
+        // A mid-gesture "reload" hands the next step a flag-on listing —
+        // an already-open session keeps the one it froze at open (the
+        // scope philosophy), and the next open picks the new value up.
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::MINIMIZED, 20),
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Scope::CurrentWorkspace,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Vertical,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut HashSet::new(),
+        );
+        assert_eq!(
+            open.as_ref().expect("session opened").frozen,
+            vec![Handle(1)]
+        );
+        // The reload lands; the open session ignores the new listing.
+        session_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Listing {
+                scope: Scope::CurrentWorkspace,
+                minimized: true,
+            },
+            false,
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Vertical,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut HashSet::new(),
+        );
+        assert_eq!(
+            open.as_ref().expect("session still open").frozen,
+            vec![Handle(1)]
+        );
+        // The next gesture opens fresh and picks the new value up: the
+        // parked window lists after the live one.
+        open = None;
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Previous,
+            Listing {
+                scope: Scope::CurrentWorkspace,
+                minimized: true,
+            },
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Vertical,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut HashSet::new(),
+        );
+        assert_eq!(
+            open.as_ref().expect("session reopened").frozen,
+            vec![Handle(1), Handle(2)]
+        );
     }
 
     #[test]
@@ -4048,6 +4195,49 @@ mod tests {
     }
 
     #[test]
+    fn quick_toggle_targets_a_parked_window_when_the_listing_admits_it() {
+        // The flag-on twin of the skip pin above (minimized-listing
+        // M2.1): with one live window the parked MRU-second is the
+        // toggle target — and with a live second window the parked one
+        // never jumps the live run, whatever its recency.
+        let lone_live = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::MINIMIZED, 20),
+            ],
+            Some(1),
+        );
+        assert_eq!(
+            quick_toggle_target(
+                &lone_live,
+                Listing {
+                    scope: Scope::CurrentWorkspace,
+                    minimized: true,
+                }
+            ),
+            Some(Handle(2))
+        );
+        let snap = snapshot(
+            vec![
+                toplevel(1, &[1], State::ACTIVATED, 30),
+                toplevel(2, &[1], State::MINIMIZED, 20),
+                toplevel(3, &[1], State::default(), 10),
+            ],
+            Some(1),
+        );
+        assert_eq!(
+            quick_toggle_target(
+                &snap,
+                Listing {
+                    scope: Scope::CurrentWorkspace,
+                    minimized: true,
+                }
+            ),
+            Some(Handle(3))
+        );
+    }
+
+    #[test]
     fn quick_toggle_without_an_active_workspace_targets_nothing() {
         let snap = snapshot(vec![toplevel(1, &[1], State::ACTIVATED, 30)], None);
         assert_eq!(quick_toggle_target(&snap, Scope::CurrentWorkspace), None);
@@ -4107,7 +4297,7 @@ mod tests {
         );
         let session = open.expect("same-app session opened");
         assert_eq!(session.app.as_deref(), Some("editor"));
-        assert_eq!(session.scope, Scope::CurrentWorkspace);
+        assert_eq!(session.listing.scope, Scope::CurrentWorkspace);
     }
 
     #[test]
@@ -4250,6 +4440,27 @@ mod tests {
     }
 
     #[test]
+    fn resolve_scope_reads_the_minimized_flag_from_settings() {
+        // The flag resolves beside the scope from the same settings read
+        // (minimized-listing M2.1) and rides the session with it: off by
+        // default, on only when the setting says so.
+        let snap = isolated_snapshot();
+        let mut settings = isolated_settings();
+        assert_eq!(
+            resolve_scope(&snap, &settings),
+            Listing::from(Scope::CurrentWorkspace)
+        );
+        settings.show_minimized = true;
+        assert_eq!(
+            resolve_scope(&snap, &settings),
+            Listing {
+                scope: Scope::CurrentWorkspace,
+                minimized: true,
+            }
+        );
+    }
+
+    #[test]
     fn all_windows_open_lists_workspace_major() {
         let snap = isolated_snapshot();
         // The isolation is on record and resolve_scope obeys it — the
@@ -4257,7 +4468,7 @@ mod tests {
         // Scope::All into the open, so the ring widens anyway. On this
         // fixture recency and the grouped order agree ([1, 2, 3, 4]).
         assert_eq!(
-            resolve_scope(&snap, &isolated_settings()),
+            resolve_scope(&snap, &isolated_settings()).scope,
             Scope::CurrentWorkspace
         );
         let mut open = None;
@@ -4282,7 +4493,7 @@ mod tests {
             "the opening press lands on the MRU-second window, cross-workspace"
         );
         let session = open.expect("all-windows session opened");
-        assert_eq!(session.scope, Scope::All);
+        assert_eq!(session.listing.scope, Scope::All);
         assert_eq!(
             session.ring.handles().to_vec(),
             vec![Handle(1), Handle(2), Handle(3), Handle(4)]
@@ -4317,7 +4528,7 @@ mod tests {
             "the opening press lands on the invoking workspace's MRU-second"
         );
         let session = open.expect("all-windows session opened");
-        assert_eq!(session.scope, Scope::All);
+        assert_eq!(session.listing.scope, Scope::All);
         assert_eq!(
             session.ring.handles().to_vec(),
             vec![
@@ -4417,7 +4628,7 @@ mod tests {
         // resolve_scope, and on the isolated workspace it stays narrow —
         // the bypass widens only itself.
         let scope = resolve_scope(&snap, &settings);
-        assert_eq!(scope, Scope::CurrentWorkspace);
+        assert_eq!(scope.scope, Scope::CurrentWorkspace);
         let mut open = None;
         session_step(
             &mut open,
@@ -4436,7 +4647,7 @@ mod tests {
             &mut HashSet::new(),
         );
         let session = open.expect("plain session opened");
-        assert_eq!(session.scope, Scope::CurrentWorkspace);
+        assert_eq!(session.listing.scope, Scope::CurrentWorkspace);
         assert_eq!(
             session.ring.handles().to_vec(),
             vec![Handle(1), Handle(2)],
@@ -4924,7 +5135,7 @@ mod tests {
             ring: open.ring.clone(),
             workspace: WorkspaceId(1),
             workspace_label: String::new(),
-            scope: Scope::CurrentWorkspace,
+            listing: Listing::from(Scope::CurrentWorkspace),
             app: None,
             palette: Palette::dark(),
             rows: DEFAULT_ROWS,
@@ -5053,10 +5264,10 @@ mod tests {
                 isolated: false,
             }],
         };
-        assert_eq!(resolve_scope(&snap, &not_isolated), Scope::All);
+        assert_eq!(resolve_scope(&snap, &not_isolated).scope, Scope::All);
         // No settings, no rule, or an unknown workspace: v1 default.
         assert_eq!(
-            resolve_scope(&snap, &crate::settings::Settings::default()),
+            resolve_scope(&snap, &crate::settings::Settings::default()).scope,
             Scope::CurrentWorkspace
         );
         let unknown = Snapshot {
@@ -5065,7 +5276,7 @@ mod tests {
             active: Some(WorkspaceId(9)),
         };
         assert_eq!(
-            resolve_scope(&unknown, &not_isolated),
+            resolve_scope(&unknown, &not_isolated).scope,
             Scope::CurrentWorkspace
         );
     }
