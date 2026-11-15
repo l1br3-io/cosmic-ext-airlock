@@ -359,10 +359,13 @@ pre {
 pre code { font-size: 0.875rem; }
 
 /* The demo video takes the pre's frame: one hairline and the 12 px
-   radius. preload="none" and the poster keep the section free until the
-   visitor presses play — the 9.4 MB recording never loads by accident. */
+   radius. It holds the prose measure, not the full column — a five-minute
+   recording is reference material, not a second hero, and at 68ch it sits
+   at the same left edge as the paragraph that introduces it.
+   preload="none" and the poster keep the section free until the visitor
+   presses play — the 9.4 MB recording never loads by accident. */
 
-.demo-video { margin: 16px 0 0; }
+.demo-video { margin: 16px 0 0; max-width: 68ch; }
 
 .demo-video video {
   display: block;
