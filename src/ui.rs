@@ -11097,6 +11097,81 @@ mod tests {
     }
 
     #[test]
+    fn the_band_counts_parked_windows_on_the_tile_pips_when_listed() {
+        // Flag-on (minimized-listing M2.2): the band's counts read the
+        // frozen tree, and the tree froze the flag-on listing — a
+        // parent's pip count includes its parked children, and an app
+        // whose only window is parked still gets its tile. The pip
+        // census itself is `count_pips_paint_only_on...`'s pin; this
+        // one pins the model's counts over a flag-on tree.
+        let snap = Snapshot {
+            toplevels: vec![
+                switcher::Toplevel {
+                    title: "a1".to_string(),
+                    app_id: "a".to_string(),
+                    state: switcher::State::ACTIVATED,
+                    workspaces: [1u64].iter().copied().map(switcher::WorkspaceId).collect(),
+                    last_activated: 60,
+                    ..switcher::Toplevel::default()
+                },
+                switcher::Toplevel {
+                    handle: switcher::Handle(2),
+                    title: "a2".to_string(),
+                    app_id: "a".to_string(),
+                    state: switcher::State::MINIMIZED,
+                    workspaces: [1u64].iter().copied().map(switcher::WorkspaceId).collect(),
+                    last_activated: 50,
+                },
+                switcher::Toplevel {
+                    handle: switcher::Handle(3),
+                    title: "b1".to_string(),
+                    app_id: "b".to_string(),
+                    state: switcher::State::MINIMIZED,
+                    workspaces: [1u64].iter().copied().map(switcher::WorkspaceId).collect(),
+                    last_activated: 40,
+                },
+            ],
+            workspaces: Vec::new(),
+            active: Some(switcher::WorkspaceId(1)),
+        };
+        // The flag-on tree: P-a with live a1 then parked a2, and b's
+        // parked-only window as a leaf — rows [P(1), C(1), C(2), L(3)].
+        let tree = switcher::Grouping::new(
+            &snap.toplevels,
+            &snap.workspaces,
+            snap.active.expect("fixture has an active workspace"),
+            switcher::Listing {
+                scope: Scope::CurrentWorkspace,
+                minimized: true,
+            },
+        );
+        let model = overlay_model_grouped_horizontal(
+            &tree,
+            &[0, 3],
+            0,
+            4,
+            &snap,
+            &no_icons(),
+            2,
+            &Palette::dark(),
+            StyleProfile::default(),
+            Banding {
+                tiles: 4,
+                width_floor: None,
+                prev: None,
+            },
+            TextBackend::Bitmap,
+        )
+        .expect("builds");
+        assert_eq!(model.rows[0].count, 2, "a's pips count the parked child");
+        assert_eq!(
+            model.rows[1].handle,
+            Some(switcher::Handle(3)),
+            "b's parked-only window keeps its tile"
+        );
+    }
+
+    #[test]
     fn combined_key_input_swaps_the_tree_axes() {
         // The W3C horizontal-tree axis swap: ←/→ are the step axis
         // (within the focused band), ↓/↑ the level axis (enter band 2 /

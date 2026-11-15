@@ -6701,6 +6701,55 @@ mod tests {
     }
 
     #[test]
+    fn the_query_finds_parked_windows_in_the_frozen_list() {
+        // Flag-on (minimized-listing M2.2): the query narrows the
+        // frozen list, never re-derives it — and the frozen list
+        // carries the parked window, so typing its title selects it.
+        let snap = snapshot(
+            vec![
+                titled(1, "editor", "code", 40),
+                Toplevel {
+                    title: "firefox — docs".to_string(),
+                    app_id: "firefox".to_string(),
+                    ..toplevel(2, &[1], State::MINIMIZED, 30)
+                },
+            ],
+            Some(1),
+        );
+        let mut open = None;
+        let mut expanded = HashSet::new();
+        ring_step(
+            &mut open,
+            &snap,
+            Direction::Next,
+            Listing {
+                scope: Scope::CurrentWorkspace,
+                minimized: true,
+            },
+            Palette::dark(),
+            StyleProfile::default(),
+            DEFAULT_ROWS,
+            false,
+            crate::text::TextDecision::Bitmap,
+            crate::ui::LayoutSetting::Vertical,
+            crate::ui::ColumnsSetting::Auto,
+            TILES,
+            &mut expanded,
+        );
+        assert_eq!(
+            open.as_ref().expect("session opened").frozen,
+            vec![Handle(1), Handle(2)],
+            "the frozen list carries the parked window"
+        );
+        assert!(type_into(&mut open, &snap, 'f'));
+        assert_eq!(
+            open.as_ref().expect("open").selected_handle(),
+            Some(Handle(2)),
+            "the query finds the parked window"
+        );
+    }
+
+    #[test]
     fn closing_within_a_query_stays_inside_the_matches() {
         // A querying session closes in its narrowed sequence: the
         // doomed match's successor is another match, not the unfiltered
@@ -7363,13 +7412,22 @@ mod tests {
     /// Opens a combined (grouped-horizontal) session on `snap` with one
     /// opening Alt+Tab — the grouped twin with a horizontal layout.
     fn combined_session(snap: &Snapshot) -> (Option<Switch>, HashSet<String>) {
+        combined_session_listing(snap, Scope::CurrentWorkspace)
+    }
+
+    /// [`combined_session`] under a caller-chosen listing — the flag-on
+    /// strip pins (minimized-listing M2.2) open through it.
+    fn combined_session_listing(
+        snap: &Snapshot,
+        listing: impl Into<Listing>,
+    ) -> (Option<Switch>, HashSet<String>) {
         let mut open = None;
         let mut expanded = HashSet::new();
         session_step(
             &mut open,
             snap,
             Direction::Next,
-            Scope::CurrentWorkspace,
+            listing,
             false,
             Palette::dark(),
             StyleProfile::default(),
@@ -8108,6 +8166,37 @@ mod tests {
         assert_eq!(session.select_handle(Handle(3)), Some(Handle(3)));
         assert_eq!(session.tree_sel, 3, "b's front window is b's tile here");
         assert_eq!(commit_target(session, &snap), Some(Handle(3)));
+    }
+
+    #[test]
+    fn the_strip_lists_parked_children_and_the_two_window_rule_counts_them() {
+        // Flag-on (minimized-listing M2.2): the run's liveness filter is
+        // the session's frozen listing, so parked children list in the
+        // run — after the live one, the visible-first order — and the
+        // ≥2-windows rule counts them: one live plus one parked child
+        // opens the run a single-live parent never gets (the flag-off
+        // twin is the duplicate-tile pin below).
+        let snap = snapshot(
+            vec![
+                app_toplevel(1, "app.a", &[1], State::ACTIVATED, 60),
+                app_toplevel(2, "app.a", &[1], State::MINIMIZED, 50),
+                app_toplevel(3, "app.b", &[1], State::default(), 40),
+            ],
+            Some(1),
+        );
+        let (mut open, _expanded) = combined_session_listing(
+            &snap,
+            Listing {
+                scope: Scope::CurrentWorkspace,
+                minimized: true,
+            },
+        );
+        open.as_mut().expect("open").tree_sel = 1; // a's live child
+        assert_eq!(
+            strip_sequence(open.as_ref().expect("open"), &snap),
+            vec![1, 2, 3],
+            "a's run lists live then parked, b's tile after"
+        );
     }
 
     #[test]

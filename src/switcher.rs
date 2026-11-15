@@ -1393,6 +1393,41 @@ mod tests {
     }
 
     #[test]
+    fn grouped_partitions_tuck_parked_windows_under_their_app_live_first() {
+        // Flag-on (minimized-listing M2.2): the tree freezes the
+        // flag-on eligible list, so parked windows ride as children —
+        // after the app's live ones, the listing's visible-first order
+        // — and the parent's pip count reads them off the frozen rows
+        // (a parked MRU never jumps a live front, whatever its
+        // recency).
+        let toplevels = vec![
+            app_window(1, "a", &[1], State::ACTIVATED, 30),
+            app_window(2, "a", &[1], State::MINIMIZED, 25),
+            app_window(3, "a", &[1], State::MINIMIZED, 20),
+            app_window(4, "b", &[1], State::default(), 15),
+        ];
+        let grouping = Grouping::new(
+            &toplevels,
+            &[],
+            WorkspaceId(1),
+            Listing {
+                scope: Scope::CurrentWorkspace,
+                minimized: true,
+            },
+        );
+        assert_eq!(
+            shape(&grouping),
+            vec![
+                (RowKind::Parent, Handle(1)),
+                (RowKind::Child, Handle(1)),
+                (RowKind::Child, Handle(2)),
+                (RowKind::Child, Handle(3)),
+                (RowKind::Leaf, Handle(4)),
+            ]
+        );
+    }
+
+    #[test]
     fn grouped_leaves_windows_the_compositor_cannot_attribute_top_level() {
         // MRU: u1, a1, a2, u2. The empty app_ids never group — the
         // `app_anchor` rule — so both stay top-level leaves at their own
