@@ -160,12 +160,14 @@ content-sized), `"100%"` for the whole output, or a pixel count. See
 ## Workspace scoping
 
 Only windows whose workspace set includes the current workspace are
-listed: sticky windows appear everywhere, minimized windows nowhere,
-and a window parked on another workspace can never be focused through
-plain Alt+Tab. The isolation is per-workspace configurable: a workspace
-can opt into the global switcher through a config file, and the
-**Alt+Esc** family below reaches every window for one press whatever
-the rules say. See [settings.md](settings.md).
+listed: sticky windows appear everywhere, minimized windows nowhere
+unless `show_minimized = true` lists them after the live ones
+([settings](settings.md#show-minimized)), and a window parked on
+another workspace can never be focused through plain Alt+Tab. The
+isolation is per-workspace configurable: a workspace can opt into the
+global switcher through a config file, and the **Alt+Esc** family
+below reaches every window for one press whatever the rules say. See
+[settings.md](settings.md).
 
 ## The extra keys
 

@@ -23,7 +23,7 @@ binary.
 - [ ] A window parked on another workspace is never focused, no matter how
       many presses
 - [ ] The sticky window appears in the list on every workspace; minimized
-      windows never do
+      windows never do while `show_minimized` is off (the default)
 
 ## 3. Gesture (with the takeover installed)
 
@@ -122,7 +122,9 @@ binary.
 ### All windows (Alt+Esc)
 
 - [ ] On a workspace whose rules isolate it, Alt+Esc opens the card over
-      every non-minimized window on every workspace, grouped by
+      every non-minimized window on every workspace (with
+      `show_minimized = true`, each workspace's parked windows follow
+      its live ones), grouped by
       workspace — the invoking workspace's windows first, other
       workspaces after in workspace order, workspace-less last — the
       rules cannot veto this invoke; Tab and the arrows walk it
@@ -134,6 +136,17 @@ binary.
 - [ ] With `all_windows_key = "Tab"`
       ([settings](settings.md)) and `airlock install` re-run, the family
       follows the configured key (Alt+Tab / Alt+Shift+Tab here)
+
+### Minimized listing (`show_minimized`)
+
+- [ ] With `show_minimized = true`
+      ([settings](settings.md)), a plain Alt+Tab on an isolated
+      workspace lists that workspace's parked windows after its live
+      ones, MRU within each part; parked windows of other workspaces
+      stay off the card, and the tiles carry no new marking
+- [ ] Enter on a listed parked window un-minimizes and focuses it —
+      the same commit path every window takes
+- [ ] With the setting back off, the next Alt+Tab lists nothing new
 
 ### Workspace label
 

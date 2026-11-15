@@ -44,9 +44,13 @@ overlay appears still switches.
   title or app name, case-insensitive; works in every mode
 - **Workspace label** — `show_workspace = true` names the workspace
   you pressed on, the anchor for workspaces opted out of isolation
+- **Parked windows** — `show_minimized = true` lists minimized windows
+  too, after the live ones, workspace by workspace; Enter on one
+  un-minimizes and focuses it
 
-Sticky windows appear on every workspace; minimized windows nowhere;
-one **Alt+Esc** press reaches any window regardless of the rules.
+Sticky windows appear on every workspace; minimized windows nowhere
+unless `show_minimized = true` opts them in; one **Alt+Esc** press
+reaches any window regardless of the rules.
 
 ### Choosing and closing
 

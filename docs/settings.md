@@ -2,11 +2,12 @@
 
 By default, Airlock seals Alt+Tab to the current workspace. A config file
 can opt individual workspaces out: there the switcher lists every
-non-minimized window across **all** workspaces, most-recently-used first,
-while workspaces without an entry stay isolated exactly as before. The
-same file also picks the switcher's card color — light, dark, or
-following the desktop — its typeface and text size, and how many windows
-the card keeps in view.
+non-minimized window across **all** workspaces — parked windows join
+after the live ones with `show_minimized = true` — most-recently-used
+first, while workspaces without an entry stay isolated exactly as
+before. The same file also picks the switcher's card color — light,
+dark, or following the desktop — its typeface and text size, and how
+many windows the card keeps in view.
 
 Airlock reads the file; you edit it. `airlock install` drops a starter
 copy at the path below — every setting commented out, so it means the
@@ -42,6 +43,7 @@ layout = "vertical"    # the tall card; "horizontal" lays it out as a band of ti
 # min-width = "auto"   # the card's never-below width; same values as width (the default: "auto")
 grouping = false       # the flat list (the default); true groups it by app
 # show_workspace = false # label the card with the workspace you pressed on (the default: false)
+# show_minimized = false # list parked (minimized) windows too, after the live ones (the default: false)
 # all_windows_key = "Escape" # the key Alt+ holds for the all-windows card (the default: "Escape")
 
 [[workspace]]
@@ -74,8 +76,9 @@ card's axis and `columns` the horizontal band's width (see
 [Layout](#layout)); `grouping` picks the list's shape (see
 [Grouping](#grouping)); `show_workspace` labels the card with the
 workspace you pressed on (see [Show workspace](#show-workspace));
-`all_windows_key` names the key the all-windows binding holds (see
-[All windows key](#all-windows-key)).
+`show_minimized` keeps parked windows on the list (see
+[Show minimized](#show-minimized)); `all_windows_key` names the key the
+all-windows binding holds (see [All windows key](#all-windows-key)).
 
 ## Referencing workspaces
 
@@ -419,11 +422,33 @@ freezes with the session. A non-boolean value
 (`show_workspace = 1`, `show_workspace = "yes"`) is named in a
 diagnostic and the last-good settings apply.
 
+## Show minimized
+
+`show_minimized = true` keeps parked (minimized) windows on the list,
+in both scopes: a plain Alt+Tab on an isolated workspace lists that
+workspace's parked members — sticky ones included — and the
+all-windows surfaces (`isolated = false` workspaces, Alt+Esc) list
+parked windows wherever they are parked. The order is visible-first:
+each workspace's live windows in MRU order, then that workspace's
+parked windows in theirs, so a parked window never jumps a live one
+however recent it is. The first cut marks nothing — tiles render
+exactly as today, the order is the only signal. Enter (or Alt release)
+un-minimizes and focuses the chosen window; committing follows the one
+path every window takes.
+
+The default is `false`: parked windows stay off every listing, and the
+card is byte-identical to before. The flag is read when a gesture
+starts and freezes with the session; quick-toggle resolves it fresh
+per press. A non-boolean value (`show_minimized = 1`,
+`show_minimized = "yes"`) is named in a diagnostic and the last-good
+settings apply.
+
 ## All windows key
 
 `all_windows_key` names the key the all-windows binding holds under its
 fixed Alt modifier — `Alt+Escape` by default, opening the switcher over
-every non-minimized window on every workspace, the `[[workspace]]`
+every non-minimized window on every workspace (with `show_minimized =
+true`, each workspace's parked windows follow its live ones), the `[[workspace]]`
 isolation rules aside. The value is a key name — a canonical X keysym
 name like `"Escape"`, `"grave"`, `"Tab"` — that the compositor
 resolves: any keysym name (ASCII letters, digits, or `_`) parses, and
@@ -445,7 +470,9 @@ like any malformed edit.
 ## What `isolated = false` changes
 
 Alt+Tab / Shift+Alt+Tab on that workspace lists every non-minimized
-window across all workspaces, grouped by workspace: the invoking
+window across all workspaces — with `show_minimized = true`, parked
+windows join after each workspace's live ones — grouped by workspace:
+the invoking
 workspace's windows first, the other workspaces in workspace order,
 workspace-less windows last, most recent within each group (sticky
 windows ride with the invoking workspace's group). Committing a
@@ -529,6 +556,10 @@ A bad config never breaks switching:
 - On an `isolated = false` workspace, Alt+Tab walks every non-minimized
   window, grouped by workspace (this workspace's first), and committing
   one parked elsewhere switches to it
+- Set `show_minimized = true`; the next Alt+Tab lists the workspace's
+  parked windows after its live ones (on an `isolated = false`
+  workspace: each group's), Enter on one un-minimizes and focuses it,
+  and the tiles carry no new marking
 - Set `theme = "light"` on a dark-mode desktop; the next Alt+Tab paints
   the light card (`"dark"` paints the dark card on a light-mode desktop)
 - With `theme = "auto"`, flip COSMIC's dark mode; the next Alt+Tab
