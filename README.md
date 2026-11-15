@@ -6,6 +6,10 @@ elsewhere leaks into your focus.
 
 <img src="https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/docs/img/overlay-card.png" width="316" alt="Airlock's Alt+Tab overlay with grouping on: a dark rounded card listing apps as entries — chevron, window-count pips, and a Ctrl digit per app — the selected app expanded to its window titles, ellipsis row below">
 
+The [five-minute demo](https://l1br3-io.github.io/cosmic-ext-airlock/#demo)
+plays the whole gesture on a real COSMIC desktop: switching, type-to-filter,
+closing from the card, the horizontal band.
+
 > Airlock is third-party software for the COSMIC™ desktop. It is not official
 > COSMIC software and is not affiliated with or endorsed by System76.
 
