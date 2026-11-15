@@ -23,6 +23,26 @@
   <url type="homepage">https://github.com/l1br3-io/cosmic-ext-airlock</url>
   <url type="bugtracker">https://github.com/l1br3-io/cosmic-ext-airlock/issues</url>
   <releases>
+    <release version="0.4.5" date="2026-11-15">
+      <description>
+        <ul>
+          <li>New: one-command install: the prebuilt path no longer
+              needs Rust. The installer script downloads the x86_64
+              binary, verifies its sha256, installs it into a directory
+              on PATH, and runs `airlock install`; no sudo and no shell
+              rc edits. Releases now carry the archive's checksum and a
+              version-pinned script with the hash baked in.</li>
+          <li>New: parked windows on the list: `show_minimized = true`
+              lists each app's minimized windows after its live ones,
+              most recently used first. The default is off; picking a
+              parked window un-minimizes and focuses it.</li>
+          <li>Changed: an open card no longer reshapes on a settings
+              reload: scope and the minimized rule resolve once at open,
+              and an edit made while Alt is held applies at the next
+              open.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.4" date="2026-11-15">
       <description>
         <ul>

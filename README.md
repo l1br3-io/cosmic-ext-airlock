@@ -9,7 +9,7 @@ elsewhere leaks into your focus.
 > Airlock is third-party software for the COSMIC™ desktop. It is not official
 > COSMIC software and is not affiliated with or endorsed by System76.
 
-**Status:** [v0.4.4](https://github.com/l1br3-io/cosmic-ext-airlock/releases/tag/v0.4.4) ·
+**Status:** [v0.4.5](https://github.com/l1br3-io/cosmic-ext-airlock/releases/tag/v0.4.5) ·
 released 2026-11-15 · early, actively developed — the core Alt+Tab gesture is
 solid; same-app cycling and pointer input are newer.
 

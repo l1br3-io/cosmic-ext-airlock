@@ -3,6 +3,31 @@
 Consumer-facing changes, newest first. Phrased around what you can
 observe, not internal mechanics.
 
+## [0.4.5] — 2026-11-15
+
+### Added
+
+- **One-command install**: the prebuilt path no longer needs Rust.
+  `curl -fsSL
+  https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/scripts/install.sh
+  | sh` downloads the x86_64 binary, verifies its sha256, installs it
+  into a directory on your `PATH`, and runs `airlock install`. No sudo,
+  no shell rc edits; when the directory is not on `PATH` it prints the
+  line to add and leaves the takeover to you. Releases now carry the
+  archive's checksum and a version-pinned copy of the script with the
+  hash baked in. The cargo paths still work unchanged, and only they
+  need the build packages.
+- **Parked windows on the list (`show_minimized`)**: `show_minimized =
+  true` lists each app's minimized windows after its live ones, most
+  recently used first; the default `false` keeps today's behavior. Picking
+  a parked window un-minimizes and focuses it.
+
+### Changed
+
+- **An open card no longer reshapes on a settings reload**: the scope
+  and the minimized rule resolve once when the card opens, so an edit
+  made while Alt is held applies at the next open, never mid-gesture.
+
 ## [0.4.4] — 2026-11-15
 
 ### Added
