@@ -11,7 +11,8 @@ readme = "README.md"
 keywords = ["cosmic", "wayland", "alt-tab", "switcher", "linux"]
 categories = ["command-line-utilities", "os::linux-apis"]
 # Crate = source + README + LICENSE + assets the tests reference. The
-# agent skill pack, docs, and VM plumbing stay in the repository.
+# agent skill pack, docs, the site (its demo videos alone exceed
+# crates.io's 10 MiB upload cap), and VM plumbing stay in the repository.
 exclude = [
     "AGENTS.md",
     ".agents",
@@ -20,6 +21,7 @@ exclude = [
     ".zcodeignore",
     "docs",
     "scripts",
+    "site",
     "justfile",
     "skills-lock.json",
     "PRODUCT.md",

@@ -255,6 +255,14 @@ release-check:
 	fi
 	rm -f "$out"
 
+	# crates.io refuses uploads over 10 MiB. The packaged crate must stay
+	# under the cap; site/ (the demo videos) and docs are excluded.
+	crate_file="target/package/tmp-crate/cosmic-ext-airlock-$cargo_ver.crate"
+	[ -f "$crate_file" ] || fail "no packaged crate at $crate_file"
+	crate_bytes="$(stat -c%s "$crate_file")"
+	[ "$crate_bytes" -lt 10485760 ] \
+		|| fail "packaged crate is $crate_bytes bytes; crates.io's upload cap is 10485760"
+
 # Extract one version's CHANGELOG section (sans its header) to
 # target/release-notes-<ver>.md: the text release-gh attaches to the
 # GitHub Release verbatim. CP-RP1 approves this text; the extraction

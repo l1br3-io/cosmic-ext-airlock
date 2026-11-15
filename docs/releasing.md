@@ -65,10 +65,12 @@ What each does, and what you will see:
 `fmt-check`), proves the one-version story above (versions equal, the
 two dates equal), validates the metainfo with `appstreamcli` (one
 documented warning is allowed — the app ID's hyphen, which matches the
-GitHub org), lists the crate's files, and rehearses the publish with
-`cargo publish --dry-run --locked`. Silent when green; names the
-offending pair when not. Needs `appstreamcli` on the host (Debian
-package `appstream`).
+GitHub org), lists the crate's files, rehearses the publish with
+`cargo publish --dry-run --locked`, and refuses a packaged crate over
+crates.io's 10 MiB upload cap (the failure that forced the first 0.4.5
+re-cut: `site/` now ships ~24 MB of demo video). Silent when green;
+names the offending pair when not. Needs `appstreamcli` on the host
+(Debian package `appstream`).
 
 **`release-notes <ver>`** copies that version's changelog section —
 without its header — to `target/release-notes-<ver>.md`. Mechanical on
