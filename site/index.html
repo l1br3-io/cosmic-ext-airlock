@@ -209,11 +209,16 @@
         <p>Requires a COSMIC Epoch desktop session. The script downloads the
         prebuilt x86_64 binary, verifies its sha256, installs it into a
         directory on your <code>PATH</code>, and runs
-        <code>airlock install</code>, with no sudo and no shell rc edits. If that
-        directory is not on <code>PATH</code>, it prints the line to add and
-        stops before the takeover. To read it
+        <code>airlock install</code>, with no sudo. If that
+        directory is not on <code>PATH</code>, it appends an export line
+        to <code>~/.bashrc</code> and <code>~/.profile</code> (zsh:
+        <code>~/.zshrc</code>; fish: it prints the
+        <code>fish_add_path</code> line) so new terminals find
+        <code>airlock</code>, and still runs the takeover. To read it
         first, save the file, inspect it, then run it; with
-        <code>AIRLOCK_NO_INTEGRATION=1</code> it installs the binary alone.</p>
+        <code>AIRLOCK_NO_INTEGRATION=1</code> it installs the binary alone,
+        and <code>AIRLOCK_NO_MODIFY_PATH=1</code> prints the PATH line
+        instead of appending it.</p>
         <div class="rows">
           <div class="row">
             <h3>With cargo</h3>

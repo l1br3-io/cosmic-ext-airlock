@@ -19,12 +19,14 @@
   cold) — press again. If it persists, `airlock list` names any missing
   protocol; check the directory holding `airlock` (`~/.local/bin` from the
   one-command installer, `~/.cargo/bin` from cargo) is on your session
-  `PATH`.
+  `PATH`. The installer appends it to `~/.bashrc` and `~/.profile` when it
+  is not; the session picks that up at next login.
 - **The one-command installer stops before finishing.** It names the
   reason. A checksum mismatch means a corrupt download: re-run it, and if
   it repeats, do not install and report it. A missing prebuilt binary
   means your architecture has none: build from source instead. A `PATH`
-  warning means the takeover was withheld on purpose: add the printed
+  warning means you ran with `AIRLOCK_NO_MODIFY_PATH=1` (or the startup
+  files were not writable) and the takeover was withheld: add the printed
   `export PATH=...` line to your shell startup, open a new terminal, then
   run `airlock install`.
 - **Another tool fights over WindowSwitcher.** The user-level override is

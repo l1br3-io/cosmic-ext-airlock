@@ -1,9 +1,10 @@
 #!/bin/sh
 # Airlock's one-command install: download the prebuilt release binary,
-# verify its sha256, install it into a directory on PATH, and run
-# `airlock install` (the Alt+Tab takeover). User-level only: no sudo, no
-# shell rc edits; the writes are the binary and whatever `airlock install`
-# reports.
+# verify its sha256, install it into a directory on PATH, make that
+# directory part of PATH for future shells when it is not, and run
+# `airlock install` (the Alt+Tab takeover). User-level only: no sudo; the
+# writes are the binary, one guarded PATH export line per shell startup
+# file, and whatever `airlock install` reports.
 #
 # Inspect before running: fetch this file, read it, then run it:
 #   curl -fsSL .../install.sh -o install.sh && less install.sh && sh install.sh
@@ -11,9 +12,14 @@
 # Environment:
 #   AIRLOCK_VERSION=0.4.4      release to install (default: latest)
 #   AIRLOCK_INSTALL_DIR=DIR    binary destination (default: a PATH dir)
+#   AIRLOCK_NO_MODIFY_PATH=1   print the PATH line instead of appending it
+#                              to shell startup files (the takeover is then
+#                              withheld until 'airlock' resolves)
 #   AIRLOCK_NO_INTEGRATION=1   binary only; run `airlock install` yourself
 #
-# Uninstall: `airlock install --uninstall`, then remove the binary.
+# Uninstall: `airlock install --uninstall`, then remove the binary and the
+# PATH export lines this script appended to ~/.bashrc / ~/.profile (and
+# ~/.zshrc when the shell is zsh).
 # The rationale and the surveyed precedent: docs/research/one-command-install.md.
 set -eu
 
@@ -105,6 +111,31 @@ choose_dir() {
     printf '%s' "$HOME/.local/bin"
 }
 
+add_to_path() { # dir -> append one guarded export line per shell startup file
+    dir="$1"
+    line="export PATH=\"$dir:\$PATH\""
+    for f in "$HOME/.bashrc" "$HOME/.profile"; do
+        if ! grep -qF "$line" "$f" 2>/dev/null; then
+            printf '\n%s\n' "$line" >> "$f" ||
+                die "cannot append to $f"
+            note "  appended to $f"
+        fi
+    done
+    case "$(basename "${SHELL:-}")" in
+        zsh)
+            f="$HOME/.zshrc"
+            if ! grep -qF "$line" "$f" 2>/dev/null; then
+                printf '\n%s\n' "$line" >> "$f" ||
+                    die "cannot append to $f"
+                note "  appended to $f"
+            fi
+            ;;
+        fish)
+            note "  fish: run once: fish_add_path $dir"
+            ;;
+    esac
+}
+
 # --- Main -------------------------------------------------------------------
 
 [ "$(id -u)" -eq 0 ] &&
@@ -163,13 +194,17 @@ mv -f "$staged" "$dir/airlock"
 note "installed airlock v$version to $dir/airlock"
 
 if ! on_path "$dir"; then
-    note "warning: $dir is not on PATH; add it to your shell startup:"
-    note "  export PATH=\"$dir:\$PATH\""
-    if [ "${AIRLOCK_NO_INTEGRATION:-0}" != "1" ]; then
+    if [ "${AIRLOCK_NO_MODIFY_PATH:-0}" = "1" ]; then
+        note "warning: $dir is not on PATH and AIRLOCK_NO_MODIFY_PATH=1; add it to your shell startup:"
+        note "  export PATH=\"$dir:\$PATH\""
         note "the takeover's keybinds call 'airlock' from PATH; add the line above,"
         note "open a new terminal, then finish with: airlock install"
         exit 0
     fi
+    note "$dir is not on PATH; adding it to your shell startup files"
+    add_to_path "$dir"
+    added_to_path=1
+    note "new terminals find 'airlock' from here on; the session PATH updates at next login"
 fi
 
 if [ "${AIRLOCK_NO_INTEGRATION:-0}" = "1" ]; then
@@ -180,6 +215,9 @@ fi
 note "running: $dir/airlock install"
 if "$dir/airlock" install; then
     note "done; press Alt+Tab inside COSMIC"
+    if [ "${added_to_path:-0}" = "1" ]; then
+        note "if Alt+Tab does not fire in this session, log out and back in once"
+    fi
     note "undo: airlock install --uninstall && rm $dir/airlock"
     exit 0
 fi

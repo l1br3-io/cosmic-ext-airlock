@@ -114,13 +114,17 @@ curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/sc
 
 It downloads the x86_64 binary, verifies its sha256, installs it into a
 directory on your `PATH`, and runs `airlock install`. If that directory is
-not on `PATH`, it prints the line to add and stops before the takeover.
-No sudo, no shell rc edits. To read the script before running it:
+not on `PATH`, it appends an export line to `~/.bashrc` and `~/.profile`
+(zsh: `~/.zshrc`; fish: it prints the `fish_add_path` line) so new
+terminals find `airlock`, then still runs the takeover. No sudo. To read
+the script before running it:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/l1br3-io/cosmic-ext-airlock/main/scripts/install.sh -o airlock-install.sh
 less airlock-install.sh
 sh airlock-install.sh   # AIRLOCK_NO_INTEGRATION=1 installs the binary alone
+                        # AIRLOCK_NO_MODIFY_PATH=1 prints the PATH line
+                        # instead of appending it to your shell startup
 ```
 
 ### With cargo
@@ -183,6 +187,7 @@ airlock install --uninstall   # restore the previous switcher and remove
                               # starter config
 
 rm ~/.local/bin/airlock                # remove the binary (installer path)
+# and the PATH line the installer appended to ~/.bashrc / ~/.profile
 cargo uninstall cosmic-ext-airlock     # or, if cargo installed it
 ```
 
